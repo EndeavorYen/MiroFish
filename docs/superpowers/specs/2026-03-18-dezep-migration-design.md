@@ -8,7 +8,7 @@
 
 ## 1. Problem Statement
 
-MiroFish currently depends on Zep Cloud (v3.13.0) for three critical roles across 11 source files:
+MiroFish currently depends on Zep Cloud (v3.13.0) for three critical roles across 16 source files:
 
 1. **Ingestion Pipeline** (Step 1): Upload documents → auto-extract entities/relationships → build knowledge graph
 2. **Runtime Memory** (Step 3): During simulation, convert agent actions to narratives → Zep auto-builds graph
@@ -36,7 +36,7 @@ This external dependency creates:
 ┌─────────────────────────────────────────────────────────────┐
 │                  Abstraction Layer (Protocol/ABC)            │
 │     GraphStore / SearchEngine / MemoryStore protocols        │
-│     All 11 Zep-dependent files migrate to call these         │
+│     All 16 Zep-dependent files migrate to call these         │
 ├────────────────────────┬────────────────────────────────────┤
 │   NetworkX Graph Engine │   SQLite Persistence + Search      │
 │                        │                                    │

@@ -6,14 +6,13 @@ Uses NetworkXGraphStore for graph operations and SQLite FTS5 for text search.
 
 from typing import Optional, List, Dict, Any
 
-from .graph_store import EntityNode, RelationEdge, SearchResult
-from .networkx_graph_store import NetworkXGraphStore
+from .graph_store import EntityNode, RelationEdge, SearchResult, GraphStore, TextStore
 
 
 class SearchTools:
     """Search engine providing InsightForge, PanoramaSearch, QuickSearch."""
 
-    def __init__(self, graph_id: str, store: NetworkXGraphStore,
+    def __init__(self, graph_id: str, store,
                  llm_client=None):
         self.graph_id = graph_id
         self.store = store
@@ -89,12 +88,14 @@ class SearchTools:
             all_edges.extend(result.edges)
 
         # Step 3: Build relationship chains from discovered entities
+        seen_edge_uuids = {e.uuid for e in all_edges}
         for node in all_nodes:
             edges = self.store.get_entity_edges(self.graph_id, node.uuid)
             for edge in edges:
                 if edge.fact and edge.fact not in all_facts:
                     all_facts.append(edge.fact)
-                if edge not in all_edges:
+                if edge.uuid not in seen_edge_uuids:
+                    seen_edge_uuids.add(edge.uuid)
                     all_edges.append(edge)
 
         # Deduplicate

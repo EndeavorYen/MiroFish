@@ -227,16 +227,18 @@ class SimulationConfigGenerator:
         base_url: Optional[str] = None,
         model_name: Optional[str] = None
     ):
-        self.api_key = api_key or Config.LLM_API_KEY
         self.base_url = base_url or Config.LLM_BASE_URL
         self.model_name = model_name or Config.LLM_MODEL_NAME
+        self.api_key = Config.get_llm_api_key(api_key=api_key, base_url=self.base_url)
         
         if not self.api_key:
             raise ValueError("LLM_API_KEY 未配置")
         
+        self.llm_timeout = Config.get_llm_timeout_seconds(self.base_url)
         self.client = OpenAI(
             api_key=self.api_key,
-            base_url=self.base_url
+            base_url=self.base_url,
+            timeout=self.llm_timeout
         )
     
     def generate_config(
@@ -984,4 +986,3 @@ class SimulationConfigGenerator:
                 "influence_weight": 1.0
             }
     
-

@@ -47,6 +47,11 @@ def create_app(config_class=Config):
     SimulationRunner.register_cleanup()
     if should_log_startup:
         logger.info("已注册模拟进程清理函数")
+
+    from .services.simulation_manager import SimulationManager
+    interrupted_prepare_count = SimulationManager().mark_interrupted_preparations_failed()
+    if should_log_startup and interrupted_prepare_count:
+        logger.info(f"已清理 {interrupted_prepare_count} 个中断的准备任务")
     
     # 请求日志中间件
     @app.before_request
@@ -77,4 +82,3 @@ def create_app(config_class=Config):
         logger.info("MiroFish Backend 启动完成")
     
     return app
-

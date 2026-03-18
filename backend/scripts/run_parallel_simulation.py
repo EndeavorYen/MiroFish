@@ -91,6 +91,7 @@ sys.path.insert(0, _backend_dir)
 
 # 加载项目根目录的 .env 文件（包含 LLM_API_KEY 等配置）
 from dotenv import load_dotenv
+from app.config import Config
 _env_file = os.path.join(_project_root, '.env')
 if os.path.exists(_env_file):
     load_dotenv(_env_file)
@@ -1004,15 +1005,21 @@ def create_model(config: Dict[str, Any], use_boost: bool = False):
     # 根据参数和配置情况选择使用哪个 LLM
     if use_boost and has_boost_config:
         # 使用加速配置
-        llm_api_key = boost_api_key
         llm_base_url = boost_base_url
         llm_model = boost_model or os.environ.get("LLM_MODEL_NAME", "")
+        llm_api_key = Config.get_llm_api_key(
+            api_key=boost_api_key,
+            base_url=llm_base_url
+        ) or ""
         config_label = "[加速LLM]"
     else:
         # 使用通用配置
-        llm_api_key = os.environ.get("LLM_API_KEY", "")
         llm_base_url = os.environ.get("LLM_BASE_URL", "")
         llm_model = os.environ.get("LLM_MODEL_NAME", "")
+        llm_api_key = Config.get_llm_api_key(
+            api_key=os.environ.get("LLM_API_KEY"),
+            base_url=llm_base_url
+        ) or ""
         config_label = "[通用LLM]"
     
     # 如果 .env 中没有模型名，则使用 config 作为备用

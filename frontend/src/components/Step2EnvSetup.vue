@@ -110,6 +110,32 @@
               </div>
             </div>
           </div>
+
+          <div v-if="canStartPrepare" class="action-group single">
+            <button
+              class="action-btn primary"
+              @click="handleStartPrepare"
+            >
+              {{ startButtonLabel }}
+            </button>
+          </div>
+
+          <div v-if="canManagePrepare" class="action-group dual">
+            <button
+              class="action-btn secondary"
+              :disabled="isCancelling || cancelRequested"
+              @click="handleCancelPrepare"
+            >
+              {{ cancelButtonLabel }}
+            </button>
+            <button
+              class="action-btn primary"
+              :disabled="restartRequested"
+              @click="handleRestartPrepare"
+            >
+              {{ restartButtonLabel }}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -635,7 +661,9 @@
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { 
   prepareSimulation, 
+  cancelPrepareSimulation,
   getPrepareStatus, 
+  getSimulation,
   getSimulationProfilesRealtime,
   getSimulationConfig,
   getSimulationConfigRealtime 
@@ -662,6 +690,10 @@ const expectedTotal = ref(null)
 const simulationConfig = ref(null)
 const selectedProfile = ref(null)
 const showProfilesDetail = ref(true)
+const isCancelling = ref(false)
+const restartRequested = ref(false)
+const cancelRequested = ref(false)
+const prepareLifecycle = ref('idle')
 
 // 日志去重：记录上一次输出的关键信息
 let lastLoggedMessage = ''
@@ -732,9 +764,56 @@ const totalTopicsCount = computed(() => {
   }, 0)
 })
 
+const canManagePrepare = computed(() => {
+  return !!props.simulationId && ['processing', 'cancelling'].includes(prepareLifecycle.value)
+})
+
+const canStartPrepare = computed(() => {
+  return !!props.simulationId && phase.value < 4 && ['idle', 'failed'].includes(prepareLifecycle.value)
+})
+
+const startButtonLabel = computed(() => {
+  return profiles.value.length > 0 || phase.value > 0 ? '重新开始准备' : '开始准备'
+})
+
+const cancelButtonLabel = computed(() => {
+  if (isCancelling.value) return '正在发送请求...'
+  if (cancelRequested.value) return '等待安全停止...'
+  return '中止准备'
+})
+
+const restartButtonLabel = computed(() => {
+  if (restartRequested.value && cancelRequested.value) return '等待停止后重启...'
+  if (restartRequested.value || isCancelling.value) return '重新准备中...'
+  return '重新准备'
+})
+
 // Methods
 const addLog = (msg) => {
   emit('add-log', msg)
+}
+
+const resetPrepareView = () => {
+  stopPolling()
+  stopProfilesPolling()
+  stopConfigPolling()
+  taskId.value = null
+  prepareProgress.value = 0
+  currentStage.value = ''
+  progressMessage.value = ''
+  profiles.value = []
+  entityTypes.value = []
+  expectedTotal.value = null
+  simulationConfig.value = null
+  selectedProfile.value = null
+  lastLoggedMessage = ''
+  lastLoggedProfileCount = 0
+  lastLoggedConfigStage = ''
+  isCancelling.value = false
+  cancelRequested.value = false
+  restartRequested.value = false
+  prepareLifecycle.value = 'idle'
+  phase.value = 1
 }
 
 // 处理开始模拟按钮点击
@@ -765,8 +844,7 @@ const selectProfile = (profile) => {
   selectedProfile.value = profile
 }
 
-// 自动开始准备模拟
-const startPrepareSimulation = async () => {
+const startPrepareSimulation = async ({ forceRegenerate = false, announceRestart = false } = {}) => {
   if (!props.simulationId) {
     addLog('错误：缺少 simulationId')
     emit('update-status', 'error')
@@ -775,15 +853,23 @@ const startPrepareSimulation = async () => {
   
   // 标记第一步完成，开始第二步
   phase.value = 1
-  addLog(`模拟实例已创建: ${props.simulationId}`)
-  addLog('正在准备模拟环境...')
+  isCancelling.value = false
+  cancelRequested.value = false
+  restartRequested.value = false
+  prepareLifecycle.value = 'processing'
+  if (announceRestart) {
+    addLog('正在重新准备模拟环境...')
+  } else {
+    addLog('正在准备模拟环境...')
+  }
   emit('update-status', 'processing')
   
   try {
     const res = await prepareSimulation({
       simulation_id: props.simulationId,
       use_llm_for_profiles: true,
-      parallel_profile_count: 5
+      parallel_profile_count: 3,
+      force_regenerate: forceRegenerate
     })
     
     if (res.success && res.data) {
@@ -793,9 +879,15 @@ const startPrepareSimulation = async () => {
         return
       }
       
-      taskId.value = res.data.task_id
-      addLog(`准备任务已启动`)
-      addLog(`  └─ Task ID: ${res.data.task_id}`)
+      taskId.value = res.data.task_id || null
+      if (res.data.message?.includes('已有准备任务进行中')) {
+        addLog('检测到已有准备任务，继续接管当前进度...')
+      } else {
+        addLog('准备任务已启动')
+        if (res.data.task_id) {
+          addLog(`  └─ Task ID: ${res.data.task_id}`)
+        }
+      }
       
       // 立即设置预期Agent总数（从prepare接口返回值获取）
       if (res.data.expected_entities_count) {
@@ -812,16 +904,145 @@ const startPrepareSimulation = async () => {
       // 开始实时获取 Profiles
       startProfilesPolling()
     } else {
+      prepareLifecycle.value = 'failed'
       addLog(`准备失败: ${res.error || '未知错误'}`)
       emit('update-status', 'error')
     }
   } catch (err) {
+    prepareLifecycle.value = 'failed'
     addLog(`准备异常: ${err.message}`)
     emit('update-status', 'error')
   }
 }
 
+const handleStartPrepare = async () => {
+  resetPrepareView()
+  addLog(`模拟实例已创建: ${props.simulationId}`)
+  await startPrepareSimulation()
+}
+
+const handleCancelPrepare = async ({ forRestart = false } = {}) => {
+  if (!props.simulationId || isCancelling.value) return
+
+  isCancelling.value = true
+  prepareLifecycle.value = 'cancelling'
+  if (forRestart) {
+    restartRequested.value = true
+  }
+  addLog(forRestart ? '正在请求停止当前准备任务，稍后将自动重新开始...' : '正在请求中止准备任务...')
+
+  try {
+    const res = await cancelPrepareSimulation({
+      simulation_id: props.simulationId,
+      task_id: taskId.value
+    })
+    if (res.success) {
+      cancelRequested.value = !!res.data?.cancel_requested
+      const hasActivePrepare = res.data?.status === 'preparing' && !!res.data?.cancel_requested
+      addLog(res.data?.message || '已发送取消请求')
+
+      if (res.data?.task_id) {
+        taskId.value = res.data.task_id
+      }
+
+      if (!hasActivePrepare) {
+        cancelRequested.value = false
+        isCancelling.value = false
+        prepareLifecycle.value = 'idle'
+
+        if (forRestart) {
+          restartRequested.value = false
+          addLog('当前没有进行中的准备任务，直接重新准备...')
+          resetPrepareView()
+          await startPrepareSimulation({ forceRegenerate: true, announceRestart: true })
+          return
+        }
+
+        restartRequested.value = false
+      }
+    }
+  } catch (err) {
+    prepareLifecycle.value = 'processing'
+    addLog(`中止准备失败: ${err.message}`)
+    if (forRestart) {
+      restartRequested.value = false
+    }
+  } finally {
+    isCancelling.value = false
+  }
+}
+
+const handleRestartPrepare = async () => {
+  if (!props.simulationId || restartRequested.value) return
+  await handleCancelPrepare({ forRestart: true })
+}
+
+const initializePrepareState = async () => {
+  if (!props.simulationId) return
+
+  addLog('Step2 环境搭建初始化')
+
+  try {
+    const res = await getPrepareStatus({
+      simulation_id: props.simulationId
+    })
+
+    if (!res.success || !res.data) {
+      addLog('未检测到准备状态，请手动开始准备')
+      return
+    }
+
+    const data = res.data
+    taskId.value = data.task_id || null
+    prepareProgress.value = data.progress || 0
+    progressMessage.value = data.message || ''
+    cancelRequested.value = !!data.cancel_requested
+
+    if (data.progress_detail) {
+      currentStage.value = data.progress_detail.current_stage_name || data.progress_detail.current_stage || ''
+      if (data.progress_detail.total_items) {
+        expectedTotal.value = data.progress_detail.total_items
+      }
+    }
+
+    if (data.already_prepared || data.status === 'ready' || data.status === 'completed') {
+      prepareLifecycle.value = 'completed'
+      addLog('检测到已有完成的准备结果，正在恢复数据...')
+      await loadPreparedData()
+      return
+    }
+
+    if (data.status === 'processing') {
+      prepareLifecycle.value = cancelRequested.value ? 'cancelling' : 'processing'
+      phase.value = currentStage.value === '生成模拟配置' || currentStage.value === 'generating_config' ? 2 : 1
+      addLog('检测到已有准备任务，恢复进度轮询...')
+      startPolling()
+      startProfilesPolling()
+      if (phase.value === 2) {
+        startConfigPolling()
+      }
+      return
+    }
+
+    if (data.status === 'failed') {
+      prepareLifecycle.value = 'failed'
+      phase.value = 0
+      addLog(data.error || data.message || '上一次准备未完成，请手动重新开始')
+      return
+    }
+
+    prepareLifecycle.value = 'idle'
+    phase.value = 0
+    addLog('尚未开始准备，请点击按钮开始')
+  } catch (err) {
+    prepareLifecycle.value = 'idle'
+    phase.value = 0
+    addLog(`初始化准备状态失败: ${err.message}`)
+  }
+}
+
 const startPolling = () => {
+  stopPolling()
   pollTimer = setInterval(pollPrepareStatus, 2000)
 }
 
@@ -833,6 +1054,7 @@ const stopPolling = () => {
 }
 
 const startProfilesPolling = () => {
+  stopProfilesPolling()
   profilesTimer = setInterval(fetchProfilesRealtime, 3000)
 }
 
@@ -854,8 +1076,11 @@ const pollPrepareStatus = async () => {
     
     if (res.success && res.data) {
       const data = res.data
-      
+      const wasCancelRequested = cancelRequested.value
+      cancelRequested.value = !!data.cancel_requested
+
       // 更新进度
+      prepareLifecycle.value = cancelRequested.value ? 'cancelling' : 'processing'
       prepareProgress.value = data.progress || 0
       progressMessage.value = data.message || ''
       
@@ -890,17 +1115,94 @@ const pollPrepareStatus = async () => {
       
       // 检查是否完成
       if (data.status === 'completed' || data.status === 'ready' || data.already_prepared) {
+        cancelRequested.value = false
+        restartRequested.value = false
+        prepareLifecycle.value = 'completed'
         addLog('✓ 准备工作已完成')
         stopPolling()
         stopProfilesPolling()
         await loadPreparedData()
       } else if (data.status === 'failed') {
-        addLog(`✗ 准备失败: ${data.error || '未知错误'}`)
+        const errorMessage = data.error || data.message || '未知错误'
         stopPolling()
         stopProfilesPolling()
+        stopConfigPolling()
+        if (cancelRequested.value || errorMessage.includes('取消')) {
+          cancelRequested.value = false
+          prepareLifecycle.value = 'idle'
+          if (restartRequested.value) {
+            restartRequested.value = false
+            addLog('当前准备任务已停止，开始重新准备...')
+            resetPrepareView()
+            await startPrepareSimulation({ forceRegenerate: true, announceRestart: true })
+            return
+          }
+          addLog('✓ 准备任务已停止')
+        } else {
+          prepareLifecycle.value = 'failed'
+          restartRequested.value = false
+          addLog(`✗ 准备失败: ${errorMessage}`)
+          emit('update-status', 'error')
+        }
+      } else if (data.status === 'not_started') {
+        stopPolling()
+        stopProfilesPolling()
+        stopConfigPolling()
+        if (restartRequested.value) {
+          restartRequested.value = false
+          cancelRequested.value = false
+          prepareLifecycle.value = 'idle'
+          addLog('当前准备任务已结束，开始重新准备...')
+          resetPrepareView()
+          await startPrepareSimulation({ forceRegenerate: true, announceRestart: true })
+          return
+        }
+        if (cancelRequested.value) {
+          cancelRequested.value = false
+          prepareLifecycle.value = 'idle'
+          addLog('✓ 准备任务已停止')
+          return
+        }
+        prepareLifecycle.value = 'idle'
+      } else if (cancelRequested.value && !wasCancelRequested) {
+        addLog(data.message || '已发送取消请求，等待当前任务安全停止...')
       }
     }
   } catch (err) {
+    if (err.message?.includes('任务不存在') && props.simulationId) {
+      taskId.value = null
+    }
+
+    if (cancelRequested.value || restartRequested.value) {
+      try {
+        const simulationRes = await getSimulation(props.simulationId)
+        const simulationStatus = simulationRes?.data?.status
+        if (simulationStatus && simulationStatus !== 'preparing') {
+          stopPolling()
+          stopProfilesPolling()
+          stopConfigPolling()
+
+          if (restartRequested.value) {
+            restartRequested.value = false
+            cancelRequested.value = false
+            prepareLifecycle.value = 'idle'
+            addLog('检测到旧准备任务已结束，开始重新准备...')
+            resetPrepareView()
+            await startPrepareSimulation({ forceRegenerate: true, announceRestart: true })
+            return
+          }
+
+          if (cancelRequested.value) {
+            cancelRequested.value = false
+            prepareLifecycle.value = 'idle'
+            addLog('✓ 准备任务已停止')
+            return
+          }
+        }
+      } catch (fallbackErr) {
+        console.warn('轮询状态失败后的补偿检查也失败:', fallbackErr)
+      }
+    }
     console.warn('轮询状态失败:', err)
   }
 }
@@ -951,6 +1253,7 @@ const fetchProfilesRealtime = async () => {
 
 // 配置轮询
 const startConfigPolling = () => {
+  stopConfigPolling()
   configTimer = setInterval(fetchConfigRealtime, 2000)
 }
 
@@ -1008,6 +1311,7 @@ const fetchConfigRealtime = async () => {
         
         stopConfigPolling()
         phase.value = 4
+        prepareLifecycle.value = 'completed'
         addLog('✓ 环境搭建完成，可以开始模拟')
         emit('update-status', 'completed')
       }
@@ -1042,9 +1346,11 @@ const loadPreparedData = async () => {
         
         addLog('✓ 环境搭建完成，可以开始模拟')
         phase.value = 4
+        prepareLifecycle.value = 'completed'
         emit('update-status', 'completed')
       } else {
         // 配置尚未生成，开始轮询
+        prepareLifecycle.value = 'processing'
         addLog('配置生成中，开始轮询等待...')
         startConfigPolling()
       }
@@ -1066,10 +1372,8 @@ watch(() => props.systemLogs?.length, () => {
 })
 
 onMounted(() => {
-  // 自动开始准备流程
   if (props.simulationId) {
-    addLog('Step2 环境搭建初始化')
-    startPrepareSimulation()
+    initializePrepareState()
   }
 })
 

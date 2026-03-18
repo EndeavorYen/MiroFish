@@ -5,6 +5,7 @@ Step2: Zep实体读取与过滤、OASIS模拟准备与运行（全程自动化�
 
 import os
 import traceback
+from datetime import datetime
 from flask import request, jsonify, send_file
 
 from . import simulation_bp
@@ -22,6 +23,129 @@ logger = get_logger('mirofish.api.simulation')
 # Interview prompt 优化前缀
 # 添加此前缀可以避免Agent调用工具，直接用文本回复
 INTERVIEW_PROMPT_PREFIX = "结合你的人设、所有的过往记忆与行动，不调用任何工具直接用文本回复我："
+
+
+def _parse_iso_datetime(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except Exception:
+        return None
+
+
+def _is_artifact_current(file_path: str, state_data: dict) -> bool:
+    """判断文件是否属于当前这次 prepare 产物。"""
+    if not os.path.exists(file_path):
+        return False
+
+    prepare_started_at = _parse_iso_datetime(state_data.get("prepare_started_at"))
+    if not prepare_started_at:
+        return True
+
+    try:
+        modified_at = datetime.fromtimestamp(os.path.getmtime(file_path))
+    except OSError:
+        return False
+
+    # 给文件系统时间戳保留一点误差空间。
+    return modified_at.timestamp() + 1 >= prepare_started_at.timestamp()
+
+
+def _build_inflight_prepare_status(simulation_id: str) -> dict | None:
+    """在任务对象丢失时，尽量从 state.json 恢复 prepare 进度。"""
+    manager = SimulationManager()
+    state = manager.get_simulation(simulation_id)
+    if not state:
+        return None
+
+    if state.status == SimulationStatus.FAILED and state.prepare_finished_at:
+        return {
+            "simulation_id": simulation_id,
+            "task_id": state.active_prepare_task_id,
+            "status": "failed",
+            "progress": 0,
+            "message": state.error or "准备失败",
+            "error": state.error or "准备失败",
+            "cancel_requested": state.prepare_cancel_requested,
+            "already_prepared": False,
+        }
+
+    if state.status != SimulationStatus.PREPARING:
+        return None
+
+    total = max(state.entities_count, 1)
+    cancel_requested = state.prepare_cancel_requested
+    if state.profiles_generated:
+        return {
+            "simulation_id": simulation_id,
+            "task_id": state.active_prepare_task_id,
+            "status": "processing",
+            "progress": 75,
+            "message": (
+                "已发送取消请求，等待当前任务在安全点停止..."
+                if cancel_requested else
+                "[3/4] 生成模拟配置: 1/3 - 正在调用LLM生成配置..."
+            ),
+            "cancel_requested": cancel_requested,
+            "already_prepared": False,
+            "progress_detail": {
+                "current_stage": "generating_config",
+                "current_stage_name": "生成模拟配置",
+                "stage_index": 3,
+                "total_stages": 4,
+                "stage_progress": 30,
+                "current_item": 1,
+                "total_items": 3,
+                "item_description": (
+                    "已发送取消请求，等待当前任务在安全点停止..."
+                    if cancel_requested else
+                    "正在调用LLM生成配置..."
+                )
+            }
+        }
+
+    profile_progress = int(min(state.profiles_count, total) / total * 100)
+    overall_progress = int(20 + (70 - 20) * profile_progress / 100)
+    return {
+        "simulation_id": simulation_id,
+        "task_id": state.active_prepare_task_id,
+        "status": "processing",
+        "progress": overall_progress,
+        "message": (
+            "已发送取消请求，等待当前任务在安全点停止..."
+            if cancel_requested else
+            f"[2/4] 生成Agent人设: {state.profiles_count}/{state.entities_count} - 正在生成人设..."
+        ),
+        "cancel_requested": cancel_requested,
+        "already_prepared": False,
+        "progress_detail": {
+            "current_stage": "generating_profiles",
+            "current_stage_name": "生成Agent人设",
+            "stage_index": 2,
+            "total_stages": 4,
+            "stage_progress": profile_progress,
+            "current_item": state.profiles_count,
+            "total_items": state.entities_count,
+            "item_description": (
+                "已发送取消请求，等待当前任务在安全点停止..."
+                if cancel_requested else
+                "正在生成人设..."
+            )
+        }
+    }
+
+
+def _merge_prepare_status(task_dict: dict, live_status: dict | None) -> dict:
+    """以 live state 为准覆盖 task 进度，避免任务对象滞后。"""
+    if not live_status:
+        task_dict["already_prepared"] = False
+        return task_dict
+
+    merged = task_dict.copy()
+    merged.update(live_status)
+    merged["already_prepared"] = False
+    return merged
 
 
 def optimize_interview_prompt(prompt: str) -> str:
@@ -261,37 +385,44 @@ def _check_simulation_prepared(simulation_id: str) -> tuple:
     if not os.path.exists(simulation_dir):
         return False, {"reason": "模拟目录不存在"}
     
-    # 必要文件列表（不包括脚本，脚本位于 backend/scripts/）
-    required_files = [
-        "state.json",
-        "simulation_config.json",
-        "reddit_profiles.json",
-        "twitter_profiles.csv"
-    ]
-    
-    # 检查文件是否存在
-    existing_files = []
-    missing_files = []
-    for f in required_files:
-        file_path = os.path.join(simulation_dir, f)
-        if os.path.exists(file_path):
-            existing_files.append(f)
-        else:
-            missing_files.append(f)
-    
-    if missing_files:
-        return False, {
-            "reason": "缺少必要文件",
-            "missing_files": missing_files,
-            "existing_files": existing_files
-        }
-    
     # 检查state.json中的状态
     state_file = os.path.join(simulation_dir, "state.json")
     try:
         import json
         with open(state_file, 'r', encoding='utf-8') as f:
             state_data = json.load(f)
+
+        required_files = ["state.json", "simulation_config.json"]
+        if state_data.get("enable_reddit", True):
+            required_files.append("reddit_profiles.json")
+        if state_data.get("enable_twitter", True):
+            required_files.append("twitter_profiles.csv")
+
+        existing_files = []
+        missing_files = []
+        stale_files = []
+        for f in required_files:
+            file_path = os.path.join(simulation_dir, f)
+            if not os.path.exists(file_path):
+                missing_files.append(f)
+                continue
+            existing_files.append(f)
+            if f != "state.json" and not _is_artifact_current(file_path, state_data):
+                stale_files.append(f)
+
+        if missing_files:
+            return False, {
+                "reason": "缺少必要文件",
+                "missing_files": missing_files,
+                "existing_files": existing_files
+            }
+        if stale_files:
+            return False, {
+                "reason": "存在旧的准备产物，不能视为本次已完成",
+                "stale_files": stale_files,
+                "existing_files": existing_files,
+                "prepare_started_at": state_data.get("prepare_started_at")
+            }
         
         status = state_data.get("status", "")
         config_generated = state_data.get("config_generated", False)
@@ -337,10 +468,12 @@ def _check_simulation_prepared(simulation_id: str) -> tuple:
                 "status": status,
                 "entities_count": state_data.get("entities_count", 0),
                 "profiles_count": profiles_count,
+                "profiles_generated": state_data.get("profiles_generated", False),
                 "entity_types": state_data.get("entity_types", []),
                 "config_generated": config_generated,
                 "created_at": state_data.get("created_at"),
                 "updated_at": state_data.get("updated_at"),
+                "prepare_started_at": state_data.get("prepare_started_at"),
                 "existing_files": existing_files
             }
         else:
@@ -380,7 +513,7 @@ def prepare_simulation():
             "simulation_id": "sim_xxxx",                   // 必填，模拟ID
             "entity_types": ["Student", "PublicFigure"],  // 可选，指定实体类型
             "use_llm_for_profiles": true,                 // 可选，是否用LLM生成人设
-            "parallel_profile_count": 5,                  // 可选，并行生成人设数量，默认5
+            "parallel_profile_count": 3,                  // 可选，并行生成人设数量，默认3
             "force_regenerate": false                     // 可选，强制重新生成，默认false
         }
     
@@ -420,85 +553,105 @@ def prepare_simulation():
                 "error": f"模拟不存在: {simulation_id}"
             }), 404
         
-        # 检查是否强制重新生成
-        force_regenerate = data.get('force_regenerate', False)
-        logger.info(f"开始处理 /prepare 请求: simulation_id={simulation_id}, force_regenerate={force_regenerate}")
-        
-        # 检查是否已经准备完成（避免重复生成）
-        if not force_regenerate:
-            logger.debug(f"检查模拟 {simulation_id} 是否已准备完成...")
-            is_prepared, prepare_info = _check_simulation_prepared(simulation_id)
-            logger.debug(f"检查结果: is_prepared={is_prepared}, prepare_info={prepare_info}")
-            if is_prepared:
-                logger.info(f"模拟 {simulation_id} 已准备完成，跳过重复生成")
+        with manager.get_prepare_lock(simulation_id):
+            state = manager.refresh_simulation(simulation_id)
+
+            if state.status == SimulationStatus.PREPARING:
+                logger.info(f"模拟 {simulation_id} 已有准备任务进行中，复用现有任务")
                 return jsonify({
                     "success": True,
                     "data": {
                         "simulation_id": simulation_id,
-                        "status": "ready",
-                        "message": "已有完成的准备工作，无需重复生成",
-                        "already_prepared": True,
-                        "prepare_info": prepare_info
+                        "task_id": state.active_prepare_task_id,
+                        "status": "preparing",
+                        "message": "已有准备任务进行中，请继续等待当前任务完成",
+                        "already_prepared": False,
+                        "cancel_requested": state.prepare_cancel_requested,
+                        "expected_entities_count": state.entities_count,
+                        "entity_types": state.entity_types
                     }
                 })
-            else:
-                logger.info(f"模拟 {simulation_id} 未准备完成，将启动准备任务")
-        
-        # 从项目获取必要信息
-        project = ProjectManager.get_project(state.project_id)
-        if not project:
-            return jsonify({
-                "success": False,
-                "error": f"项目不存在: {state.project_id}"
-            }), 404
-        
-        # 获取模拟需求
-        simulation_requirement = project.simulation_requirement or ""
-        if not simulation_requirement:
-            return jsonify({
-                "success": False,
-                "error": "项目缺少模拟需求描述 (simulation_requirement)"
-            }), 400
-        
-        # 获取文档文本
-        document_text = ProjectManager.get_extracted_text(state.project_id) or ""
-        
-        entity_types_list = data.get('entity_types')
-        use_llm_for_profiles = data.get('use_llm_for_profiles', True)
-        parallel_profile_count = data.get('parallel_profile_count', 5)
-        
-        # ========== 同步获取实体数量（在后台任务启动前） ==========
-        # 这样前端在调用prepare后立即就能获取到预期Agent总数
-        try:
-            logger.info(f"同步获取实体数量: graph_id={state.graph_id}")
-            reader = ZepEntityReader()
-            # 快速读取实体（不需要边信息，只统计数量）
-            filtered_preview = reader.filter_defined_entities(
-                graph_id=state.graph_id,
-                defined_entity_types=entity_types_list,
-                enrich_with_edges=False  # 不获取边信息，加快速度
+
+            # 检查是否强制重新生成
+            force_regenerate = data.get('force_regenerate', False)
+            logger.info(f"开始处理 /prepare 请求: simulation_id={simulation_id}, force_regenerate={force_regenerate}")
+
+            # 检查是否已经准备完成（避免重复生成）
+            if not force_regenerate:
+                logger.debug(f"检查模拟 {simulation_id} 是否已准备完成...")
+                is_prepared, prepare_info = _check_simulation_prepared(simulation_id)
+                logger.debug(f"检查结果: is_prepared={is_prepared}, prepare_info={prepare_info}")
+                if is_prepared:
+                    logger.info(f"模拟 {simulation_id} 已准备完成，跳过重复生成")
+                    return jsonify({
+                        "success": True,
+                        "data": {
+                            "simulation_id": simulation_id,
+                            "status": "ready",
+                            "message": "已有完成的准备工作，无需重复生成",
+                            "already_prepared": True,
+                            "prepare_info": prepare_info
+                        }
+                    })
+                else:
+                    logger.info(f"模拟 {simulation_id} 未准备完成，将启动准备任务")
+
+            # 从项目获取必要信息
+            project = ProjectManager.get_project(state.project_id)
+            if not project:
+                return jsonify({
+                    "success": False,
+                    "error": f"项目不存在: {state.project_id}"
+                }), 404
+
+            # 获取模拟需求
+            simulation_requirement = project.simulation_requirement or ""
+            if not simulation_requirement:
+                return jsonify({
+                    "success": False,
+                    "error": "项目缺少模拟需求描述 (simulation_requirement)"
+                }), 400
+
+            # 获取文档文本
+            document_text = ProjectManager.get_extracted_text(state.project_id) or ""
+
+            entity_types_list = data.get('entity_types')
+            use_llm_for_profiles = data.get('use_llm_for_profiles', True)
+            parallel_profile_count = data.get('parallel_profile_count', 3)
+
+            # ========== 同步获取实体数量（在后台任务启动前） ==========
+            # 这样前端在调用prepare后立即就能获取到预期Agent总数
+            try:
+                logger.info(f"同步获取实体数量: graph_id={state.graph_id}")
+                reader = ZepEntityReader()
+                # 快速读取实体（不需要边信息，只统计数量）
+                filtered_preview = reader.filter_defined_entities(
+                    graph_id=state.graph_id,
+                    defined_entity_types=entity_types_list,
+                    enrich_with_edges=False  # 不获取边信息，加快速度
+                )
+                # 保存实体数量到状态（供前端立即获取）
+                state.entities_count = filtered_preview.filtered_count
+                state.entity_types = list(filtered_preview.entity_types)
+                logger.info(f"预期实体数量: {filtered_preview.filtered_count}, 类型: {filtered_preview.entity_types}")
+            except Exception as e:
+                logger.warning(f"同步获取实体数量失败（将在后台任务中重试）: {e}")
+                # 失败不影响后续流程，后台任务会重新获取
+
+            # 创建异步任务
+            task_manager = TaskManager()
+            task_id = task_manager.create_task(
+                task_type="simulation_prepare",
+                metadata={
+                    "simulation_id": simulation_id,
+                    "project_id": state.project_id
+                }
             )
-            # 保存实体数量到状态（供前端立即获取）
-            state.entities_count = filtered_preview.filtered_count
-            state.entity_types = list(filtered_preview.entity_types)
-            logger.info(f"预期实体数量: {filtered_preview.filtered_count}, 类型: {filtered_preview.entity_types}")
-        except Exception as e:
-            logger.warning(f"同步获取实体数量失败（将在后台任务中重试）: {e}")
-            # 失败不影响后续流程，后台任务会重新获取
-        
-        # 创建异步任务
-        task_manager = TaskManager()
-        task_id = task_manager.create_task(
-            task_type="simulation_prepare",
-            metadata={
-                "simulation_id": simulation_id,
-                "project_id": state.project_id
-            }
-        )
-        
-        # 更新模拟状态（包含预先获取的实体数量）
-        state.status = SimulationStatus.PREPARING
-        manager._save_simulation_state(state)
+
+            # 更新模拟状态（包含预先获取的实体数量）
+            state.status = SimulationStatus.PREPARING
+            state.active_prepare_task_id = task_id
+            manager._save_simulation_state(state)
         
         # 定义后台任务
         def run_prepare():
@@ -591,6 +744,12 @@ def prepare_simulation():
                     result=result_state.to_simple_dict()
                 )
                 
+            except InterruptedError as e:
+                if str(e) != "PREPARE_CANCELLED":
+                    raise
+                logger.info(f"准备模拟已取消: simulation_id={simulation_id}")
+                task_manager.fail_task(task_id, "准备已取消")
+
             except Exception as e:
                 logger.error(f"准备模拟失败: {str(e)}")
                 task_manager.fail_task(task_id, str(e))
@@ -600,6 +759,7 @@ def prepare_simulation():
                 if state:
                     state.status = SimulationStatus.FAILED
                     state.error = str(e)
+                    state.active_prepare_task_id = None
                     manager._save_simulation_state(state)
         
         # 启动后台线程
@@ -631,6 +791,71 @@ def prepare_simulation():
             "success": False,
             "error": str(e),
             "traceback": traceback.format_exc()
+        }), 500
+
+
+@simulation_bp.route('/prepare/cancel', methods=['POST'])
+def cancel_prepare_simulation():
+    """请求取消正在进行的准备任务。"""
+    try:
+        data = request.get_json() or {}
+        simulation_id = data.get('simulation_id')
+        request_task_id = data.get('task_id')
+        if not simulation_id:
+            return jsonify({
+                "success": False,
+                "error": "请提供 simulation_id"
+            }), 400
+
+        manager = SimulationManager()
+        state = manager.refresh_simulation(simulation_id)
+        if not state:
+            return jsonify({
+                "success": False,
+                "error": f"模拟不存在: {simulation_id}"
+            }), 404
+
+        if state.status != SimulationStatus.PREPARING:
+            return jsonify({
+                "success": True,
+                "data": {
+                    "simulation_id": simulation_id,
+                    "task_id": state.active_prepare_task_id,
+                    "status": state.status.value,
+                    "cancel_requested": False,
+                    "message": "当前没有正在进行的准备任务"
+                }
+            })
+
+        if request_task_id and state.active_prepare_task_id and request_task_id != state.active_prepare_task_id:
+            return jsonify({
+                "success": True,
+                "data": {
+                    "simulation_id": simulation_id,
+                    "task_id": state.active_prepare_task_id,
+                    "status": state.status.value,
+                    "cancel_requested": False,
+                    "message": "当前准备任务已切换，已忽略旧任务的取消请求"
+                }
+            })
+
+        state = manager.request_prepare_cancel(simulation_id)
+        return jsonify({
+            "success": True,
+            "data": {
+                "simulation_id": simulation_id,
+                "task_id": state.active_prepare_task_id,
+                "status": state.status.value,
+                "cancel_requested": True,
+                "message": "已发送取消请求，当前进行中的生成会在安全点停止"
+            }
+        })
+
+    except Exception as e:
+        logger.error(f"取消准备任务失败: {str(e)}")
+        return jsonify({
+            "success": False,
+            "error": str(e)
         }), 500
 
 
@@ -689,6 +914,12 @@ def get_prepare_status():
         # 如果没有task_id，返回错误
         if not task_id:
             if simulation_id:
+                inflight_status = _build_inflight_prepare_status(simulation_id)
+                if inflight_status:
+                    return jsonify({
+                        "success": True,
+                        "data": inflight_status
+                    })
                 # 有simulation_id但未准备完成
                 return jsonify({
                     "success": True,
@@ -725,6 +956,17 @@ def get_prepare_status():
                             "prepare_info": prepare_info
                         }
                     })
+
+                inflight_status = _build_inflight_prepare_status(simulation_id)
+                if inflight_status:
+                    inflight_status["task_id"] = task_id
+                    inflight_status["status"] = "failed"
+                    inflight_status["error"] = "准备任务已中断，请重新开始"
+                    inflight_status["message"] = "准备任务已中断，请重新开始"
+                    return jsonify({
+                        "success": True,
+                        "data": inflight_status
+                    })
             
             return jsonify({
                 "success": False,
@@ -732,8 +974,9 @@ def get_prepare_status():
             }), 404
         
         task_dict = task.to_dict()
-        task_dict["already_prepared"] = False
-        
+        live_status = _build_inflight_prepare_status(simulation_id) if simulation_id else None
+        task_dict = _merge_prepare_status(task_dict, live_status)
+
         return jsonify({
             "success": True,
             "data": task_dict
@@ -1074,23 +1317,7 @@ def get_simulation_profiles_realtime(simulation_id: str):
         file_exists = os.path.exists(profiles_file)
         profiles = []
         file_modified_at = None
-        
-        if file_exists:
-            # 获取文件修改时间
-            file_stat = os.stat(profiles_file)
-            file_modified_at = datetime.fromtimestamp(file_stat.st_mtime).isoformat()
-            
-            try:
-                if platform == "reddit":
-                    with open(profiles_file, 'r', encoding='utf-8') as f:
-                        profiles = json.load(f)
-                else:
-                    with open(profiles_file, 'r', encoding='utf-8') as f:
-                        reader = csv.DictReader(f)
-                        profiles = list(reader)
-            except (json.JSONDecodeError, Exception) as e:
-                logger.warning(f"读取 profiles 文件失败（可能正在写入中）: {e}")
-                profiles = []
+        state_data = {}
         
         # 检查是否正在生成（通过 state.json 判断）
         is_generating = False
@@ -1106,6 +1333,24 @@ def get_simulation_profiles_realtime(simulation_id: str):
                     total_expected = state_data.get("entities_count")
             except Exception:
                 pass
+
+        is_current_prepare_artifact = file_exists and _is_artifact_current(profiles_file, state_data)
+        if file_exists and is_current_prepare_artifact:
+            file_stat = os.stat(profiles_file)
+            file_modified_at = datetime.fromtimestamp(file_stat.st_mtime).isoformat()
+            try:
+                if platform == "reddit":
+                    with open(profiles_file, 'r', encoding='utf-8') as f:
+                        profiles = json.load(f)
+                else:
+                    with open(profiles_file, 'r', encoding='utf-8') as f:
+                        reader = csv.DictReader(f)
+                        profiles = list(reader)
+            except (json.JSONDecodeError, Exception) as e:
+                logger.warning(f"读取 profiles 文件失败（可能正在写入中）: {e}")
+                profiles = []
+        elif file_exists and not is_current_prepare_artifact:
+            logger.info(f"忽略旧的人设文件: simulation_id={simulation_id}, file={profiles_file}")
         
         return jsonify({
             "success": True,
@@ -1115,8 +1360,9 @@ def get_simulation_profiles_realtime(simulation_id: str):
                 "count": len(profiles),
                 "total_expected": total_expected,
                 "is_generating": is_generating,
-                "file_exists": file_exists,
+                "file_exists": file_exists and is_current_prepare_artifact,
                 "file_modified_at": file_modified_at,
+                "is_current_prepare_artifact": is_current_prepare_artifact,
                 "profiles": profiles
             }
         })
@@ -1174,18 +1420,7 @@ def get_simulation_config_realtime(simulation_id: str):
         file_exists = os.path.exists(config_file)
         config = None
         file_modified_at = None
-        
-        if file_exists:
-            # 获取文件修改时间
-            file_stat = os.stat(config_file)
-            file_modified_at = datetime.fromtimestamp(file_stat.st_mtime).isoformat()
-            
-            try:
-                with open(config_file, 'r', encoding='utf-8') as f:
-                    config = json.load(f)
-            except (json.JSONDecodeError, Exception) as e:
-                logger.warning(f"读取 config 文件失败（可能正在写入中）: {e}")
-                config = None
+        state_data = {}
         
         # 检查是否正在生成（通过 state.json 判断）
         is_generating = False
@@ -1211,15 +1446,29 @@ def get_simulation_config_realtime(simulation_id: str):
                         generation_stage = "completed"
             except Exception:
                 pass
+
+        is_current_prepare_artifact = file_exists and _is_artifact_current(config_file, state_data)
+        if file_exists and is_current_prepare_artifact:
+            file_stat = os.stat(config_file)
+            file_modified_at = datetime.fromtimestamp(file_stat.st_mtime).isoformat()
+            try:
+                with open(config_file, 'r', encoding='utf-8') as f:
+                    config = json.load(f)
+            except (json.JSONDecodeError, Exception) as e:
+                logger.warning(f"读取 config 文件失败（可能正在写入中）: {e}")
+                config = None
+        elif file_exists and not is_current_prepare_artifact:
+            logger.info(f"忽略旧的配置文件: simulation_id={simulation_id}, file={config_file}")
         
         # 构建返回数据
         response_data = {
             "simulation_id": simulation_id,
-            "file_exists": file_exists,
+            "file_exists": file_exists and is_current_prepare_artifact,
             "file_modified_at": file_modified_at,
             "is_generating": is_generating,
             "generation_stage": generation_stage,
             "config_generated": config_generated,
+            "is_current_prepare_artifact": is_current_prepare_artifact,
             "config": config
         }
         

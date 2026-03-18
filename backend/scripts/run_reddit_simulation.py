@@ -48,6 +48,7 @@ else:
 
 
 import re
+from app.config import Config
 
 
 class UnicodeFormatter(logging.Formatter):
@@ -441,9 +442,12 @@ class RedditSimulationRunner:
         - LLM_MODEL_NAME: 模型名称
         """
         # 优先从 .env 读取配置
-        llm_api_key = os.environ.get("LLM_API_KEY", "")
         llm_base_url = os.environ.get("LLM_BASE_URL", "")
         llm_model = os.environ.get("LLM_MODEL_NAME", "")
+        llm_api_key = Config.get_llm_api_key(
+            api_key=os.environ.get("LLM_API_KEY"),
+            base_url=llm_base_url
+        ) or ""
         
         # 如果 .env 中没有，则使用 config 作为备用
         if not llm_model:
@@ -766,4 +770,3 @@ if __name__ == "__main__":
         pass
     finally:
         print("模拟进程已退出")
-

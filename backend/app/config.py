@@ -4,6 +4,7 @@
 """
 
 import os
+from urllib.parse import urlparse
 from dotenv import load_dotenv
 
 # 加载项目根目录的 .env 文件
@@ -31,9 +32,13 @@ class Config:
     LLM_API_KEY = os.environ.get('LLM_API_KEY')
     LLM_BASE_URL = os.environ.get('LLM_BASE_URL', 'https://api.openai.com/v1')
     LLM_MODEL_NAME = os.environ.get('LLM_MODEL_NAME', 'gpt-4o-mini')
+    LLM_REQUEST_TIMEOUT_SECONDS = float(os.environ.get('LLM_REQUEST_TIMEOUT_SECONDS', '180'))
+    LOCAL_LLM_REQUEST_TIMEOUT_SECONDS = float(os.environ.get('LOCAL_LLM_REQUEST_TIMEOUT_SECONDS', '600'))
+    LLM_THINK = os.environ.get('LLM_THINK', 'false').lower() == 'true'
     
     # Zep配置
     ZEP_API_KEY = os.environ.get('ZEP_API_KEY')
+    ZEP_REQUEST_TIMEOUT_SECONDS = float(os.environ.get('ZEP_REQUEST_TIMEOUT_SECONDS', '30'))
     
     # 文件上传配置
     MAX_CONTENT_LENGTH = 50 * 1024 * 1024  # 50MB
@@ -62,14 +67,48 @@ class Config:
     REPORT_AGENT_MAX_TOOL_CALLS = int(os.environ.get('REPORT_AGENT_MAX_TOOL_CALLS', '5'))
     REPORT_AGENT_MAX_REFLECTION_ROUNDS = int(os.environ.get('REPORT_AGENT_MAX_REFLECTION_ROUNDS', '2'))
     REPORT_AGENT_TEMPERATURE = float(os.environ.get('REPORT_AGENT_TEMPERATURE', '0.5'))
+
+    @classmethod
+    def is_local_openai_compatible_base_url(cls, base_url: str | None = None) -> bool:
+        """判断是否为本机 OpenAI-compatible 端点（如 Ollama）"""
+        target = base_url or cls.LLM_BASE_URL
+        if not target:
+            return False
+
+        try:
+            parsed = urlparse(target)
+        except Exception:
+            return False
+
+        host = (parsed.hostname or "").lower()
+        return host in {"localhost", "127.0.0.1", "0.0.0.0"}
+
+    @classmethod
+    def get_llm_api_key(cls, api_key: str | None = None, base_url: str | None = None) -> str | None:
+        """
+        获取可用于 OpenAI SDK 的 API Key。
+        对于本机 OpenAI-compatible 服务（如 Ollama），自动回退到占位 key。
+        """
+        resolved_key = api_key if api_key is not None else cls.LLM_API_KEY
+        if resolved_key:
+            return resolved_key
+        if cls.is_local_openai_compatible_base_url(base_url):
+            return "ollama"
+        return None
+
+    @classmethod
+    def get_llm_timeout_seconds(cls, base_url: str | None = None) -> float:
+        """根据端点类型返回合适的 LLM 超时时间。"""
+        if cls.is_local_openai_compatible_base_url(base_url):
+            return cls.LOCAL_LLM_REQUEST_TIMEOUT_SECONDS
+        return cls.LLM_REQUEST_TIMEOUT_SECONDS
     
     @classmethod
     def validate(cls):
         """验证必要配置"""
         errors = []
-        if not cls.LLM_API_KEY:
+        if not cls.get_llm_api_key():
             errors.append("LLM_API_KEY 未配置")
         if not cls.ZEP_API_KEY:
             errors.append("ZEP_API_KEY 未配置")
         return errors
-

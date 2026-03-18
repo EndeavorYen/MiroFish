@@ -25,6 +25,14 @@ export const getPrepareStatus = (data) => {
 }
 
 /**
+ * 请求取消准备任务
+ * @param {Object} data - { simulation_id, task_id? }
+ */
+export const cancelPrepareSimulation = (data) => {
+  return service.post('/api/simulation/prepare/cancel', data)
+}
+
+/**
  * 获取模拟状态
  * @param {string} simulationId
  */
@@ -184,4 +192,3 @@ export const interviewAgents = (data) => {
 export const getSimulationHistory = (limit = 20) => {
   return service.get('/api/simulation/history', { params: { limit } })
 }
-

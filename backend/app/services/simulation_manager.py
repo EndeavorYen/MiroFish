@@ -7,6 +7,7 @@ OASIS模拟管理器
 import os
 import json
 import shutil
+import threading
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -56,6 +57,9 @@ class SimulationState:
     # 准备阶段数据
     entities_count: int = 0
     profiles_count: int = 0
+    profiles_generated: bool = False
+    prepare_cancel_requested: bool = False
+    active_prepare_task_id: Optional[str] = None
     entity_types: List[str] = field(default_factory=list)
     
     # 配置生成信息
@@ -70,6 +74,8 @@ class SimulationState:
     # 时间戳
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
     updated_at: str = field(default_factory=lambda: datetime.now().isoformat())
+    prepare_started_at: Optional[str] = None
+    prepare_finished_at: Optional[str] = None
     
     # 错误信息
     error: Optional[str] = None
@@ -85,6 +91,9 @@ class SimulationState:
             "status": self.status.value,
             "entities_count": self.entities_count,
             "profiles_count": self.profiles_count,
+            "profiles_generated": self.profiles_generated,
+            "prepare_cancel_requested": self.prepare_cancel_requested,
+            "active_prepare_task_id": self.active_prepare_task_id,
             "entity_types": self.entity_types,
             "config_generated": self.config_generated,
             "config_reasoning": self.config_reasoning,
@@ -93,6 +102,8 @@ class SimulationState:
             "reddit_status": self.reddit_status,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
+            "prepare_started_at": self.prepare_started_at,
+            "prepare_finished_at": self.prepare_finished_at,
             "error": self.error,
         }
     
@@ -105,6 +116,9 @@ class SimulationState:
             "status": self.status.value,
             "entities_count": self.entities_count,
             "profiles_count": self.profiles_count,
+            "profiles_generated": self.profiles_generated,
+            "prepare_cancel_requested": self.prepare_cancel_requested,
+            "active_prepare_task_id": self.active_prepare_task_id,
             "entity_types": self.entity_types,
             "config_generated": self.config_generated,
             "error": self.error,
@@ -127,6 +141,8 @@ class SimulationManager:
         os.path.dirname(__file__), 
         '../../uploads/simulations'
     )
+    _prepare_locks: Dict[str, threading.Lock] = {}
+    _prepare_locks_guard = threading.Lock()
     
     def __init__(self):
         # 确保目录存在
@@ -134,6 +150,14 @@ class SimulationManager:
         
         # 内存中的模拟状态缓存
         self._simulations: Dict[str, SimulationState] = {}
+
+    @classmethod
+    def get_prepare_lock(cls, simulation_id: str) -> threading.Lock:
+        """获取单个 simulation 的 prepare 启动锁，避免重复并发启动。"""
+        with cls._prepare_locks_guard:
+            if simulation_id not in cls._prepare_locks:
+                cls._prepare_locks[simulation_id] = threading.Lock()
+            return cls._prepare_locks[simulation_id]
     
     def _get_simulation_dir(self, simulation_id: str) -> str:
         """获取模拟数据目录"""
@@ -152,6 +176,17 @@ class SimulationManager:
             json.dump(state.to_dict(), f, ensure_ascii=False, indent=2)
         
         self._simulations[state.simulation_id] = state
+
+    def _reset_prepare_artifacts(self, simulation_id: str):
+        """清理 prepare 产物，确保实时接口只读取本次任务写出的文件。"""
+        sim_dir = self._get_simulation_dir(simulation_id)
+        for filename in ("reddit_profiles.json", "twitter_profiles.csv", "simulation_config.json"):
+            file_path = os.path.join(sim_dir, filename)
+            if os.path.exists(file_path):
+                try:
+                    os.remove(file_path)
+                except OSError as exc:
+                    logger.warning(f"清理旧文件失败: {file_path}, error={exc}")
     
     def _load_simulation_state(self, simulation_id: str) -> Optional[SimulationState]:
         """从文件加载模拟状态"""
@@ -176,6 +211,9 @@ class SimulationManager:
             status=SimulationStatus(data.get("status", "created")),
             entities_count=data.get("entities_count", 0),
             profiles_count=data.get("profiles_count", 0),
+            profiles_generated=data.get("profiles_generated", False),
+            prepare_cancel_requested=data.get("prepare_cancel_requested", False),
+            active_prepare_task_id=data.get("active_prepare_task_id"),
             entity_types=data.get("entity_types", []),
             config_generated=data.get("config_generated", False),
             config_reasoning=data.get("config_reasoning", ""),
@@ -184,10 +222,40 @@ class SimulationManager:
             reddit_status=data.get("reddit_status", "not_started"),
             created_at=data.get("created_at", datetime.now().isoformat()),
             updated_at=data.get("updated_at", datetime.now().isoformat()),
+            prepare_started_at=data.get("prepare_started_at"),
+            prepare_finished_at=data.get("prepare_finished_at"),
             error=data.get("error"),
         )
         
         self._simulations[simulation_id] = state
+        return state
+
+    def _read_simulation_state_data(self, simulation_id: str) -> Optional[Dict[str, Any]]:
+        """绕过内存缓存，直接读取磁盘上的状态文件。"""
+        sim_dir = self._get_simulation_dir(simulation_id)
+        state_file = os.path.join(sim_dir, "state.json")
+        if not os.path.exists(state_file):
+            return None
+        with open(state_file, 'r', encoding='utf-8') as f:
+            return json.load(f)
+
+    def refresh_simulation(self, simulation_id: str) -> Optional[SimulationState]:
+        """忽略当前实例缓存，强制从磁盘重新读取状态。"""
+        self._simulations.pop(simulation_id, None)
+        return self._load_simulation_state(simulation_id)
+
+    def is_prepare_cancel_requested(self, simulation_id: str) -> bool:
+        """检查当前 prepare 是否已被请求取消。"""
+        state_data = self._read_simulation_state_data(simulation_id)
+        return bool(state_data and state_data.get("prepare_cancel_requested", False))
+
+    def request_prepare_cancel(self, simulation_id: str) -> Optional[SimulationState]:
+        """请求取消正在进行的 prepare。"""
+        state = self.refresh_simulation(simulation_id)
+        if not state:
+            return None
+        state.prepare_cancel_requested = True
+        self._save_simulation_state(state)
         return state
     
     def create_simulation(
@@ -263,10 +331,24 @@ class SimulationManager:
             raise ValueError(f"模拟不存在: {simulation_id}")
         
         try:
-            state.status = SimulationStatus.PREPARING
-            self._save_simulation_state(state)
-            
             sim_dir = self._get_simulation_dir(simulation_id)
+            def ensure_prepare_not_cancelled():
+                if self.is_prepare_cancel_requested(simulation_id):
+                    raise InterruptedError("PREPARE_CANCELLED")
+
+            state.status = SimulationStatus.PREPARING
+            state.error = None
+            state.profiles_count = 0
+            state.profiles_generated = False
+            state.prepare_cancel_requested = False
+            state.config_generated = False
+            state.config_reasoning = ""
+            state.prepare_started_at = datetime.now().isoformat()
+            state.prepare_finished_at = None
+            self._reset_prepare_artifacts(simulation_id)
+            self._save_simulation_state(state)
+
+            ensure_prepare_not_cancelled()
             
             # ========== 阶段1: 读取并过滤实体 ==========
             if progress_callback:
@@ -282,6 +364,8 @@ class SimulationManager:
                 defined_entity_types=defined_entity_types,
                 enrich_with_edges=True
             )
+
+            ensure_prepare_not_cancelled()
             
             state.entities_count = filtered.filtered_count
             state.entity_types = list(filtered.entity_types)
@@ -315,6 +399,10 @@ class SimulationManager:
             generator = OasisProfileGenerator(graph_id=state.graph_id)
             
             def profile_progress(current, total, msg):
+                ensure_prepare_not_cancelled()
+                if current != state.profiles_count:
+                    state.profiles_count = current
+                    self._save_simulation_state(state)
                 if progress_callback:
                     progress_callback(
                         "generating_profiles", 
@@ -342,10 +430,14 @@ class SimulationManager:
                 graph_id=state.graph_id,  # 传入graph_id用于Zep检索
                 parallel_count=parallel_profile_count,  # 并行生成数量
                 realtime_output_path=realtime_output_path,  # 实时保存路径
-                output_platform=realtime_platform  # 输出格式
+                output_platform=realtime_platform,  # 输出格式
+                cancel_callback=lambda: self.is_prepare_cancel_requested(simulation_id)
             )
-            
+
+            ensure_prepare_not_cancelled()
             state.profiles_count = len(profiles)
+            state.profiles_generated = True
+            self._save_simulation_state(state)
             
             # 保存Profile文件（注意：Twitter使用CSV格式，Reddit使用JSON格式）
             # Reddit 已经在生成过程中实时保存了，这里再保存一次确保完整性
@@ -390,6 +482,7 @@ class SimulationManager:
                 )
             
             config_generator = SimulationConfigGenerator()
+            ensure_prepare_not_cancelled()
             
             if progress_callback:
                 progress_callback(
@@ -409,7 +502,8 @@ class SimulationManager:
                 enable_twitter=state.enable_twitter,
                 enable_reddit=state.enable_reddit
             )
-            
+
+            ensure_prepare_not_cancelled()
             if progress_callback:
                 progress_callback(
                     "generating_config", 70, 
@@ -439,6 +533,9 @@ class SimulationManager:
             
             # 更新状态
             state.status = SimulationStatus.READY
+            state.prepare_cancel_requested = False
+            state.active_prepare_task_id = None
+            state.prepare_finished_at = datetime.now().isoformat()
             self._save_simulation_state(state)
             
             logger.info(f"模拟准备完成: {simulation_id}, "
@@ -446,12 +543,27 @@ class SimulationManager:
             
             return state
             
+        except InterruptedError as e:
+            if str(e) != "PREPARE_CANCELLED":
+                raise
+            logger.info(f"模拟准备已取消: {simulation_id}")
+            state.status = SimulationStatus.FAILED
+            state.error = "准备已取消"
+            state.prepare_cancel_requested = False
+            state.active_prepare_task_id = None
+            state.prepare_finished_at = datetime.now().isoformat()
+            self._save_simulation_state(state)
+            raise
+
         except Exception as e:
             logger.error(f"模拟准备失败: {simulation_id}, error={str(e)}")
             import traceback
             logger.error(traceback.format_exc())
             state.status = SimulationStatus.FAILED
             state.error = str(e)
+            state.prepare_cancel_requested = False
+            state.active_prepare_task_id = None
+            state.prepare_finished_at = datetime.now().isoformat()
             self._save_simulation_state(state)
             raise
     
@@ -476,6 +588,20 @@ class SimulationManager:
                         simulations.append(state)
         
         return simulations
+
+    def mark_interrupted_preparations_failed(self) -> int:
+        """将进程中断后遗留的 preparing 状态标记为 failed。"""
+        updated_count = 0
+        for state in self.list_simulations():
+            if state.status != SimulationStatus.PREPARING:
+                continue
+            state.status = SimulationStatus.FAILED
+            state.error = "准备任务因服务重启或中断而终止，请重新开始"
+            state.active_prepare_task_id = None
+            state.prepare_finished_at = datetime.now().isoformat()
+            self._save_simulation_state(state)
+            updated_count += 1
+        return updated_count
     
     def get_profiles(self, simulation_id: str, platform: str = "reddit") -> List[Dict[str, Any]]:
         """获取模拟的Agent Profile"""

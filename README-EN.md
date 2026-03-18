@@ -122,6 +122,14 @@ LLM_API_KEY=your_api_key
 LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 LLM_MODEL_NAME=qwen-plus
 
+# Or use local Ollama (OpenAI-compatible)
+# First run: ollama serve
+# Then pull a model: ollama pull qwen2.5:7b-instruct
+# When using local Ollama, LLM_API_KEY can be left empty
+# LLM_API_KEY=
+# LLM_BASE_URL=http://localhost:11434/v1
+# LLM_MODEL_NAME=qwen2.5:7b-instruct
+
 # Zep Cloud Configuration
 # Free monthly quota is sufficient for simple usage: https://app.getzep.com/
 ZEP_API_KEY=your_zep_api_key

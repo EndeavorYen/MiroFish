@@ -60,6 +60,8 @@ class GraphBuilderService:
         chunk_size: int = 500,
         chunk_overlap: int = 50,
     ) -> str:
+        if not self.llm_client:
+            raise ValueError("llm_client is required for graph building")
         """
         异步构建图谱
 
@@ -178,20 +180,33 @@ class GraphBuilderService:
             )
             entity_uuids[entity["name"]] = entity_uuid
 
-        # Store relations
+        # Store relations (resolve cross-chunk entities from store if needed)
         for rel in result.get("relations", []):
             source_uuid = entity_uuids.get(rel["source"])
             target_uuid = entity_uuids.get(rel["target"])
+            # Look up from store if not in current chunk's extractions
+            if not source_uuid:
+                source_uuid = self._find_entity_uuid(graph_id, rel["source"])
+            if not target_uuid:
+                target_uuid = self._find_entity_uuid(graph_id, rel["target"])
             if source_uuid and target_uuid:
                 self.store.add_relation(
                     graph_id, source_uuid, target_uuid,
                     rel["type"], rel.get("fact", "")
                 )
 
+    def _find_entity_uuid(self, graph_id: str, name: str) -> Optional[str]:
+        """Look up an entity UUID by name from the store."""
+        norm_name = name.strip().lower()
+        for entity in self.store.list_entities(graph_id, limit=10000):
+            if entity.name.strip().lower() == norm_name:
+                return entity.uuid
+        return None
+
     def _get_graph_info(self, graph_id: str) -> GraphInfo:
         """获取图谱信息"""
-        entities = self.store.list_entities(graph_id)
-        relations = self.store.list_relations(graph_id)
+        entities = self.store.list_entities(graph_id, limit=10000)
+        relations = self.store.list_relations(graph_id, limit=10000)
         entity_types = set()
         for entity in entities:
             for label in entity.labels:
@@ -206,8 +221,8 @@ class GraphBuilderService:
 
     def get_graph_data(self, graph_id: str) -> Dict[str, Any]:
         """获取完整图谱数据（包含详细信息）"""
-        entities = self.store.list_entities(graph_id)
-        relations = self.store.list_relations(graph_id)
+        entities = self.store.list_entities(graph_id, limit=10000)
+        relations = self.store.list_relations(graph_id, limit=10000)
 
         node_map = {e.uuid: e.name for e in entities}
 

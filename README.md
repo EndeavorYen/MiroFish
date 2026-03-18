@@ -1,211 +1,187 @@
-<div align="center">
+# MiroFish
 
-<img src="./static/image/MiroFish_logo_compressed.jpeg" alt="MiroFish Logo" width="75%"/>
+> Fork from [666ghj/MiroFish](https://github.com/666ghj/MiroFish) — 原專案由盛大集團孵化，模擬引擎由 [OASIS](https://github.com/camel-ai/oasis) 驅動。
 
-<a href="https://trendshift.io/repositories/16144" target="_blank"><img src="https://trendshift.io/api/badge/repositories/16144" alt="666ghj%2FMiroFish | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
+簡潔通用的群體智能引擎 — 透過 LLM 驅動的多 Agent 模擬社群行為，產生預測報告。
 
-简洁通用的群体智能引擎，预测万物
-</br>
-<em>A Simple and Universal Swarm Intelligence Engine, Predicting Anything</em>
+## 專案概述
 
-<a href="https://www.shanda.com/" target="_blank"><img src="./static/image/shanda_logo.png" alt="666ghj%2MiroFish | Shanda" height="40"/></a>
+**MiroFish** 是一款基於多智能體技術的 AI 預測引擎。上傳種子資料（新聞、報告、小說等），用自然語言描述預測需求，MiroFish 會自動建構數位平行世界，讓上千個具備獨立人格與記憶的 Agent 在社群平台上自由互動，最終生成一份詳盡的預測報告。
 
-[![GitHub Stars](https://img.shields.io/github/stars/666ghj/MiroFish?style=flat-square&color=DAA520)](https://github.com/666ghj/MiroFish/stargazers)
-[![GitHub Watchers](https://img.shields.io/github/watchers/666ghj/MiroFish?style=flat-square)](https://github.com/666ghj/MiroFish/watchers)
-[![GitHub Forks](https://img.shields.io/github/forks/666ghj/MiroFish?style=flat-square)](https://github.com/666ghj/MiroFish/network)
-[![Docker](https://img.shields.io/badge/Docker-Build-2496ED?style=flat-square&logo=docker&logoColor=white)](https://hub.docker.com/)
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/666ghj/MiroFish)
+### 本 Fork 的主要改動
 
-[![Discord](https://img.shields.io/badge/Discord-Join-5865F2?style=flat-square&logo=discord&logoColor=white)](https://discord.com/channels/1469200078932545606/1469201282077163739)
-[![X](https://img.shields.io/badge/X-Follow-000000?style=flat-square&logo=x&logoColor=white)](https://x.com/mirofish_ai)
-[![Instagram](https://img.shields.io/badge/Instagram-Follow-E4405F?style=flat-square&logo=instagram&logoColor=white)](https://www.instagram.com/mirofish_ai/)
+- **去 Zep 化**：移除 Zep Cloud 依賴，改用 NetworkX + SQLite 混合架構（本地圖譜 + 全文檢索）
+- **零外部服務**：記憶圖譜完全本地化，無需第三方雲端服務
+- **中文介面**：前端支援繁體中文 / 英文切換
 
-[English](./README-EN.md) | [中文文档](./README.md)
-
-</div>
-
-## ⚡ 项目概述
-
-**MiroFish** 是一款基于多智能体技术的新一代 AI 预测引擎。通过提取现实世界的种子信息（如突发新闻、政策草案、金融信号），自动构建出高保真的平行数字世界。在此空间内，成千上万个具备独立人格、长期记忆与行为逻辑的智能体进行自由交互与社会演化。你可透过「上帝视角」动态注入变量，精准推演未来走向——**让未来在数字沙盘中预演，助决策在百战模拟后胜出**。
-
-> 你只需：上传种子材料（数据分析报告或者有趣的小说故事），并用自然语言描述预测需求</br>
-> MiroFish 将返回：一份详尽的预测报告，以及一个可深度交互的高保真数字世界
-
-### 我们的愿景
-
-MiroFish 致力于打造映射现实的群体智能镜像，通过捕捉个体互动引发的群体涌现，突破传统预测的局限：
-
-- **于宏观**：我们是决策者的预演实验室，让政策与公关在零风险中试错
-- **于微观**：我们是个人用户的创意沙盘，无论是推演小说结局还是探索脑洞，皆可有趣、好玩、触手可及
-
-从严肃预测到趣味仿真，我们让每一个如果都能看见结果，让预测万物成为可能。
-
-## 🌐 在线体验
-
-欢迎访问在线 Demo 演示环境，体验我们为你准备的一次关于热点舆情事件的推演预测：[mirofish-live-demo](https://666ghj.github.io/mirofish-demo/)
-
-## 📸 系统截图
+## 系統截圖
 
 <div align="center">
 <table>
 <tr>
-<td><img src="./static/image/Screenshot/运行截图1.png" alt="截图1" width="100%"/></td>
-<td><img src="./static/image/Screenshot/运行截图2.png" alt="截图2" width="100%"/></td>
+<td><img src="./static/image/Screenshot/運行截圖1.png" alt="截圖1" width="100%"/></td>
+<td><img src="./static/image/Screenshot/運行截圖2.png" alt="截圖2" width="100%"/></td>
 </tr>
 <tr>
-<td><img src="./static/image/Screenshot/运行截图3.png" alt="截图3" width="100%"/></td>
-<td><img src="./static/image/Screenshot/运行截图4.png" alt="截图4" width="100%"/></td>
-</tr>
-<tr>
-<td><img src="./static/image/Screenshot/运行截图5.png" alt="截图5" width="100%"/></td>
-<td><img src="./static/image/Screenshot/运行截图6.png" alt="截图6" width="100%"/></td>
+<td><img src="./static/image/Screenshot/運行截圖3.png" alt="截圖3" width="100%"/></td>
+<td><img src="./static/image/Screenshot/運行截圖4.png" alt="截圖4" width="100%"/></td>
 </tr>
 </table>
 </div>
 
-## 🎬 演示视频
+## 工作流程
 
-### 1. 武汉大学舆情推演预测 + MiroFish项目讲解
-
-<div align="center">
-<a href="https://www.bilibili.com/video/BV1VYBsBHEMY/" target="_blank"><img src="./static/image/武大模拟演示封面.png" alt="MiroFish Demo Video" width="75%"/></a>
-
-点击图片查看使用微舆BettaFish生成的《武大舆情报告》进行预测的完整演示视频
-</div>
-
-### 2. 《红楼梦》失传结局推演预测
-
-<div align="center">
-<a href="https://www.bilibili.com/video/BV1cPk3BBExq" target="_blank"><img src="./static/image/红楼梦模拟推演封面.jpg" alt="MiroFish Demo Video" width="75%"/></a>
-
-点击图片查看基于《红楼梦》前80回数十万字，MiroFish深度预测失传结局
-</div>
-
-> **金融方向推演预测**、**时政要闻推演预测**等示例陆续更新中...
-
-## 🔄 工作流程
-
-1. **图谱构建**：现实种子提取 & 个体与群体记忆注入 & GraphRAG构建
-2. **环境搭建**：实体关系抽取 & 人设生成 & 环境配置Agent注入仿真参数
-3. **开始模拟**：双平台并行模拟 & 自动解析预测需求 & 动态更新时序记忆
-4. **报告生成**：ReportAgent拥有丰富的工具集与模拟后环境进行深度交互
-5. **深度互动**：与模拟世界中的任意一位进行对话 & 与ReportAgent进行对话
-
-## 🚀 快速开始
-
-### 一、源码部署（推荐）
-
-#### 前置要求
-
-| 工具 | 版本要求 | 说明 | 安装检查 |
-|------|---------|------|---------|
-| **Node.js** | 18+ | 前端运行环境，包含 npm | `node -v` |
-| **Python** | ≥3.11, ≤3.12 | 后端运行环境 | `python --version` |
-| **uv** | 最新版 | Python 包管理器 | `uv --version` |
-
-#### 1. 配置环境变量
-
-```bash
-# 复制示例配置文件
-cp .env.example .env
-
-# 编辑 .env 文件，填入必要的 API 密钥
+```
+種子資料上傳 → 知識圖譜建構 → 環境與角色設定 → 社群模擬運行 → 報告生成與互動
 ```
 
-**必需的环境变量：**
+1. **圖譜建構** — 上傳文字資料，LLM 自動抽取實體與關係，建構知識圖譜
+2. **環境設定** — 根據圖譜生成 Agent 角色人設，配置模擬參數（平台、輪數等）
+3. **模擬運行** — Twitter / Reddit 雙平台並行模擬，Agent 自主發文、互動、搜尋
+4. **報告生成** — ReportAgent 透過圖譜搜尋工具分析模擬結果，產出預測報告
+5. **深度互動** — 與 ReportAgent 或模擬世界中的任意 Agent 進行對話
+
+## 快速開始
+
+### 前置需求
+
+| 工具 | 版本 | 用途 | 檢查指令 |
+|------|------|------|---------|
+| **Node.js** | 18+ | 前端執行環境 | `node -v` |
+| **Python** | 3.11 ~ 3.12 | 後端執行環境 | `python --version` |
+| **uv** | 最新版 | Python 套件管理 | `uv --version` |
+
+### 1. 設定環境變數
+
+```bash
+cp .env.example .env
+```
+
+編輯 `.env`，填入 LLM API 資訊：
 
 ```env
-# LLM API配置（支持 OpenAI SDK 格式的任意 LLM API）
-# 推荐使用阿里百炼平台qwen-plus模型：https://bailian.console.aliyun.com/
-# 注意消耗较大，可先进行小于40轮的模拟尝试
+# LLM API 設定（支援 OpenAI SDK 格式的任意 LLM API）
+# 推薦使用阿里百煉平台 qwen-plus：https://bailian.console.aliyun.com/
 LLM_API_KEY=your_api_key
 LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 LLM_MODEL_NAME=qwen-plus
-
-# 或使用本机 Ollama（OpenAI-compatible）
-# 先执行：ollama serve
-# 再拉模型：ollama pull qwen2.5:7b-instruct
-# 使用本机 Ollama 时，LLM_API_KEY 可留空
-# LLM_API_KEY=
-# LLM_BASE_URL=http://localhost:11434/v1
-# LLM_MODEL_NAME=qwen2.5:7b-instruct
-
-# Zep Cloud 配置
-# 每月免费额度即可支撑简单使用：https://app.getzep.com/
-ZEP_API_KEY=your_zep_api_key
 ```
 
-#### 2. 安装依赖
+<details>
+<summary>使用本地 Ollama（免費替代方案）</summary>
 
 ```bash
-# 一键安装所有依赖（根目录 + 前端 + 后端）
+# 啟動 Ollama 服務
+ollama serve
+
+# 拉取模型（擇一）
+ollama pull qwen2.5:7b-instruct   # 輕量
+ollama pull qwen3.5:9b             # 推薦，支援思考模式
+```
+
+```env
+# .env 設定
+LLM_API_KEY=ollama
+LLM_BASE_URL=http://localhost:11434/v1
+LLM_MODEL_NAME=qwen3.5:9b
+
+# 啟用思考模式（適用 qwen3.5 等支援推理的模型）
+# LLM_THINK=true
+```
+
+</details>
+
+> **注意**：本 Fork 已移除 Zep Cloud 依賴，不需要設定 `ZEP_API_KEY`。
+
+### 2. 安裝相依套件
+
+```bash
+# 一鍵安裝（根目錄 + 前端 + 後端）
 npm run setup:all
 ```
 
-或者分步安装：
+或分步安裝：
 
 ```bash
-# 安装 Node 依赖（根目录 + 前端）
-npm run setup
-
-# 安装 Python 依赖（后端，自动创建虚拟环境）
-npm run setup:backend
+npm run setup           # Node 相依（根目錄 + 前端）
+npm run setup:backend   # Python 相依（後端，自動建立 venv）
 ```
 
-#### 3. 启动服务
+### 3. 啟動服務
 
 ```bash
-# 同时启动前后端（在项目根目录执行）
+# 同時啟動前後端
 npm run dev
 ```
 
-**服务地址：**
-- 前端：`http://localhost:3000`
-- 后端 API：`http://localhost:5001`
+啟動後開啟瀏覽器：
 
-**单独启动：**
+| 服務 | 位址 |
+|------|------|
+| 前端介面 | http://localhost:3000 |
+| 後端 API | http://localhost:5001 |
 
-```bash
-npm run backend   # 仅启动后端
-npm run frontend  # 仅启动前端
-```
-
-### 二、Docker 部署
+單獨啟動：
 
 ```bash
-# 1. 配置环境变量（同源码部署）
-cp .env.example .env
-
-# 2. 拉取镜像并启动
-docker compose up -d
+npm run backend    # 僅後端
+npm run frontend   # 僅前端
 ```
 
-默认会读取根目录下的 `.env`，并映射端口 `3000（前端）/5001（后端）`
+### Docker 部署
 
-> 在 `docker-compose.yml` 中已通过注释提供加速镜像地址，可按需替换
+```bash
+cp .env.example .env    # 設定環境變數
+docker compose up -d    # 啟動容器
+```
 
-## 📬 更多交流
+預設使用 `.env` 並映射 `3000`（前端）/ `5001`（後端）埠號。
 
-<div align="center">
-<img src="./static/image/QQ群.png" alt="QQ交流群" width="60%"/>
-</div>
+## 使用指南
 
-&nbsp;
+### Step 1：上傳種子資料
 
-MiroFish团队长期招募全职/实习，如果你对多Agent应用感兴趣，欢迎投递简历至：**mirofish@shanda.com**
+在首頁上傳文字資料（支援直接貼上文字或上傳檔案）。系統會透過 LLM 抽取實體與關係，建構知識圖譜。
 
-## 📄 致谢
+### Step 2：設定模擬環境
 
-**MiroFish 得到了盛大集团的战略支持和孵化！**
+- 選擇模擬平台（Twitter / Reddit）
+- 設定模擬輪數（建議初次嘗試 20~40 輪）
+- 用自然語言描述你的預測需求
+- 系統會自動生成 Agent 角色人設與模擬配置
 
-MiroFish 的仿真引擎由 **[OASIS](https://github.com/camel-ai/oasis)** 驱动，我们衷心感谢 CAMEL-AI 团队的开源贡献！
+### Step 3：執行模擬
 
-## 📈 项目统计
+點擊開始後，Agent 將在虛擬社群平台上自主互動。你可以即時觀看模擬過程中 Agent 的發文、轉發、評論等行為。
 
-<a href="https://www.star-history.com/#666ghj/MiroFish&type=date&legend=top-left">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=666ghj/MiroFish&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=666ghj/MiroFish&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=666ghj/MiroFish&type=date&legend=top-left" />
- </picture>
-</a>
+### Step 4：查看報告
+
+模擬結束後，ReportAgent 會分析所有 Agent 的互動記錄，產出一份結構化的預測報告。你也可以繼續與 ReportAgent 對話，深入探討模擬結果。
+
+## 技術架構
+
+```
+frontend/          Vue 3 + Vite 前端
+backend/
+  app/
+    api/           Flask REST API
+    services/
+      graph_store.py              資料模型與 Protocol 定義
+      networkx_graph_store.py     NetworkX + SQLite 圖譜儲存
+      graph_builder.py            LLM 實體抽取 + 圖譜建構
+      graph_memory_updater.py     模擬活動 → 圖譜邊（零 LLM 成本）
+      search_tools.py             搜尋工具（QuickSearch / InsightForge）
+      report_agent.py             報告生成 Agent
+      simulation_runner.py        OASIS 模擬執行器
+    utils/
+      llm_client.py               統一 LLM 呼叫入口
+```
+
+## 致謝
+
+- 原專案 [666ghj/MiroFish](https://github.com/666ghj/MiroFish)，由盛大集團戰略支持與孵化
+- 模擬引擎 [OASIS](https://github.com/camel-ai/oasis)，由 CAMEL-AI 團隊開源貢獻
+
+## 授權
+
+[AGPL-3.0](LICENSE)

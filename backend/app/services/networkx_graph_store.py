@@ -19,12 +19,12 @@ from app.services.graph_store import (
     SearchResult,
     Community,
     generate_uuid,
+    normalize_name,
 )
 
 
-def _normalize_name(name: str) -> str:
-    """Normalize entity name for deduplication."""
-    return name.strip().lower()
+# Keep module-private alias for backward compatibility within this file
+_normalize_name = normalize_name
 
 
 class NetworkXGraphStore:

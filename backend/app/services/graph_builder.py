@@ -197,23 +197,17 @@ class GraphBuilderService:
 
     def _find_entity_uuid(self, graph_id: str, name: str) -> Optional[str]:
         """Look up an entity UUID by name from the store."""
-        if hasattr(self.store, 'find_entity_by_name'):
-            return self.store.find_entity_by_name(graph_id, name)
-        # Fallback for store implementations without find_entity_by_name
-        norm_name = name.strip().lower()
-        for entity in self.store.list_entities(graph_id, limit=10000):
-            if entity.name.strip().lower() == norm_name:
-                return entity.uuid
-        return None
+        return self.store.find_entity_by_name(graph_id, name)
 
     def _get_graph_info(self, graph_id: str) -> GraphInfo:
         """获取图谱信息"""
         entities = self.store.list_entities(graph_id, limit=10000)
         relations = self.store.list_relations(graph_id, limit=10000)
+        generic = {"Entity", "Node", "Unknown"}
         entity_types = set()
         for entity in entities:
             etype = entity.get_entity_type()
-            if etype != "Unknown":
+            if etype not in generic:
                 entity_types.add(etype)
         return GraphInfo(
             graph_id=graph_id,
@@ -229,14 +223,7 @@ class GraphBuilderService:
 
         node_map = {e.uuid: e.name for e in entities}
 
-        nodes_data = [
-            {
-                "uuid": e.uuid, "name": e.name, "labels": e.labels,
-                "summary": e.summary, "attributes": e.attributes,
-                "created_at": None,
-            }
-            for e in entities
-        ]
+        nodes_data = [e.to_dict() for e in entities]
 
         edges_data = []
         for r in relations:

@@ -41,6 +41,23 @@ class GraphMemoryUpdater:
     无LLM调用，零成本
     """
 
+    # Class-level map from action_type to fact-builder method name
+    # Avoids rebuilding a dict on every _build_fact call
+    _FACT_BUILDERS: Dict[str, str] = {
+        "CREATE_POST": "_fact_create_post",
+        "LIKE_POST": "_fact_like_post",
+        "DISLIKE_POST": "_fact_dislike_post",
+        "REPOST": "_fact_repost",
+        "QUOTE_POST": "_fact_quote_post",
+        "FOLLOW": "_fact_follow",
+        "CREATE_COMMENT": "_fact_create_comment",
+        "LIKE_COMMENT": "_fact_like_comment",
+        "DISLIKE_COMMENT": "_fact_dislike_comment",
+        "SEARCH_POSTS": "_fact_search",
+        "SEARCH_USER": "_fact_search_user",
+        "MUTE": "_fact_mute",
+    }
+
     def __init__(self, graph_id: str, store):
         """
         初始化更新器
@@ -178,20 +195,8 @@ class GraphMemoryUpdater:
         Returns:
             目标节点UUID，或None（若无目标）
         """
-        if action_type == "FOLLOW":
+        if action_type in ("FOLLOW", "MUTE"):
             # 目标是另一个agent
-            target_name = action_args.get("target_user_name", "")
-            if not target_name:
-                return None
-            return self.store.add_entity(
-                self.graph_id,
-                name=target_name,
-                entity_type="agent",
-                summary=target_name,
-                attributes={},
-            )
-
-        if action_type == "MUTE":
             target_name = action_args.get("target_user_name", "")
             if not target_name:
                 return None
@@ -255,23 +260,9 @@ class GraphMemoryUpdater:
         生成中文描述作为关系的fact字段
         格式与原zep_graph_memory_updater保持一致
         """
-        builders = {
-            "CREATE_POST": self._fact_create_post,
-            "LIKE_POST": self._fact_like_post,
-            "DISLIKE_POST": self._fact_dislike_post,
-            "REPOST": self._fact_repost,
-            "QUOTE_POST": self._fact_quote_post,
-            "FOLLOW": self._fact_follow,
-            "CREATE_COMMENT": self._fact_create_comment,
-            "LIKE_COMMENT": self._fact_like_comment,
-            "DISLIKE_COMMENT": self._fact_dislike_comment,
-            "SEARCH_POSTS": self._fact_search,
-            "SEARCH_USER": self._fact_search_user,
-            "MUTE": self._fact_mute,
-        }
-        builder = builders.get(action_type)
-        if builder:
-            description = builder(action_args)
+        method_name = self._FACT_BUILDERS.get(action_type)
+        if method_name:
+            description = getattr(self, method_name)(action_args)
         else:
             description = f"执行了{action_type}操作"
         return f"{agent_name}: {description}"

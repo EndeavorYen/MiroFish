@@ -16,6 +16,11 @@ def generate_uuid() -> str:
     return str(uuid_lib.uuid4())
 
 
+def normalize_name(name: str) -> str:
+    """Normalize entity name for deduplication (case-insensitive, trimmed)."""
+    return name.strip().lower()
+
+
 @dataclass
 class EntityNode:
     uuid: str
@@ -107,6 +112,7 @@ class GraphStore(Protocol):
     def add_entity(self, graph_id: str, name: str, entity_type: str,
                    summary: str, attributes: dict) -> str: ...
     def get_entity(self, graph_id: str, uuid: str) -> EntityNode: ...
+    def find_entity_by_name(self, graph_id: str, name: str) -> Optional[str]: ...
     def get_entity_edges(self, graph_id: str, uuid: str) -> List[RelationEdge]: ...
     def list_entities(self, graph_id: str, limit: int = 100,
                       cursor: Optional[str] = None) -> List[EntityNode]: ...

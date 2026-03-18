@@ -21,13 +21,8 @@ from enum import Enum
 from ..config import Config
 from ..utils.llm_client import LLMClient
 from ..utils.logger import get_logger
-from .zep_tools import (
-    ZepToolsService, 
-    SearchResult, 
-    InsightForgeResult, 
-    PanoramaResult,
-    InterviewResult
-)
+from .search_tools import SearchTools
+from .graph_store import SearchResult
 
 logger = get_logger('mirofish.report_agent')
 
@@ -353,7 +348,7 @@ class ReportConsoleLogger:
         # 添加到 report_agent 相关的 logger
         loggers_to_attach = [
             'mirofish.report_agent',
-            'mirofish.zep_tools',
+            'mirofish.search_tools',
         ]
         
         for logger_name in loggers_to_attach:
@@ -369,7 +364,7 @@ class ReportConsoleLogger:
         if self._file_handler:
             loggers_to_detach = [
                 'mirofish.report_agent',
-                'mirofish.zep_tools',
+                'mirofish.search_tools',
             ]
             
             for logger_name in loggers_to_detach:
@@ -881,29 +876,37 @@ class ReportAgent:
     MAX_TOOL_CALLS_PER_CHAT = 2
     
     def __init__(
-        self, 
+        self,
         graph_id: str,
         simulation_id: str,
         simulation_requirement: str,
         llm_client: Optional[LLMClient] = None,
-        zep_tools: Optional[ZepToolsService] = None
+        store=None,
+        search_tools=None
     ):
         """
         初始化Report Agent
-        
+
         Args:
             graph_id: 图谱ID
             simulation_id: 模拟ID
             simulation_requirement: 模拟需求描述
             llm_client: LLM客户端（可选）
-            zep_tools: Zep工具服务（可选）
+            store: GraphStore instance（可选）
+            search_tools: SearchTools instance（可选）
         """
         self.graph_id = graph_id
         self.simulation_id = simulation_id
         self.simulation_requirement = simulation_requirement
-        
+
         self.llm = llm_client or LLMClient()
-        self.zep_tools = zep_tools or ZepToolsService()
+        self.store = store
+        if search_tools:
+            self.search_tools = search_tools
+        elif store:
+            self.search_tools = SearchTools(graph_id=graph_id, store=store, llm_client=self.llm)
+        else:
+            self.search_tools = None
         
         # 工具定义
         self.tools = self._define_tools()
@@ -969,88 +972,83 @@ class ReportAgent:
         try:
             if tool_name == "insight_forge":
                 query = parameters.get("query", "")
-                ctx = parameters.get("report_context", "") or report_context
-                result = self.zep_tools.insight_forge(
-                    graph_id=self.graph_id,
-                    query=query,
-                    simulation_requirement=self.simulation_requirement,
-                    report_context=ctx
-                )
+                if not self.search_tools:
+                    return "搜索工具未初始化，无法执行 insight_forge"
+                result = self.search_tools.insight_forge(query)
                 return result.to_text()
-            
+
             elif tool_name == "panorama_search":
                 # 广度搜索 - 获取全貌
                 query = parameters.get("query", "")
-                include_expired = parameters.get("include_expired", True)
-                if isinstance(include_expired, str):
-                    include_expired = include_expired.lower() in ['true', '1', 'yes']
-                result = self.zep_tools.panorama_search(
-                    graph_id=self.graph_id,
-                    query=query,
-                    include_expired=include_expired
-                )
+                if not self.search_tools:
+                    return "搜索工具未初始化，无法执行 panorama_search"
+                result = self.search_tools.panorama_search(query)
                 return result.to_text()
-            
+
             elif tool_name == "quick_search":
                 # 简单搜索 - 快速检索
                 query = parameters.get("query", "")
                 limit = parameters.get("limit", 10)
                 if isinstance(limit, str):
                     limit = int(limit)
-                result = self.zep_tools.quick_search(
-                    graph_id=self.graph_id,
-                    query=query,
-                    limit=limit
-                )
+                if not self.search_tools:
+                    return "搜索工具未初始化，无法执行 quick_search"
+                result = self.search_tools.quick_search(query, limit=limit)
                 return result.to_text()
-            
+
             elif tool_name == "interview_agents":
-                # 深度采访 - 调用真实的OASIS采访API获取模拟Agent的回答（双平台）
-                interview_topic = parameters.get("interview_topic", parameters.get("query", ""))
-                max_agents = parameters.get("max_agents", 5)
-                if isinstance(max_agents, str):
-                    max_agents = int(max_agents)
-                max_agents = min(max_agents, 10)
-                result = self.zep_tools.interview_agents(
-                    simulation_id=self.simulation_id,
-                    interview_requirement=interview_topic,
-                    simulation_requirement=self.simulation_requirement,
-                    max_agents=max_agents
-                )
-                return result.to_text()
-            
+                # 深度采访 - 需要活跃的模拟运行时环境，当前不可用
+                return "interview_agents 工具需要活跃的 OASIS 模拟运行时环境，当前不可用。请使用 insight_forge 或 quick_search 从图谱中获取信息。"
+
             # ========== 向后兼容的旧工具（内部重定向到新工具） ==========
-            
+
             elif tool_name == "search_graph":
                 # 重定向到 quick_search
                 logger.info("search_graph 已重定向到 quick_search")
                 return self._execute_tool("quick_search", parameters, report_context)
-            
+
             elif tool_name == "get_graph_statistics":
-                result = self.zep_tools.get_graph_statistics(self.graph_id)
+                if not self.store:
+                    return json.dumps({"error": "store 未初始化"}, ensure_ascii=False)
+                entities = self.store.list_entities(self.graph_id, limit=10000)
+                relations = self.store.list_relations(self.graph_id, limit=10000)
+                entity_types = {}
+                for e in entities:
+                    for label in e.labels:
+                        if label not in ("Entity", "Node"):
+                            entity_types[label] = entity_types.get(label, 0) + 1
+                result = {
+                    "total_nodes": len(entities),
+                    "total_edges": len(relations),
+                    "entity_types": entity_types,
+                }
                 return json.dumps(result, ensure_ascii=False, indent=2)
-            
+
             elif tool_name == "get_entity_summary":
                 entity_name = parameters.get("entity_name", "")
-                result = self.zep_tools.get_entity_summary(
-                    graph_id=self.graph_id,
-                    entity_name=entity_name
-                )
+                if not self.store:
+                    return json.dumps({"error": "store 未初始化"}, ensure_ascii=False)
+                search_result = self.store.search(self.graph_id, entity_name, scope="nodes", limit=1)
+                if search_result.nodes:
+                    node = search_result.nodes[0]
+                    result = {"name": node.name, "labels": node.labels, "summary": node.summary}
+                else:
+                    result = {"name": entity_name, "summary": "未找到该实体"}
                 return json.dumps(result, ensure_ascii=False, indent=2)
-            
+
             elif tool_name == "get_simulation_context":
                 # 重定向到 insight_forge，因为它更强大
                 logger.info("get_simulation_context 已重定向到 insight_forge")
                 query = parameters.get("query", self.simulation_requirement)
                 return self._execute_tool("insight_forge", {"query": query}, report_context)
-            
+
             elif tool_name == "get_entities_by_type":
                 entity_type = parameters.get("entity_type", "")
-                nodes = self.zep_tools.get_entities_by_type(
-                    graph_id=self.graph_id,
-                    entity_type=entity_type
-                )
-                result = [n.to_dict() for n in nodes]
+                if not self.store:
+                    return json.dumps([], ensure_ascii=False)
+                entities = self.store.list_entities(self.graph_id, limit=10000)
+                filtered = [e for e in entities if entity_type in e.labels]
+                result = [n.to_dict() for n in filtered]
                 return json.dumps(result, ensure_ascii=False, indent=2)
             
             else:
@@ -1133,8 +1131,38 @@ class ReportAgent:
                 desc_parts.append(f"  参数: {params_desc}")
         return "\n".join(desc_parts)
     
+    def _get_simulation_context(self) -> Dict[str, Any]:
+        """Get simulation context from local store."""
+        if not self.store:
+            return {"graph_statistics": {}, "related_facts": [], "total_entities": 0}
+
+        entities = self.store.list_entities(self.graph_id, limit=10000)
+        relations = self.store.list_relations(self.graph_id, limit=10000)
+
+        entity_types = {}
+        for e in entities:
+            for label in e.labels:
+                if label not in ("Entity", "Node"):
+                    entity_types[label] = entity_types.get(label, 0) + 1
+
+        # Get related facts via search
+        if self.search_tools:
+            search_result = self.search_tools.quick_search(self.simulation_requirement, limit=20)
+        else:
+            search_result = SearchResult(nodes=[], edges=[], facts=[])
+
+        return {
+            "graph_statistics": {
+                "total_nodes": len(entities),
+                "total_edges": len(relations),
+                "entity_types": entity_types,
+            },
+            "total_entities": len(entities),
+            "related_facts": search_result.facts,
+        }
+
     def plan_outline(
-        self, 
+        self,
         progress_callback: Optional[Callable] = None
     ) -> ReportOutline:
         """
@@ -1154,10 +1182,7 @@ class ReportAgent:
             progress_callback("planning", 0, "正在分析模拟需求...")
         
         # 首先获取模拟上下文
-        context = self.zep_tools.get_simulation_context(
-            graph_id=self.graph_id,
-            simulation_requirement=self.simulation_requirement
-        )
+        context = self._get_simulation_context()
         
         if progress_callback:
             progress_callback("planning", 30, "正在生成报告大纲...")

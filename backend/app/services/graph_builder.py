@@ -5,7 +5,7 @@
 
 import uuid
 import threading
-from typing import Dict, Any, List, Optional, Callable
+from typing import Dict, Any, List, Optional
 from dataclasses import dataclass
 
 from ..models.task import TaskManager, TaskStatus
@@ -60,8 +60,6 @@ class GraphBuilderService:
         chunk_size: int = 500,
         chunk_overlap: int = 50,
     ) -> str:
-        if not self.llm_client:
-            raise ValueError("llm_client is required for graph building")
         """
         异步构建图谱
 
@@ -74,6 +72,8 @@ class GraphBuilderService:
         Returns:
             任务ID
         """
+        if not self.llm_client:
+            raise ValueError("llm_client is required for graph building")
         task_id = self.task_manager.create_task(
             task_type="graph_build",
             metadata={
@@ -197,6 +197,9 @@ class GraphBuilderService:
 
     def _find_entity_uuid(self, graph_id: str, name: str) -> Optional[str]:
         """Look up an entity UUID by name from the store."""
+        if hasattr(self.store, 'find_entity_by_name'):
+            return self.store.find_entity_by_name(graph_id, name)
+        # Fallback for store implementations without find_entity_by_name
         norm_name = name.strip().lower()
         for entity in self.store.list_entities(graph_id, limit=10000):
             if entity.name.strip().lower() == norm_name:
@@ -209,9 +212,9 @@ class GraphBuilderService:
         relations = self.store.list_relations(graph_id, limit=10000)
         entity_types = set()
         for entity in entities:
-            for label in entity.labels:
-                if label not in ("Entity", "Node"):
-                    entity_types.add(label)
+            etype = entity.get_entity_type()
+            if etype != "Unknown":
+                entity_types.add(etype)
         return GraphInfo(
             graph_id=graph_id,
             node_count=len(entities),
@@ -235,23 +238,14 @@ class GraphBuilderService:
             for e in entities
         ]
 
-        edges_data = [
-            {
-                "uuid": r.uuid, "name": r.name, "fact": r.fact,
-                "fact_type": r.name,
-                "source_node_uuid": r.source_node_uuid,
-                "target_node_uuid": r.target_node_uuid,
-                "source_node_name": node_map.get(r.source_node_uuid, ""),
-                "target_node_name": node_map.get(r.target_node_uuid, ""),
-                "attributes": r.attributes,
-                "created_at": r.created_at.isoformat() if r.created_at else None,
-                "valid_at": r.valid_at.isoformat() if r.valid_at else None,
-                "invalid_at": r.invalid_at.isoformat() if r.invalid_at else None,
-                "expired_at": r.expired_at.isoformat() if r.expired_at else None,
-                "episodes": [],
-            }
-            for r in relations
-        ]
+        edges_data = []
+        for r in relations:
+            d = r.to_dict()
+            d["fact_type"] = r.name
+            d["source_node_name"] = node_map.get(r.source_node_uuid, "")
+            d["target_node_name"] = node_map.get(r.target_node_uuid, "")
+            d["episodes"] = []
+            edges_data.append(d)
 
         return {
             "graph_id": graph_id,

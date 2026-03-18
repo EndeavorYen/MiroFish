@@ -37,6 +37,7 @@ class NetworkXGraphStore:
         self._db_lock = threading.Lock()
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
+        self._conn.execute("PRAGMA journal_mode=WAL")
         self._init_tables()
 
     # ── Schema setup ────────────────────────────────────────────────
@@ -59,6 +60,10 @@ class NetworkXGraphStore:
             c.execute("""
                 CREATE UNIQUE INDEX IF NOT EXISTS idx_entity_dedup
                 ON entities(graph_id, name_normalized, entity_type)
+            """)
+            c.execute("""
+                CREATE INDEX IF NOT EXISTS idx_entity_name
+                ON entities(graph_id, name_normalized)
             """)
             c.execute("""
                 CREATE TABLE IF NOT EXISTS relations (
@@ -200,6 +205,18 @@ class NetworkXGraphStore:
             summary=data.get("summary", ""),
             attributes=data.get("attributes", {}),
         )
+
+    def find_entity_by_name(
+        self, graph_id: str, name: str
+    ) -> Optional[str]:
+        """Find entity UUID by name (case-insensitive). Returns None if not found."""
+        norm = _normalize_name(name)
+        with self._db_lock:
+            row = self._conn.execute(
+                "SELECT uuid FROM entities WHERE graph_id = ? AND name_normalized = ? LIMIT 1",
+                (graph_id, norm),
+            ).fetchone()
+            return row["uuid"] if row else None
 
     def list_entities(
         self, graph_id: str, limit: int = 100, cursor: Optional[str] = None
@@ -493,8 +510,8 @@ class NetworkXGraphStore:
 
         # Re-insert entities and relations into SQLite
         with self._db_lock:
+            now = datetime.now().isoformat()
             for nid, ndata in g.nodes(data=True):
-                now = datetime.now().isoformat()
                 self._conn.execute(
                     "INSERT OR REPLACE INTO entities "
                     "(uuid, graph_id, name, name_normalized, entity_type, "
@@ -510,7 +527,6 @@ class NetworkXGraphStore:
                     ),
                 )
             for src, tgt, edata in g.edges(data=True):
-                now = datetime.now().isoformat()
                 self._conn.execute(
                     "INSERT OR REPLACE INTO relations "
                     "(uuid, graph_id, source_uuid, target_uuid, name, fact, "

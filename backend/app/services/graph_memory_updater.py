@@ -151,19 +151,12 @@ class GraphMemoryUpdater:
         """
         找到已有agent节点或创建新节点
 
+        Uses add_entity's built-in dedup (name_normalized + entity_type)
+        to avoid scanning all entities.
+
         Returns:
             agent节点的UUID
         """
-        # 先尝试在已有实体中查找（按agent_id名称查找）
-        try:
-            entities = self.store.list_entities(self.graph_id, limit=1000)
-            for entity in entities:
-                if entity.name == agent_id and "agent" in entity.labels:
-                    return entity.uuid
-        except Exception:
-            pass
-
-        # 未找到时创建新节点
         return self.store.add_entity(
             self.graph_id,
             name=agent_id,
@@ -232,15 +225,7 @@ class GraphMemoryUpdater:
             # 目标是帖子/评论节点
             post_id = action_args.get("post_id") or action_args.get("comment_id", "")
             if post_id:
-                # 先检查是否已存在
-                try:
-                    entities = self.store.list_entities(self.graph_id, limit=10000)
-                    for entity in entities:
-                        if entity.name == str(post_id):
-                            return entity.uuid
-                except Exception:
-                    pass
-                # 创建新post节点
+                # add_entity deduplicates by name+type, returns existing UUID if found
                 content = action_args.get("content", "")
                 return self.store.add_entity(
                     self.graph_id,
@@ -443,7 +428,8 @@ class GraphMemoryManager:
     @classmethod
     def get_updater(cls, simulation_id: str) -> Optional[GraphMemoryUpdater]:
         """获取模拟的更新器"""
-        return cls._updaters.get(simulation_id)
+        with cls._lock:
+            return cls._updaters.get(simulation_id)
 
     @classmethod
     def stop_updater(cls, simulation_id: str):
@@ -463,7 +449,8 @@ class GraphMemoryManager:
     @classmethod
     def get_all_stats(cls) -> Dict[str, Dict[str, Any]]:
         """获取所有更新器的统计信息"""
-        return {
-            sim_id: updater.get_stats()
-            for sim_id, updater in cls._updaters.items()
-        }
+        with cls._lock:
+            return {
+                sim_id: updater.get_stats()
+                for sim_id, updater in cls._updaters.items()
+            }

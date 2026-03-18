@@ -4,8 +4,7 @@ Reads entities from a GraphStore, filters by type, enriches with edges/neighbors
 """
 from dataclasses import dataclass
 from typing import Optional, List, Set
-from .graph_store import EntityNode
-from .networkx_graph_store import NetworkXGraphStore
+from .graph_store import EntityNode, GraphStore
 
 GENERIC_TYPES = {"Entity", "Node"}
 
@@ -25,7 +24,7 @@ class FilteredEntities:
         }
 
 class EntityReader:
-    def __init__(self, store: NetworkXGraphStore):
+    def __init__(self, store: GraphStore):
         self.store = store
 
     def filter_defined_entities(self, graph_id, defined_entity_types=None, enrich_with_edges=False):
@@ -43,6 +42,8 @@ class EntityReader:
             filtered.append(entity)
 
         if enrich_with_edges:
+            # Pre-build lookup to avoid N+1 get_entity calls per neighbor
+            entity_by_uuid = {e.uuid: e for e in all_entities}
             for entity in filtered:
                 edges = self.store.get_entity_edges(graph_id, entity.uuid)
                 entity.related_edges = [
@@ -57,11 +58,9 @@ class EntityReader:
                     neighbor_uuids.add(other)
                 entity.related_nodes = []
                 for nid in neighbor_uuids:
-                    try:
-                        n = self.store.get_entity(graph_id, nid)
+                    n = entity_by_uuid.get(nid)
+                    if n:
                         entity.related_nodes.append({"uuid": n.uuid, "name": n.name, "labels": n.labels, "summary": n.summary})
-                    except KeyError:
-                        pass
 
         return FilteredEntities(entities=filtered, entity_types=entity_types,
                                 total_count=total_count, filtered_count=len(filtered))
@@ -69,7 +68,7 @@ class EntityReader:
     def get_entity_with_context(self, graph_id, entity_uuid):
         try:
             return self.store.get_entity(graph_id, entity_uuid)
-        except KeyError:
+        except (KeyError, ValueError):
             return None
 
     def get_entities_by_type(self, graph_id, entity_type):

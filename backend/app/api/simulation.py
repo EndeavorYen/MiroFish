@@ -1,16 +1,16 @@
 """
 模拟相关API路由
-Step2: Zep实体读取与过滤、OASIS模拟准备与运行（全程自动化）
+Step2: 实体读取与过滤、OASIS模拟准备与运行（全程自动化）
 """
 
 import os
 import traceback
 from datetime import datetime
-from flask import request, jsonify, send_file
+from flask import request, jsonify, send_file, current_app
 
 from . import simulation_bp
 from ..config import Config
-from ..services.zep_entity_reader import ZepEntityReader
+from ..services.entity_reader import EntityReader
 from ..services.oasis_profile_generator import OasisProfileGenerator
 from ..services.simulation_manager import SimulationManager, SimulationStatus
 from ..services.simulation_runner import SimulationRunner, RunnerStatus
@@ -54,7 +54,7 @@ def _is_artifact_current(file_path: str, state_data: dict) -> bool:
 
 def _build_inflight_prepare_status(simulation_id: str) -> dict | None:
     """在任务对象丢失时，尽量从 state.json 恢复 prepare 进度。"""
-    manager = SimulationManager()
+    manager = SimulationManager(store=current_app.graph_store)
     state = manager.get_simulation(simulation_id)
     if not state:
         return None
@@ -180,19 +180,13 @@ def get_graph_entities(graph_id: str):
         enrich: 是否获取相关边信息（默认true）
     """
     try:
-        if not Config.ZEP_API_KEY:
-            return jsonify({
-                "success": False,
-                "error": "ZEP_API_KEY未配置"
-            }), 500
-        
         entity_types_str = request.args.get('entity_types', '')
         entity_types = [t.strip() for t in entity_types_str.split(',') if t.strip()] if entity_types_str else None
         enrich = request.args.get('enrich', 'true').lower() == 'true'
-        
+
         logger.info(f"获取图谱实体: graph_id={graph_id}, entity_types={entity_types}, enrich={enrich}")
-        
-        reader = ZepEntityReader()
+
+        reader = EntityReader(store=current_app.graph_store)
         result = reader.filter_defined_entities(
             graph_id=graph_id,
             defined_entity_types=entity_types,
@@ -217,13 +211,7 @@ def get_graph_entities(graph_id: str):
 def get_entity_detail(graph_id: str, entity_uuid: str):
     """获取单个实体的详细信息"""
     try:
-        if not Config.ZEP_API_KEY:
-            return jsonify({
-                "success": False,
-                "error": "ZEP_API_KEY未配置"
-            }), 500
-        
-        reader = ZepEntityReader()
+        reader = EntityReader(store=current_app.graph_store)
         entity = reader.get_entity_with_context(graph_id, entity_uuid)
         
         if not entity:
@@ -250,15 +238,9 @@ def get_entity_detail(graph_id: str, entity_uuid: str):
 def get_entities_by_type(graph_id: str, entity_type: str):
     """获取指定类型的所有实体"""
     try:
-        if not Config.ZEP_API_KEY:
-            return jsonify({
-                "success": False,
-                "error": "ZEP_API_KEY未配置"
-            }), 500
-        
         enrich = request.args.get('enrich', 'true').lower() == 'true'
-        
-        reader = ZepEntityReader()
+
+        reader = EntityReader(store=current_app.graph_store)
         entities = reader.get_entities_by_type(
             graph_id=graph_id,
             entity_type=entity_type,
@@ -338,7 +320,7 @@ def create_simulation():
                 "error": "项目尚未构建图谱，请先调用 /api/graph/build"
             }), 400
         
-        manager = SimulationManager()
+        manager = SimulationManager(store=current_app.graph_store)
         state = manager.create_simulation(
             project_id=project_id,
             graph_id=graph_id,
@@ -544,7 +526,7 @@ def prepare_simulation():
                 "error": "请提供 simulation_id"
             }), 400
         
-        manager = SimulationManager()
+        manager = SimulationManager(store=current_app.graph_store)
         state = manager.get_simulation(simulation_id)
         
         if not state:
@@ -623,7 +605,7 @@ def prepare_simulation():
             # 这样前端在调用prepare后立即就能获取到预期Agent总数
             try:
                 logger.info(f"同步获取实体数量: graph_id={state.graph_id}")
-                reader = ZepEntityReader()
+                reader = EntityReader(store=current_app.graph_store)
                 # 快速读取实体（不需要边信息，只统计数量）
                 filtered_preview = reader.filter_defined_entities(
                     graph_id=state.graph_id,
@@ -807,7 +789,7 @@ def cancel_prepare_simulation():
                 "error": "请提供 simulation_id"
             }), 400
 
-        manager = SimulationManager()
+        manager = SimulationManager(store=current_app.graph_store)
         state = manager.refresh_simulation(simulation_id)
         if not state:
             return jsonify({
@@ -994,7 +976,7 @@ def get_prepare_status():
 def get_simulation(simulation_id: str):
     """获取模拟状态"""
     try:
-        manager = SimulationManager()
+        manager = SimulationManager(store=current_app.graph_store)
         state = manager.get_simulation(simulation_id)
         
         if not state:
@@ -1034,7 +1016,7 @@ def list_simulations():
     try:
         project_id = request.args.get('project_id')
         
-        manager = SimulationManager()
+        manager = SimulationManager(store=current_app.graph_store)
         simulations = manager.list_simulations(project_id=project_id)
         
         return jsonify({
@@ -1149,7 +1131,7 @@ def get_simulation_history():
     try:
         limit = request.args.get('limit', 20, type=int)
         
-        manager = SimulationManager()
+        manager = SimulationManager(store=current_app.graph_store)
         simulations = manager.list_simulations()[:limit]
         
         # 增强模拟数据，只从 Simulation 文件读取
@@ -1236,7 +1218,7 @@ def get_simulation_profiles(simulation_id: str):
     try:
         platform = request.args.get('platform', 'reddit')
         
-        manager = SimulationManager()
+        manager = SimulationManager(store=current_app.graph_store)
         profiles = manager.get_profiles(simulation_id, platform=platform)
         
         return jsonify({
@@ -1512,7 +1494,7 @@ def get_simulation_config(simulation_id: str):
         - generation_reasoning: LLM的配置推理说明
     """
     try:
-        manager = SimulationManager()
+        manager = SimulationManager(store=current_app.graph_store)
         config = manager.get_simulation_config(simulation_id)
         
         if not config:
@@ -1539,7 +1521,7 @@ def get_simulation_config(simulation_id: str):
 def download_simulation_config(simulation_id: str):
     """下载模拟配置文件"""
     try:
-        manager = SimulationManager()
+        manager = SimulationManager(store=current_app.graph_store)
         sim_dir = manager._get_simulation_dir(simulation_id)
         config_path = os.path.join(sim_dir, "simulation_config.json")
         
@@ -1645,7 +1627,7 @@ def generate_profiles():
         use_llm = data.get('use_llm', True)
         platform = data.get('platform', 'reddit')
         
-        reader = ZepEntityReader()
+        reader = EntityReader(store=current_app.graph_store)
         filtered = reader.filter_defined_entities(
             graph_id=graph_id,
             defined_entity_types=entity_types,
@@ -1770,7 +1752,7 @@ def start_simulation():
             }), 400
 
         # 检查模拟是否已准备好
-        manager = SimulationManager()
+        manager = SimulationManager(store=current_app.graph_store)
         state = manager.get_simulation(simulation_id)
 
         if not state:
@@ -1850,7 +1832,8 @@ def start_simulation():
             platform=platform,
             max_rounds=max_rounds,
             enable_graph_memory_update=enable_graph_memory_update,
-            graph_id=graph_id
+            graph_id=graph_id,
+            store=current_app.graph_store
         )
         
         # 更新模拟状态
@@ -1918,7 +1901,7 @@ def stop_simulation():
         run_state = SimulationRunner.stop_simulation(simulation_id)
         
         # 更新模拟状态
-        manager = SimulationManager()
+        manager = SimulationManager(store=current_app.graph_store)
         state = manager.get_simulation(simulation_id)
         if state:
             state.status = SimulationStatus.PAUSED
@@ -2934,7 +2917,7 @@ def close_simulation_env():
         )
         
         # 更新模拟状态
-        manager = SimulationManager()
+        manager = SimulationManager(store=current_app.graph_store)
         state = manager.get_simulation(simulation_id)
         if state:
             state.status = SimulationStatus.COMPLETED

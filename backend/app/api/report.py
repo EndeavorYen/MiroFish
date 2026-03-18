@@ -6,7 +6,7 @@ Report API路由
 import os
 import traceback
 import threading
-from flask import request, jsonify, send_file
+from flask import request, jsonify, send_file, current_app
 
 from . import report_bp
 from ..config import Config
@@ -59,7 +59,7 @@ def generate_report():
         force_regenerate = data.get('force_regenerate', False)
         
         # 获取模拟信息
-        manager = SimulationManager()
+        manager = SimulationManager(store=current_app.graph_store)
         state = manager.get_simulation(simulation_id)
         
         if not state:
@@ -120,6 +120,9 @@ def generate_report():
             }
         )
         
+        # Capture graph_store for background thread (current_app not available in threads)
+        _graph_store = current_app.graph_store
+
         # 定义后台任务
         def run_generate():
             try:
@@ -129,12 +132,13 @@ def generate_report():
                     progress=0,
                     message="初始化Report Agent..."
                 )
-                
+
                 # 创建Report Agent
                 agent = ReportAgent(
                     graph_id=graph_id,
                     simulation_id=simulation_id,
-                    simulation_requirement=simulation_requirement
+                    simulation_requirement=simulation_requirement,
+                    store=_graph_store
                 )
                 
                 # 进度回调
@@ -511,7 +515,7 @@ def chat_with_report_agent():
             }), 400
         
         # 获取模拟和项目信息
-        manager = SimulationManager()
+        manager = SimulationManager(store=current_app.graph_store)
         state = manager.get_simulation(simulation_id)
         
         if not state:
@@ -540,7 +544,8 @@ def chat_with_report_agent():
         agent = ReportAgent(
             graph_id=graph_id,
             simulation_id=simulation_id,
-            simulation_requirement=simulation_requirement
+            simulation_requirement=simulation_requirement,
+            store=current_app.graph_store
         )
         
         result = agent.chat(message=message, chat_history=chat_history)
@@ -952,11 +957,10 @@ def search_graph_tool():
                 "error": "请提供 graph_id 和 query"
             }), 400
         
-        from ..services.zep_tools import ZepToolsService
-        
-        tools = ZepToolsService()
-        result = tools.search_graph(
-            graph_id=graph_id,
+        from ..services.search_tools import SearchTools
+
+        tools = SearchTools(graph_id=graph_id, store=current_app.graph_store)
+        result = tools.quick_search(
             query=query,
             limit=limit
         )
@@ -996,10 +1000,10 @@ def get_graph_statistics_tool():
                 "error": "请提供 graph_id"
             }), 400
         
-        from ..services.zep_tools import ZepToolsService
-        
-        tools = ZepToolsService()
-        result = tools.get_graph_statistics(graph_id)
+        from ..services.search_tools import SearchTools
+
+        tools = SearchTools(graph_id=graph_id, store=current_app.graph_store)
+        result = tools.panorama_search(query="*")
         
         return jsonify({
             "success": True,

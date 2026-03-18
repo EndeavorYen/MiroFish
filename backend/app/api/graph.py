@@ -6,7 +6,7 @@
 import os
 import traceback
 import threading
-from flask import request, jsonify
+from flask import request, jsonify, current_app
 
 from . import graph_bp
 from ..config import Config
@@ -282,17 +282,6 @@ def build_graph():
     try:
         logger.info("=== 开始构建图谱 ===")
         
-        # 检查配置
-        errors = []
-        if not Config.ZEP_API_KEY:
-            errors.append("ZEP_API_KEY未配置")
-        if errors:
-            logger.error(f"配置错误: {errors}")
-            return jsonify({
-                "success": False,
-                "error": "配置错误: " + "; ".join(errors)
-            }), 500
-        
         # 解析请求
         data = request.get_json() or {}
         project_id = data.get('project_id')
@@ -370,6 +359,9 @@ def build_graph():
         project.graph_build_task_id = task_id
         ProjectManager.save_project(project)
         
+        # Capture graph_store for background thread (current_app not available in threads)
+        _graph_store = current_app.graph_store
+
         # 启动后台任务
         def build_task():
             build_logger = get_logger('mirofish.build')
@@ -382,8 +374,9 @@ def build_graph():
                 )
                 
                 # 创建图谱构建服务
-                builder = GraphBuilderService(api_key=Config.ZEP_API_KEY)
-                
+                from ..utils.llm_client import LLMClient
+                builder = GraphBuilderService(store=_graph_store, llm_client=LLMClient())
+
                 # 分块
                 task_manager.update_task(
                     task_id,
@@ -567,13 +560,8 @@ def get_graph_data(graph_id: str):
     获取图谱数据（节点和边）
     """
     try:
-        if not Config.ZEP_API_KEY:
-            return jsonify({
-                "success": False,
-                "error": "ZEP_API_KEY未配置"
-            }), 500
-        
-        builder = GraphBuilderService(api_key=Config.ZEP_API_KEY)
+        from ..utils.llm_client import LLMClient
+        builder = GraphBuilderService(store=current_app.graph_store, llm_client=LLMClient())
         graph_data = builder.get_graph_data(graph_id)
         
         return jsonify({
@@ -595,13 +583,8 @@ def delete_graph(graph_id: str):
     删除Zep图谱
     """
     try:
-        if not Config.ZEP_API_KEY:
-            return jsonify({
-                "success": False,
-                "error": "ZEP_API_KEY未配置"
-            }), 500
-        
-        builder = GraphBuilderService(api_key=Config.ZEP_API_KEY)
+        from ..utils.llm_client import LLMClient
+        builder = GraphBuilderService(store=current_app.graph_store, llm_client=LLMClient())
         builder.delete_graph(graph_id)
         
         return jsonify({

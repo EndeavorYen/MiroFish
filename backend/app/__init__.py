@@ -20,6 +20,11 @@ def create_app(config_class=Config):
     """Flask应用工厂函数"""
     app = Flask(__name__)
     app.config.from_object(config_class)
+
+    # Create shared GraphStore (singleton for the app lifetime)
+    from .services.networkx_graph_store import NetworkXGraphStore
+    graph_store = NetworkXGraphStore(db_path=os.path.join(Config.UPLOAD_FOLDER, "graph_store.db"))
+    app.graph_store = graph_store
     
     # 设置JSON编码：确保中文直接显示（而不是 \uXXXX 格式）
     # Flask >= 2.3 使用 app.json.ensure_ascii，旧版本使用 JSON_AS_ASCII 配置
@@ -49,7 +54,7 @@ def create_app(config_class=Config):
         logger.info("已注册模拟进程清理函数")
 
     from .services.simulation_manager import SimulationManager
-    interrupted_prepare_count = SimulationManager().mark_interrupted_preparations_failed()
+    interrupted_prepare_count = SimulationManager(store=graph_store).mark_interrupted_preparations_failed()
     if should_log_startup and interrupted_prepare_count:
         logger.info(f"已清理 {interrupted_prepare_count} 个中断的准备任务")
     

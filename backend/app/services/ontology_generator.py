@@ -284,7 +284,7 @@ class OntologyGenerator:
             if len(edge.get("description", "")) > 100:
                 edge["description"] = edge["description"][:97] + "..."
         
-        # Zep API 限制：最多 10 个自定义实体类型，最多 10 个自定义边类型
+        # 实体类型和边类型数量限制
         MAX_ENTITY_TYPES = 10
         MAX_EDGE_TYPES = 10
         
@@ -361,7 +361,7 @@ class OntologyGenerator:
             '"""',
             '',
             'from pydantic import Field',
-            'from zep_cloud.external_clients.ontology import EntityModel, EntityText, EdgeModel',
+            'from dataclasses import dataclass, field',
             '',
             '',
             '# ============== 实体类型定义 ==============',

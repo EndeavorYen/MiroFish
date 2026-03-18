@@ -36,10 +36,6 @@ class Config:
     LOCAL_LLM_REQUEST_TIMEOUT_SECONDS = float(os.environ.get('LOCAL_LLM_REQUEST_TIMEOUT_SECONDS', '600'))
     LLM_THINK = os.environ.get('LLM_THINK', 'false').lower() == 'true'
     
-    # Zep配置
-    ZEP_API_KEY = os.environ.get('ZEP_API_KEY')
-    ZEP_REQUEST_TIMEOUT_SECONDS = float(os.environ.get('ZEP_REQUEST_TIMEOUT_SECONDS', '30'))
-    
     # 文件上传配置
     MAX_CONTENT_LENGTH = 50 * 1024 * 1024  # 50MB
     UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), '../uploads')
@@ -109,6 +105,4 @@ class Config:
         errors = []
         if not cls.get_llm_api_key():
             errors.append("LLM_API_KEY 未配置")
-        if not cls.ZEP_API_KEY:
-            errors.append("ZEP_API_KEY 未配置")
         return errors

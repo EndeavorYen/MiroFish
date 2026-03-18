@@ -20,18 +20,13 @@ class SearchTools:
 
     def quick_search(self, query: str, limit: int = 20) -> SearchResult:
         """Fast keyword search over text content and graph entities."""
-        # FTS5 text search
-        text_results = self.store.search_text(self.graph_id, query, limit=limit)
-        facts = [r.get("content", "") for r in text_results]
-
-        # Graph node/edge keyword search
+        # store.search(scope="all") combines graph keyword + FTS5 text search
         graph_result = self.store.search(self.graph_id, query, scope="all", limit=limit)
-        facts.extend(graph_result.facts)
 
         # Deduplicate facts
         seen = set()
         unique_facts = []
-        for f in facts:
+        for f in graph_result.facts:
             if f and f not in seen:
                 seen.add(f)
                 unique_facts.append(f)
@@ -113,9 +108,16 @@ class SearchTools:
                 seen_nodes.add(n.uuid)
                 unique_nodes.append(n)
 
+        seen_edge_uuids_final = set()
+        unique_edges = []
+        for e in all_edges:
+            if e.uuid not in seen_edge_uuids_final:
+                seen_edge_uuids_final.add(e.uuid)
+                unique_edges.append(e)
+
         return SearchResult(
             nodes=unique_nodes[:limit],
-            edges=all_edges[:limit],
+            edges=unique_edges[:limit],
             facts=unique_facts[:limit],
         )
 

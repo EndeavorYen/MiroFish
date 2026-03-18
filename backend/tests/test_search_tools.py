@@ -54,3 +54,10 @@ def test_search_result_to_text(tools):
     result = tools.quick_search("房")
     text = result.to_text(query="房市")
     assert "搜索查询" in text
+
+
+def test_insight_forge_without_llm(store):
+    from app.services.search_tools import SearchTools
+    tools_no_llm = SearchTools(graph_id="sim-test", store=store, llm_client=None)
+    result = tools_no_llm.insight_forge("房市")
+    assert len(result.facts) > 0

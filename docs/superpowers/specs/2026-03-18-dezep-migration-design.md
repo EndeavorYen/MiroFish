@@ -201,18 +201,21 @@ OASIS action (structured) → narrative text → Zep API → Zep NLP → graph e
 OASIS action (structured) → graph edge + SQLite text record
 ```
 
-**Action-to-edge mapping** (preserving all 9 action types from zep_graph_memory_updater.py):
+**Action-to-edge mapping** (preserving all 12 action types from zep_graph_memory_updater.py):
 
 | OASIS Action | Graph Edge | SQLite Record |
 |-------------|-----------|---------------|
 | CREATE_POST | agent --[POSTED]--> post_node | Full post text, FTS indexed |
 | LIKE_POST | agent --[LIKED]--> post_node (weight +1) | Like event log |
+| DISLIKE_POST | agent --[DISLIKED]--> post_node (weight -1) | Dislike event log |
 | REPOST | agent --[REPOSTED]--> post_node | Repost event log |
 | QUOTE_POST | agent --[QUOTED]--> post_node + new post_node | Quote text + original ref |
 | FOLLOW | agent --[FOLLOWS]--> target_agent | Follow event log |
 | CREATE_COMMENT | agent --[COMMENTED]--> post_node | Comment text, FTS indexed |
 | LIKE_COMMENT | agent --[LIKED]--> comment_node | Like event log |
-| SEARCH_POSTS/USER | agent --[SEARCHED]--> query_node | Search query log |
+| DISLIKE_COMMENT | agent --[DISLIKED]--> comment_node (weight -1) | Dislike event log |
+| SEARCH_POSTS | agent --[SEARCHED]--> query_node | Search query log |
+| SEARCH_USER | agent --[SEARCHED_USER]--> query_node | User search query log |
 | MUTE | agent --[MUTED]--> target_agent | Mute event log |
 
 **Edge attributes:**
@@ -402,15 +405,20 @@ The abstraction layer enables gradual migration. Each file can be migrated indep
 | 1 | `graph_store.py` (NEW) | — | Create abstraction layer + NetworkX/SQLite implementation |
 | 2 | `graph_builder.py` | `graph.create`, `set_ontology`, `add_batch`, `episode.get` | Replace with LLM extraction + GraphStore calls |
 | 3 | `zep_entity_reader.py` | `node.get_by_graph_id`, `edge.get_by_graph_id`, filtering | Replace with GraphStore.list_entities/relations |
-| 4 | `zep_graph_memory_updater.py` | `graph.add(type="text")` | Replace with direct GraphStore.add_relation + TextStore.add_text |
-| 5 | `oasis_profile_generator.py` | `graph.search(scope="edges/nodes")` | Replace with GraphStore.search |
-| 6 | `simulation_manager.py` | Zep client initialization, entity reader calls | Update to use GraphStore |
-| 7 | `zep_tools.py` | InsightForge, PanoramaSearch, QuickSearch | Rewrite search tools against GraphStore + TextStore |
-| 8 | `report_agent.py` | Uses zep_tools indirectly | Update tool imports (minimal change) |
-| 9 | `simulation_config_generator.py` | Uses entity data from reader | Already abstracted through entity reader (no direct Zep) |
-| 10 | `api/graph.py` | Zep graph building endpoints | Update to call new graph_builder |
-| 11 | `api/simulation.py` | Zep client passing | Update to pass GraphStore instance |
-| 12 | `api/report.py` | Zep client passing | Update to pass GraphStore instance |
+| 4 | `zep_paging.py` (utils) | `fetch_all_nodes`, `fetch_all_edges` Zep pagination helpers | Delete — no longer needed with local graph store |
+| 5 | `zep_graph_memory_updater.py` | `graph.add(type="text")` | Replace with direct GraphStore.add_relation + TextStore.add_text |
+| 6 | `simulation_runner.py` | Imports `ZepGraphMemoryManager`, wires updater into sim loop | Update to use new MemoryUpdater backed by GraphStore |
+| 7 | `oasis_profile_generator.py` | Creates Zep client + ZepEntityReader for secondary enrichment; `graph.search(scope="edges/nodes")` | Replace all Zep client usage with GraphStore.search |
+| 8 | `simulation_manager.py` | Zep client initialization, entity reader calls | Update to use GraphStore |
+| 9 | `zep_tools.py` | InsightForge, PanoramaSearch, QuickSearch | Rewrite search tools against GraphStore + TextStore |
+| 10 | `report_agent.py` | Uses zep_tools indirectly | Update tool imports (minimal change) |
+| 11 | `simulation_config_generator.py` | Uses entity data from reader | Already abstracted through entity reader (no direct Zep) |
+| 12 | `ontology_generator.py` | References `zep_cloud.external_clients.ontology`; Zep-specific entity type limit (max 10) | Remove Zep import and constraint |
+| 13 | `services/__init__.py` | Re-exports `ZepEntityReader`, `ZepGraphMemoryUpdater`, `ZepGraphMemoryManager` | Update exports to new class names |
+| 14 | `api/graph.py` | Zep graph building endpoints | Update to call new graph_builder |
+| 15 | `api/simulation.py` | Zep client passing | Update to pass GraphStore instance |
+| 16 | `api/report.py` | Zep client passing | Update to pass GraphStore instance |
+| 17 | `config.py` | `ZEP_API_KEY` definition and validation | Remove Zep config entries |
 
 ## 6. New Dependencies
 
@@ -436,7 +444,7 @@ zep-cloud==3.13.0       # Fully replaced
 
 ## 8. Success Criteria
 
-1. All 11 Zep-dependent files migrated to use abstraction layer
+1. All 15+ Zep-dependent files migrated to use abstraction layer
 2. `zep-cloud` removed from `requirements.txt`
 3. `ZEP_API_KEY` removed from `.env` configuration
 4. All existing simulation workflows (Step 1-5) function without Zep

@@ -899,7 +899,7 @@ class ReportAgent:
         self.simulation_id = simulation_id
         self.simulation_requirement = simulation_requirement
 
-        self.llm = llm_client or LLMClient()
+        self.llm = llm_client or LLMClient.boost()
         self.store = store
         if search_tools:
             self.search_tools = search_tools

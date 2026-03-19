@@ -35,6 +35,11 @@ class Config:
     LLM_REQUEST_TIMEOUT_SECONDS = float(os.environ.get('LLM_REQUEST_TIMEOUT_SECONDS', '180'))
     LOCAL_LLM_REQUEST_TIMEOUT_SECONDS = float(os.environ.get('LOCAL_LLM_REQUEST_TIMEOUT_SECONDS', '600'))
     LLM_THINK = os.environ.get('LLM_THINK', 'false').lower() == 'true'
+
+    # Boost LLM（深度推理用，如報告生成；未設定時 fallback 到主 LLM）
+    LLM_BOOST_API_KEY = os.environ.get('LLM_BOOST_API_KEY')
+    LLM_BOOST_BASE_URL = os.environ.get('LLM_BOOST_BASE_URL')
+    LLM_BOOST_MODEL_NAME = os.environ.get('LLM_BOOST_MODEL_NAME')
     
     # 文件上传配置
     MAX_CONTENT_LENGTH = 50 * 1024 * 1024  # 50MB

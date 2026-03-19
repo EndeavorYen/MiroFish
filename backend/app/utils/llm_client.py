@@ -61,6 +61,16 @@ class LLMClient:
             timeout=self.timeout
         )
 
+    @classmethod
+    def boost(cls) -> "LLMClient":
+        """建立使用 Boost 模型的客户端（深度推理用，如报告生成）。
+        若未配置 LLM_BOOST_* 环境变量，fallback 到主 LLM。"""
+        return cls(
+            api_key=Config.LLM_BOOST_API_KEY,
+            base_url=Config.LLM_BOOST_BASE_URL,
+            model=Config.LLM_BOOST_MODEL_NAME,
+        )
+
     def _resolve_think(self, think: Optional[bool]) -> bool:
         """解析 think 参数：None 使用 Config 预设，否则使用指定值"""
         return Config.LLM_THINK if think is None else think

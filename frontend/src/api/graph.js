@@ -1,4 +1,4 @@
-import service, { requestWithRetry } from './index'
+import service from './index'
 
 /**
  * 生成本体（上传文档和模拟需求）
@@ -6,16 +6,15 @@ import service, { requestWithRetry } from './index'
  * @returns {Promise}
  */
 export function generateOntology(formData) {
-  return requestWithRetry(() => 
-    service({
-      url: '/api/graph/ontology/generate',
-      method: 'post',
-      data: formData,
-      headers: {
-        'Content-Type': 'multipart/form-data'
-      }
-    })
-  )
+  // 不使用 requestWithRetry：此操作有副作用（创建项目），且 backend 已内建 LLM 重试
+  return service({
+    url: '/api/graph/ontology/generate',
+    method: 'post',
+    data: formData,
+    headers: {
+      'Content-Type': 'multipart/form-data'
+    }
+  })
 }
 
 /**
@@ -24,13 +23,12 @@ export function generateOntology(formData) {
  * @returns {Promise}
  */
 export function buildGraph(data) {
-  return requestWithRetry(() =>
-    service({
-      url: '/api/graph/build',
-      method: 'post',
-      data
-    })
-  )
+  // 不使用 requestWithRetry：此操作有副作用（创建图谱），且 backend 已内建 LLM 重试
+  return service({
+    url: '/api/graph/build',
+    method: 'post',
+    data
+  })
 }
 
 /**

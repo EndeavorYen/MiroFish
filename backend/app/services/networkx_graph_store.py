@@ -21,6 +21,9 @@ from app.services.graph_store import (
     generate_uuid,
     normalize_name,
 )
+from app.utils.logger import get_logger
+
+logger = get_logger('mirofish.graph_store')
 
 
 # Keep module-private alias for backward compatibility within this file
@@ -39,12 +42,21 @@ class NetworkXGraphStore:
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._init_tables()
+        self._load_from_db()
 
     # ── Schema setup ────────────────────────────────────────────────
 
     def _init_tables(self):
         with self._db_lock:
             c = self._conn
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS graphs (
+                    graph_id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    description TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL
+                )
+            """)
             c.execute("""
                 CREATE TABLE IF NOT EXISTS entities (
                     uuid TEXT PRIMARY KEY,
@@ -113,23 +125,125 @@ class NetworkXGraphStore:
                 pass
             c.commit()
 
+    # ── Warm-up: load existing graphs from SQLite ──────────────────
+
+    def _load_from_db(self):
+        """Rebuild in-memory NetworkX graphs from SQLite on startup."""
+        c = self._conn
+
+        # 1. Load graph metadata (from graphs table, or derive from entities)
+        graph_rows = c.execute("SELECT graph_id, name, description, created_at FROM graphs").fetchall()
+        known_ids = set()
+        for row in graph_rows:
+            gid = row["graph_id"]
+            known_ids.add(gid)
+            self._graphs[gid] = nx.DiGraph()
+            self._graph_meta[gid] = {
+                "name": row["name"],
+                "description": row["description"],
+                "created_at": row["created_at"],
+            }
+
+        # Also discover graph_ids from entities that aren't in the graphs table
+        # (handles data created before the graphs table existed)
+        orphan_ids = c.execute(
+            "SELECT DISTINCT graph_id FROM entities WHERE graph_id NOT IN "
+            "(SELECT graph_id FROM graphs)"
+        ).fetchall()
+        for row in orphan_ids:
+            gid = row["graph_id"]
+            known_ids.add(gid)
+            self._graphs[gid] = nx.DiGraph()
+            self._graph_meta[gid] = {
+                "name": gid,
+                "description": "(restored from database)",
+                "created_at": datetime.now().isoformat(),
+            }
+
+        if not known_ids:
+            return
+
+        # 2. Load entities as nodes
+        id_list = list(known_ids)
+        placeholders = ",".join("?" * len(id_list))
+        entities = c.execute(
+            f"SELECT uuid, graph_id, name, entity_type, summary, attributes "
+            f"FROM entities WHERE graph_id IN ({placeholders})",
+            id_list,
+        ).fetchall()
+        for e in entities:
+            gid = e["graph_id"]
+            g = self._graphs.get(gid)
+            attrs = json.loads(e["attributes"]) if e["attributes"] else {}
+            g.add_node(
+                e["uuid"],
+                name=e["name"],
+                entity_type=e["entity_type"],
+                labels=[e["entity_type"]],
+                summary=e["summary"] or "",
+                attributes=attrs,
+            )
+
+        # 3. Load relations as edges
+        relations = c.execute(
+            f"SELECT uuid, graph_id, source_uuid, target_uuid, name, fact, "
+            f"attributes, created_at, valid_at, invalid_at, expired_at "
+            f"FROM relations WHERE graph_id IN ({placeholders})",
+            id_list,
+        ).fetchall()
+        for r in relations:
+            gid = r["graph_id"]
+            g = self._graphs.get(gid)
+            attrs = json.loads(r["attributes"]) if r["attributes"] else {}
+            g.add_edge(
+                r["source_uuid"],
+                r["target_uuid"],
+                uuid=r["uuid"],
+                name=r["name"],
+                fact=r["fact"] or "",
+                attributes=attrs,
+                created_at=self._parse_dt(r["created_at"]) or datetime.now(),
+                valid_at=self._parse_dt(r["valid_at"]),
+                invalid_at=self._parse_dt(r["invalid_at"]),
+                expired_at=self._parse_dt(r["expired_at"]),
+                weight=attrs.get("weight", 1.0),
+            )
+
+        # Log summary
+        total_nodes = sum(g.number_of_nodes() for g in self._graphs.values())
+        total_edges = sum(g.number_of_edges() for g in self._graphs.values())
+        if total_nodes > 0:
+            logger.info(
+                f"从 SQLite 恢复了 {len(known_ids)} 个图谱, "
+                f"共 {total_nodes} 个节点, {total_edges} 条边"
+            )
+
     # ── Graph lifecycle ─────────────────────────────────────────────
 
     def create_graph(self, graph_id: str, name: str, description: str) -> str:
         if graph_id in self._graphs:
             raise ValueError(f"Graph '{graph_id}' already exists")
+        now = datetime.now().isoformat()
         self._graphs[graph_id] = nx.DiGraph()
         self._graph_meta[graph_id] = {
             "name": name,
             "description": description,
-            "created_at": datetime.now().isoformat(),
+            "created_at": now,
         }
+        with self._db_lock:
+            self._conn.execute(
+                "INSERT OR IGNORE INTO graphs (graph_id, name, description, created_at) "
+                "VALUES (?, ?, ?, ?)",
+                (graph_id, name, description, now),
+            )
+            self._conn.commit()
         return graph_id
 
     def delete_graph(self, graph_id: str) -> None:
         self._graphs.pop(graph_id, None)
         self._graph_meta.pop(graph_id, None)
         with self._db_lock:
+            self._conn.execute("DELETE FROM graphs WHERE graph_id = ?", (graph_id,))
             self._conn.execute("DELETE FROM entities WHERE graph_id = ?", (graph_id,))
             self._conn.execute("DELETE FROM relations WHERE graph_id = ?", (graph_id,))
             self._conn.execute("DELETE FROM texts WHERE graph_id = ?", (graph_id,))

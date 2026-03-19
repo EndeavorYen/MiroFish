@@ -193,11 +193,10 @@ class OntologyGenerator:
             {"role": "user", "content": user_message}
         ]
         
-        # 调用LLM
+        # 调用LLM（不设max_tokens，让LLM自由发挥）
         result = self.llm_client.chat_json(
             messages=messages,
-            temperature=0.3,
-            max_tokens=4096
+            temperature=0.3
         )
         
         # 验证和后处理
@@ -265,6 +264,14 @@ class OntologyGenerator:
         if "analysis_summary" not in result:
             result["analysis_summary"] = ""
         
+        # 过滤掉缺少 name 的无效条目
+        result["entity_types"] = [
+            e for e in result["entity_types"] if e.get("name")
+        ]
+        result["edge_types"] = [
+            e for e in result["edge_types"] if e.get("name")
+        ]
+
         # 验证实体类型
         for entity in result["entity_types"]:
             if "attributes" not in entity:
@@ -274,7 +281,7 @@ class OntologyGenerator:
             # 确保description不超过100字符
             if len(entity.get("description", "")) > 100:
                 entity["description"] = entity["description"][:97] + "..."
-        
+
         # 验证关系类型
         for edge in result["edge_types"]:
             if "source_targets" not in edge:

@@ -368,14 +368,15 @@ def build_graph():
             try:
                 build_logger.info(f"[{task_id}] 开始构建图谱...")
                 task_manager.update_task(
-                    task_id, 
+                    task_id,
                     status=TaskStatus.PROCESSING,
                     message="初始化图谱构建服务..."
                 )
-                
+
                 # 创建图谱构建服务
                 from ..utils.llm_client import LLMClient
                 builder = GraphBuilderService(store=_graph_store, llm_client=LLMClient())
+                builder.set_ontology(ontology)
 
                 # 分块
                 task_manager.update_task(
@@ -384,71 +385,40 @@ def build_graph():
                     progress=5
                 )
                 chunks = TextProcessor.split_text(
-                    text, 
-                    chunk_size=chunk_size, 
+                    text,
+                    chunk_size=chunk_size,
                     overlap=chunk_overlap
                 )
                 total_chunks = len(chunks)
-                
+
                 # 创建图谱
                 task_manager.update_task(
                     task_id,
-                    message="创建Zep图谱...",
+                    message="创建图谱...",
                     progress=10
                 )
                 graph_id = builder.create_graph(name=graph_name)
-                
+
                 # 更新项目的graph_id
                 project.graph_id = graph_id
                 ProjectManager.save_project(project)
-                
-                # 设置本体
+
+                # 逐块抽取实体关系
                 task_manager.update_task(
                     task_id,
-                    message="设置本体定义...",
+                    message=f"开始处理 {total_chunks} 个文本块...",
                     progress=15
                 )
-                builder.set_ontology(graph_id, ontology)
-                
-                # 添加文本（progress_callback 签名是 (msg, progress_ratio)）
-                def add_progress_callback(msg, progress_ratio):
-                    progress = 15 + int(progress_ratio * 40)  # 15% - 55%
+
+                for idx, chunk in enumerate(chunks):
+                    builder.add_text_and_extract(graph_id, chunk)
+                    progress = 15 + int((idx + 1) / total_chunks * 75)  # 15% - 90%
                     task_manager.update_task(
                         task_id,
-                        message=msg,
+                        message=f"已处理 {idx + 1}/{total_chunks} 个文本块",
                         progress=progress
                     )
-                
-                task_manager.update_task(
-                    task_id,
-                    message=f"开始添加 {total_chunks} 个文本块...",
-                    progress=15
-                )
-                
-                episode_uuids = builder.add_text_batches(
-                    graph_id, 
-                    chunks,
-                    batch_size=3,
-                    progress_callback=add_progress_callback
-                )
-                
-                # 等待Zep处理完成（查询每个episode的processed状态）
-                task_manager.update_task(
-                    task_id,
-                    message="等待Zep处理数据...",
-                    progress=55
-                )
-                
-                def wait_progress_callback(msg, progress_ratio):
-                    progress = 55 + int(progress_ratio * 35)  # 55% - 90%
-                    task_manager.update_task(
-                        task_id,
-                        message=msg,
-                        progress=progress
-                    )
-                
-                builder._wait_for_episodes(episode_uuids, wait_progress_callback)
-                
+
                 # 获取图谱数据
                 task_manager.update_task(
                     task_id,
@@ -456,15 +426,15 @@ def build_graph():
                     progress=95
                 )
                 graph_data = builder.get_graph_data(graph_id)
-                
+
                 # 更新项目状态
                 project.status = ProjectStatus.GRAPH_COMPLETED
                 ProjectManager.save_project(project)
-                
+
                 node_count = graph_data.get("node_count", 0)
                 edge_count = graph_data.get("edge_count", 0)
                 build_logger.info(f"[{task_id}] 图谱构建完成: graph_id={graph_id}, 节点={node_count}, 边={edge_count}")
-                
+
                 # 完成
                 task_manager.update_task(
                     task_id,
@@ -479,16 +449,16 @@ def build_graph():
                         "chunk_count": total_chunks
                     }
                 )
-                
+
             except Exception as e:
                 # 更新项目状态为失败
                 build_logger.error(f"[{task_id}] 图谱构建失败: {str(e)}")
                 build_logger.debug(traceback.format_exc())
-                
+
                 project.status = ProjectStatus.FAILED
                 project.error = str(e)
                 ProjectManager.save_project(project)
-                
+
                 task_manager.update_task(
                     task_id,
                     status=TaskStatus.FAILED,

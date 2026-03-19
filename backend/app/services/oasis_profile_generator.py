@@ -18,6 +18,7 @@ from datetime import datetime
 from openai import OpenAI
 from ..config import Config
 from ..utils.logger import get_logger
+from ..utils.llm_client import fix_truncated_json
 from .graph_store import EntityNode
 from .entity_reader import EntityReader
 
@@ -470,7 +471,7 @@ class OasisProfileGenerator:
                 finish_reason = response.choices[0].finish_reason
                 if finish_reason == 'length':
                     logger.warning(f"LLM输出被截断 (attempt {attempt+1}), 尝试修复...")
-                    content = self._fix_truncated_json(content)
+                    content = fix_truncated_json(content)
                 
                 # 尝试解析JSON
                 try:
@@ -506,35 +507,12 @@ class OasisProfileGenerator:
             entity_name, entity_type, entity_summary, entity_attributes
         )
     
-    def _fix_truncated_json(self, content: str) -> str:
-        """修复被截断的JSON（输出被max_tokens限制截断）"""
-        import re
-        
-        # 如果JSON被截断，尝试闭合它
-        content = content.strip()
-        
-        # 计算未闭合的括号
-        open_braces = content.count('{') - content.count('}')
-        open_brackets = content.count('[') - content.count(']')
-        
-        # 检查是否有未闭合的字符串
-        # 简单检查：如果最后一个引号后没有逗号或闭合括号，可能是字符串被截断
-        if content and content[-1] not in '",}]':
-            # 尝试闭合字符串
-            content += '"'
-        
-        # 闭合括号
-        content += ']' * open_brackets
-        content += '}' * open_braces
-        
-        return content
-    
     def _try_fix_json(self, content: str, entity_name: str, entity_type: str, entity_summary: str = "") -> Dict[str, Any]:
         """尝试修复损坏的JSON"""
         import re
-        
+
         # 1. 首先尝试修复被截断的情况
-        content = self._fix_truncated_json(content)
+        content = fix_truncated_json(content)
         
         # 2. 尝试提取JSON部分
         json_match = re.search(r'\{[\s\S]*\}', content)

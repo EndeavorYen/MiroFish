@@ -4,6 +4,7 @@ Step2: 实体读取与过滤、OASIS模拟准备与运行（全程自动化）
 """
 
 import os
+import shutil
 import traceback
 from datetime import datetime
 from flask import request, jsonify, send_file, current_app
@@ -1200,6 +1201,66 @@ def get_simulation_history():
         
     except Exception as e:
         logger.error(f"获取历史模拟失败: {str(e)}")
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
+
+
+@simulation_bp.route('/<simulation_id>', methods=['DELETE'])
+def delete_simulation(simulation_id: str):
+    """
+    删除模拟及其所有关联数据（项目文件、图谱、报告）
+    """
+    try:
+        manager = SimulationManager()
+        state = manager.get_simulation(simulation_id)
+        if not state:
+            return jsonify({"success": False, "error": f"模拟不存在: {simulation_id}"}), 404
+
+        deleted = {"simulation": simulation_id}
+
+        # 1. 删除关联的图谱
+        if state.graph_id:
+            try:
+                graph_store = current_app.graph_store
+                graph_store.delete_graph(state.graph_id)
+                deleted["graph"] = state.graph_id
+            except Exception as e:
+                logger.warning(f"删除图谱失败 ({state.graph_id}): {e}")
+
+        # 2. 删除关联的报告
+        try:
+            report_id = _get_report_id_for_simulation(simulation_id)
+            if report_id:
+                report_dir = os.path.join(Config.UPLOAD_FOLDER, 'reports', report_id)
+                if os.path.isdir(report_dir):
+                    shutil.rmtree(report_dir)
+                    deleted["report"] = report_id
+        except Exception as e:
+            logger.warning(f"删除报告失败: {e}")
+
+        # 3. 删除关联的项目
+        if state.project_id:
+            try:
+                project_dir = os.path.join(Config.UPLOAD_FOLDER, 'projects', state.project_id)
+                if os.path.isdir(project_dir):
+                    shutil.rmtree(project_dir)
+                    deleted["project"] = state.project_id
+            except Exception as e:
+                logger.warning(f"删除项目失败 ({state.project_id}): {e}")
+
+        # 4. 删除模拟目录
+        sim_dir = os.path.join(Config.OASIS_SIMULATION_DATA_DIR, simulation_id)
+        if os.path.isdir(sim_dir):
+            shutil.rmtree(sim_dir)
+
+        logger.info(f"已删除模拟 {simulation_id} 及关联数据: {deleted}")
+        return jsonify({"success": True, "deleted": deleted})
+
+    except Exception as e:
+        logger.error(f"删除模拟失败: {str(e)}")
         return jsonify({
             "success": False,
             "error": str(e),

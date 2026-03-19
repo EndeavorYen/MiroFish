@@ -11,8 +11,8 @@
 ### 本 Fork 的主要改動
 
 - **去 Zep 化**：移除 Zep Cloud 依賴，改用 NetworkX + SQLite 混合架構（本地圖譜 + 全文檢索）
-- **零外部服務**：記憶圖譜完全本地化，無需第三方雲端服務
-- **中文介面**：前端支援繁體中文 / 英文切換
+- **零外部服務**：知識圖譜完全本地化，資料持久化至 SQLite，重啟不遺失
+- **中文介面**：前端支援繁體中文 / 簡體中文 / 英文切換
 
 ## 系統截圖
 
@@ -85,7 +85,8 @@ LLM_API_KEY=ollama
 LLM_BASE_URL=http://localhost:11434/v1
 LLM_MODEL_NAME=qwen3.5:9b
 
-# 啟用思考模式（適用 qwen3.5 等支援推理的模型）
+# 思考模式（預設 false，適用 qwen3.5 等支援推理的模型）
+# 開啟後報告生成品質更高，但 token 消耗與回應時間會增加
 # LLM_THINK=true
 ```
 
@@ -167,14 +168,22 @@ backend/
     api/           Flask REST API
     services/
       graph_store.py              資料模型與 Protocol 定義
-      networkx_graph_store.py     NetworkX + SQLite 圖譜儲存
+      networkx_graph_store.py     NetworkX + SQLite 圖譜儲存（啟動時自動從 DB 恢復）
       graph_builder.py            LLM 實體抽取 + 圖譜建構
+      ontology_generator.py       本體論生成（實體/關係類型設計）
+      simulation_config_generator.py  模擬配置生成
+      oasis_profile_generator.py  Agent 角色人設生成
       graph_memory_updater.py     模擬活動 → 圖譜邊（零 LLM 成本）
       search_tools.py             搜尋工具（QuickSearch / InsightForge）
       report_agent.py             報告生成 Agent
       simulation_runner.py        OASIS 模擬執行器
     utils/
       llm_client.py               統一 LLM 呼叫入口
+  uploads/
+    graph_store.db                知識圖譜 SQLite 資料庫
+    simulations/                  模擬狀態與資料（檔案系統）
+    projects/                     專案與上傳檔案
+    reports/                      分析報告
 ```
 
 ## 致謝

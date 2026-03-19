@@ -676,9 +676,10 @@ class SimulationRunner:
                             if action.round_num and action.round_num > state.current_round:
                                 state.current_round = action.round_num
                             
-                            # 如果启用了图谱记忆更新，将活动发送到Zep
+                            # 如果启用了图谱记忆更新，将活动写入图谱
                             if graph_updater:
-                                graph_updater.add_activity_from_dict(action_data, platform)
+                                action_data['platform'] = platform
+                                graph_updater.add_activity(action_data)
                             
                         except json.JSONDecodeError:
                             pass

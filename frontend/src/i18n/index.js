@@ -1,14 +1,16 @@
 import { createI18n } from 'vue-i18n'
 import zhTW from './locales/zh-TW.json'
 import zhCN from './locales/zh-CN.json'
+import en from './locales/en.json'
 
 const LOCALE_STORAGE_KEY = 'mirofish_locale'
-const SUPPORTED_LOCALES = ['zh-TW', 'zh-CN']
+const SUPPORTED_LOCALES = ['zh-TW', 'zh-CN', 'en']
 const DEFAULT_LOCALE = 'zh-TW'
 
 const messages = {
   'zh-TW': zhTW,
-  'zh-CN': zhCN
+  'zh-CN': zhCN,
+  'en': en
 }
 
 function normalizeLocale(input) {
@@ -19,8 +21,11 @@ function normalizeLocale(input) {
   if (value === 'zh-tw' || value.startsWith('zh-hant')) {
     return 'zh-TW'
   }
-  if (value === 'zh-cn' || value.startsWith('zh-hans') || value.startsWith('zh')) {
+  if (value === 'zh-cn' || value.startsWith('zh-hans') || value === 'zh') {
     return 'zh-CN'
+  }
+  if (value === 'en' || value.startsWith('en-')) {
+    return 'en'
   }
   return null
 }

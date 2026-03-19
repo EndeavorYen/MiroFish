@@ -833,6 +833,14 @@ const pollTaskStatus = async (taskId) => {
     }
   } catch (err) {
     console.error('Poll task error:', err)
+    // 任务不存在（404）或网络错误时停止轮询，避免无限循环
+    if (err?.response?.status === 404 || err?.message?.includes('404')) {
+      console.warn('任务不存在，停止轮询')
+      stopPolling()
+      stopGraphPolling()
+      buildProgress.value = null
+      error.value = '构建任务已失效（服务器可能已重启），请重新构建'
+    }
   }
 }
 

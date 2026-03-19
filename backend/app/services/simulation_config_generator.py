@@ -17,6 +17,7 @@ from dataclasses import dataclass, field, asdict
 from datetime import datetime
 
 from openai import OpenAI
+from ..utils.llm_client import fix_truncated_json
 
 from ..config import Config
 from ..utils.logger import get_logger
@@ -458,7 +459,7 @@ class SimulationConfigGenerator:
                 # 检查是否被截断
                 if finish_reason == 'length':
                     logger.warning(f"LLM输出被截断 (attempt {attempt+1})")
-                    content = self._fix_truncated_json(content)
+                    content = fix_truncated_json(content)
                 
                 # 尝试解析JSON
                 try:
@@ -481,30 +482,12 @@ class SimulationConfigGenerator:
         
         raise last_error or Exception("LLM调用失败")
     
-    def _fix_truncated_json(self, content: str) -> str:
-        """修复被截断的JSON"""
-        content = content.strip()
-        
-        # 计算未闭合的括号
-        open_braces = content.count('{') - content.count('}')
-        open_brackets = content.count('[') - content.count(']')
-        
-        # 检查是否有未闭合的字符串
-        if content and content[-1] not in '",}]':
-            content += '"'
-        
-        # 闭合括号
-        content += ']' * open_brackets
-        content += '}' * open_braces
-        
-        return content
-    
     def _try_fix_config_json(self, content: str) -> Optional[Dict[str, Any]]:
         """尝试修复配置JSON"""
         import re
         
         # 修复被截断的情况
-        content = self._fix_truncated_json(content)
+        content = fix_truncated_json(content)
         
         # 提取JSON部分
         json_match = re.search(r'\{[\s\S]*\}', content)

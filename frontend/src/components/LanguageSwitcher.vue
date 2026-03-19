@@ -21,10 +21,12 @@ import { getSupportedLocales, setLocale } from '../i18n'
 
 const { t, locale } = useI18n()
 
+const localeLabels = { 'zh-TW': 'zhTW', 'zh-CN': 'zhCN', 'en': 'en' }
+
 const localeOptions = computed(() =>
   getSupportedLocales().map((value) => ({
     value,
-    label: value === 'zh-TW' ? t('language.zhTW') : t('language.zhCN')
+    label: t(`language.${localeLabels[value]}`)
   }))
 )
 

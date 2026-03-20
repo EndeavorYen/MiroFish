@@ -217,12 +217,43 @@ class LLMClient:
                 if not content:
                     raise json.JSONDecodeError("LLM returned empty content", "", 0)
 
-                return json.loads(content)
+                # Try direct parse first
+                try:
+                    return json.loads(content)
+                except json.JSONDecodeError:
+                    pass
+
+                # Fallback: extract first JSON object/array from content
+                first_brace = content.find('{')
+                first_bracket = content.find('[')
+                if first_brace == -1 and first_bracket == -1:
+                    raise json.JSONDecodeError("No JSON object found in content", content, 0)
+                # Pick whichever comes first
+                if first_bracket != -1 and (first_brace == -1 or first_bracket < first_brace):
+                    start = first_bracket
+                else:
+                    start = first_brace
+                # Find matching closing bracket from the end
+                close_char = '}' if content[start] == '{' else ']'
+                last_close = content.rfind(close_char)
+                if last_close > start:
+                    extracted = content[start:last_close + 1]
+                    return json.loads(extracted)
 
             except json.JSONDecodeError as e:
                 last_error = e
                 logger.warning(f"JSON parse failed (attempt {attempt+1}/{max_retries+1}): {str(e)[:100]}")
+                logger.warning(f"  content preview: {repr(content[:200])}")
                 if attempt < max_retries:
+                    # Append a correction message to nudge LLM toward JSON
+                    msgs = kwargs["messages"]
+                    # Remove previous correction if any
+                    if msgs[-1].get("role") == "user" and msgs[-1].get("content", "").startswith("ERROR:"):
+                        msgs.pop()
+                    msgs.append({
+                        "role": "user",
+                        "content": "ERROR: Your response was not valid JSON. You MUST output ONLY a valid JSON object (starting with { and ending with }). No markdown, no explanation, no numbered lists. Output pure JSON now."
+                    })
                     continue
 
             except Exception as e:

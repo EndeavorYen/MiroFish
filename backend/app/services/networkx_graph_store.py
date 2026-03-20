@@ -6,6 +6,7 @@ traversal) and SQLite for persistence and full-text search (FTS5).
 """
 
 import json
+import re
 import sqlite3
 import threading
 from datetime import datetime
@@ -440,13 +441,34 @@ class NetworkXGraphStore:
 
     # ── Search ──────────────────────────────────────────────────────
 
+    @staticmethod
+    def _tokenize_query(query: str) -> List[str]:
+        """Split query into searchable tokens (handles mixed CJK + Latin)."""
+        # Split on whitespace first
+        parts = query.lower().split()
+        tokens = []
+        for part in parts:
+            # Further split CJK from Latin characters
+            # e.g. "OPEC石油价格" -> ["opec", "石油价格"]
+            sub = re.findall(r'[a-z0-9_\-+.]+|[\u4e00-\u9fff\u3400-\u4dbf]+', part)
+            tokens.extend(sub)
+        # Remove very short tokens (single latin chars) but keep CJK chars
+        return [t for t in tokens if len(t) > 1 or '\u4e00' <= t <= '\u9fff']
+
+    def _text_matches(self, text: str, tokens: List[str]) -> bool:
+        """Check if any token appears in text (substring match)."""
+        text_lower = text.lower()
+        return any(t in text_lower for t in tokens)
+
     def search(
         self, graph_id: str, query: str, scope: str = "all", limit: int = 10
     ) -> SearchResult:
         nodes: List[EntityNode] = []
         edges: List[RelationEdge] = []
         facts: List[str] = []
-        q_lower = query.lower()
+        tokens = self._tokenize_query(query)
+        if not tokens:
+            return SearchResult(nodes=nodes, edges=edges, facts=facts)
 
         g = self._graphs.get(graph_id)
 
@@ -454,7 +476,7 @@ class NetworkXGraphStore:
             for nid, data in g.nodes(data=True):
                 name = data.get("name", "")
                 summary = data.get("summary", "")
-                if q_lower in name.lower() or q_lower in summary.lower():
+                if self._text_matches(name, tokens) or self._text_matches(summary, tokens):
                     nodes.append(
                         EntityNode(
                             uuid=nid,
@@ -472,7 +494,7 @@ class NetworkXGraphStore:
             for src, tgt, data in g.edges(data=True):
                 fact_text = data.get("fact", "")
                 rel_name = data.get("name", "")
-                if q_lower in fact_text.lower() or q_lower in rel_name.lower():
+                if self._text_matches(fact_text, tokens) or self._text_matches(rel_name, tokens):
                     edges.append(self._edge_data_to_relation(src, tgt, data))
                     if fact_text:
                         facts.append(fact_text)

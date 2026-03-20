@@ -53,7 +53,7 @@ def test_insight_forge_decomposes_query(tools):
 def test_search_result_to_text(tools):
     result = tools.quick_search("房")
     text = result.to_text(query="房市")
-    assert "搜索查询" in text
+    assert "Query:" in text
 
 
 def test_insight_forge_without_llm(store):

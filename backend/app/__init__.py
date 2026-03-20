@@ -41,7 +41,7 @@ def create_app(config_class=Config):
     
     if should_log_startup:
         logger.info("=" * 50)
-        logger.info("MiroFish Backend 启动中...")
+        logger.info("MiroFish Backend starting...")
         logger.info("=" * 50)
     
     # 启用CORS
@@ -51,25 +51,28 @@ def create_app(config_class=Config):
     from .services.simulation_runner import SimulationRunner
     SimulationRunner.register_cleanup()
     if should_log_startup:
-        logger.info("已注册模拟进程清理函数")
+        logger.info("Registered simulation process cleanup handler")
 
     from .services.simulation_manager import SimulationManager
     interrupted_prepare_count = SimulationManager(store=graph_store).mark_interrupted_preparations_failed()
     if should_log_startup and interrupted_prepare_count:
-        logger.info(f"已清理 {interrupted_prepare_count} 个中断的准备任务")
+        logger.info(f"Cleaned up {interrupted_prepare_count} interrupted preparation tasks")
+
+    from .services.report_agent import ReportManager
+    ReportManager.cleanup_stale_reports()
     
     # 请求日志中间件
     @app.before_request
     def log_request():
         logger = get_logger('mirofish.request')
-        logger.debug(f"请求: {request.method} {request.path}")
+        logger.debug(f"Request: {request.method} {request.path}")
         if request.content_type and 'json' in request.content_type:
-            logger.debug(f"请求体: {request.get_json(silent=True)}")
+            logger.debug(f"Request body: {request.get_json(silent=True)}")
     
     @app.after_request
     def log_response(response):
         logger = get_logger('mirofish.request')
-        logger.debug(f"响应: {response.status_code}")
+        logger.debug(f"Response: {response.status_code}")
         return response
     
     # 注册蓝图
@@ -84,6 +87,6 @@ def create_app(config_class=Config):
         return {'status': 'ok', 'service': 'MiroFish Backend'}
     
     if should_log_startup:
-        logger.info("MiroFish Backend 启动完成")
+        logger.info("MiroFish Backend started successfully")
     
     return app

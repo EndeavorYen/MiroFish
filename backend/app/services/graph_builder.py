@@ -162,7 +162,7 @@ class GraphBuilderService:
                 task_id,
                 status=TaskStatus.PROCESSING,
                 progress=5,
-                message="开始构建图谱..."
+                message="Starting graph construction..."
             )
 
             # 1. 创建图谱
@@ -170,7 +170,7 @@ class GraphBuilderService:
             self.task_manager.update_task(
                 task_id,
                 progress=10,
-                message=f"图谱已创建: {graph_id}"
+                message=f"Graph created: {graph_id}"
             )
 
             # 2. 文本分块
@@ -179,7 +179,7 @@ class GraphBuilderService:
             self.task_manager.update_task(
                 task_id,
                 progress=15,
-                message=f"文本已分割为 {total_chunks} 个块"
+                message=f"Text split into {total_chunks} chunks"
             )
 
             # 3. 逐块抽取实体关系
@@ -189,14 +189,14 @@ class GraphBuilderService:
                 self.task_manager.update_task(
                     task_id,
                     progress=progress,
-                    message=f"已处理 {idx + 1}/{total_chunks} 个文本块"
+                    message=f"Processed {idx + 1}/{total_chunks} chunks"
                 )
 
             # 4. 获取图谱信息
             self.task_manager.update_task(
                 task_id,
                 progress=90,
-                message="获取图谱信息..."
+                message="Retrieving graph info..."
             )
 
             graph_info = self._get_graph_info(graph_id)
@@ -243,7 +243,7 @@ class GraphBuilderService:
 
         entities = result.get("entities", [])
         relations = result.get("relations", [])
-        logger.info(f"chunk抽取完成: {len(entities)}个实体, {len(relations)}个关系 ({elapsed:.1f}s)")
+        logger.info(f"Chunk extraction complete: {len(entities)} entities, {len(relations)} relations ({elapsed:.1f}s)")
 
         # Store entities, track name->uuid mapping for relation resolution
         entity_uuids = {}

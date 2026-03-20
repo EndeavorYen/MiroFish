@@ -74,7 +74,7 @@ class GraphMemoryUpdater:
         self._total_skipped = 0
         self._total_failed = 0
 
-        logger.info(f"GraphMemoryUpdater 初始化完成: graph_id={graph_id}")
+        logger.info(f"GraphMemoryUpdater initialized: graph_id={graph_id}")
 
     def add_activity(self, data: Dict[str, Any]):
         """
@@ -95,12 +95,12 @@ class GraphMemoryUpdater:
         # 跳过无意义动作
         if action_type in SKIP_ACTIONS:
             self._total_skipped += 1
-            logger.debug(f"跳过动作: {action_type}")
+            logger.debug(f"Skipping action: {action_type}")
             return
 
         if action_type not in ACTION_MAP:
             self._total_skipped += 1
-            logger.debug(f"未知动作类型，跳过: {action_type}")
+            logger.debug(f"Unknown action type, skipping: {action_type}")
             return
 
         try:
@@ -108,7 +108,7 @@ class GraphMemoryUpdater:
             self._total_processed += 1
         except Exception as e:
             self._total_failed += 1
-            logger.error(f"处理活动失败: action_type={action_type}, error={e}")
+            logger.error(f"Activity processing failed: action_type={action_type}, error={e}")
 
     def _process_activity(self, data: Dict[str, Any], action_type: str):
         """内部处理逻辑"""
@@ -264,65 +264,65 @@ class GraphMemoryUpdater:
         if method_name:
             description = getattr(self, method_name)(action_args)
         else:
-            description = f"执行了{action_type}操作"
+            description = f"performed {action_type} action"
         return f"{agent_name}: {description}"
 
     def _fact_create_post(self, args: Dict[str, Any]) -> str:
         content = args.get("content", "")
-        return f"发布了一条帖子：「{content}」" if content else "发布了一条帖子"
+        return f"posted: \"{content}\"" if content else "posted"
 
     def _fact_like_post(self, args: Dict[str, Any]) -> str:
         content = args.get("post_content", "") or args.get("content", "")
         author = args.get("post_author_name", "") or args.get("author", "")
         if content and author:
-            return f"点赞了{author}的帖子：「{content}」"
+            return f"liked {author}'s post: \"{content}\""
         elif content:
-            return f"点赞了一条帖子：「{content}」"
+            return f"liked a post: \"{content}\""
         elif author:
-            return f"点赞了{author}的一条帖子"
-        return "点赞了一条帖子"
+            return f"liked a post by {author}"
+        return "liked a post"
 
     def _fact_dislike_post(self, args: Dict[str, Any]) -> str:
         content = args.get("post_content", "") or args.get("content", "")
         author = args.get("post_author_name", "") or args.get("author", "")
         if content and author:
-            return f"踩了{author}的帖子：「{content}」"
+            return f"disliked {author}'s post: \"{content}\""
         elif content:
-            return f"踩了一条帖子：「{content}」"
+            return f"disliked a post: \"{content}\""
         elif author:
-            return f"踩了{author}的一条帖子"
-        return "踩了一条帖子"
+            return f"disliked a post by {author}"
+        return "disliked a post"
 
     def _fact_repost(self, args: Dict[str, Any]) -> str:
         content = args.get("original_content", "") or args.get("content", "")
         author = args.get("original_author_name", "") or args.get("author", "")
         if content and author:
-            return f"转发了{author}的帖子：「{content}」"
+            return f"reposted {author}'s post: \"{content}\""
         elif content:
-            return f"转发了一条帖子：「{content}」"
+            return f"reposted a post: \"{content}\""
         elif author:
-            return f"转发了{author}的一条帖子"
-        return "转发了一条帖子"
+            return f"reposted a post by {author}"
+        return "reposted a post"
 
     def _fact_quote_post(self, args: Dict[str, Any]) -> str:
         original = args.get("original_content", "")
         author = args.get("original_author_name", "") or args.get("author", "")
         quote = args.get("quote_content", "") or args.get("content", "")
         if original and author:
-            base = f"引用了{author}的帖子「{original}」"
+            base = f"quoted {author}'s post \"{original}\""
         elif original:
-            base = f"引用了一条帖子「{original}」"
+            base = f"quoted a post \"{original}\""
         elif author:
-            base = f"引用了{author}的一条帖子"
+            base = f"quoted a post by {author}"
         else:
-            base = "引用了一条帖子"
+            base = "quoted a post"
         if quote:
-            base += f"，并评论道：「{quote}」"
+            base += f", commenting: \"{quote}\""
         return base
 
     def _fact_follow(self, args: Dict[str, Any]) -> str:
         target = args.get("target_user_name", "")
-        return f"关注了用户「{target}」" if target else "关注了一个用户"
+        return f"followed user \"{target}\"" if target else "followed a user"
 
     def _fact_create_comment(self, args: Dict[str, Any]) -> str:
         content = args.get("content", "")
@@ -330,47 +330,47 @@ class GraphMemoryUpdater:
         post_author = args.get("post_author_name", "") or args.get("author", "")
         if content:
             if post_content and post_author:
-                return f"在{post_author}的帖子「{post_content}」下评论道：「{content}」"
+                return f"commented on {post_author}'s post \"{post_content}\": \"{content}\""
             elif post_content:
-                return f"在帖子「{post_content}」下评论道：「{content}」"
+                return f"commented on post \"{post_content}\": \"{content}\""
             elif post_author:
-                return f"在{post_author}的帖子下评论道：「{content}」"
-            return f"评论道：「{content}」"
-        return "发表了评论"
+                return f"commented on {post_author}'s post: \"{content}\""
+            return f"commented: \"{content}\""
+        return "posted a comment"
 
     def _fact_like_comment(self, args: Dict[str, Any]) -> str:
         content = args.get("comment_content", "")
         author = args.get("comment_author_name", "") or args.get("author", "")
         if content and author:
-            return f"点赞了{author}的评论：「{content}」"
+            return f"liked {author}'s comment: \"{content}\""
         elif content:
-            return f"点赞了一条评论：「{content}」"
+            return f"liked a comment: \"{content}\""
         elif author:
-            return f"点赞了{author}的一条评论"
-        return "点赞了一条评论"
+            return f"liked a comment by {author}"
+        return "liked a comment"
 
     def _fact_dislike_comment(self, args: Dict[str, Any]) -> str:
         content = args.get("comment_content", "")
         author = args.get("comment_author_name", "") or args.get("author", "")
         if content and author:
-            return f"踩了{author}的评论：「{content}」"
+            return f"disliked {author}'s comment: \"{content}\""
         elif content:
-            return f"踩了一条评论：「{content}」"
+            return f"disliked a comment: \"{content}\""
         elif author:
-            return f"踩了{author}的一条评论"
-        return "踩了一条评论"
+            return f"disliked a comment by {author}"
+        return "disliked a comment"
 
     def _fact_search(self, args: Dict[str, Any]) -> str:
         query = args.get("query", "") or args.get("keyword", "")
-        return f"搜索了「{query}」" if query else "进行了搜索"
+        return f"searched for \"{query}\"" if query else "performed a search"
 
     def _fact_search_user(self, args: Dict[str, Any]) -> str:
         query = args.get("query", "") or args.get("username", "")
-        return f"搜索了用户「{query}」" if query else "搜索了用户"
+        return f"searched for user \"{query}\"" if query else "searched for a user"
 
     def _fact_mute(self, args: Dict[str, Any]) -> str:
         target = args.get("target_user_name", "")
-        return f"屏蔽了用户「{target}」" if target else "屏蔽了一个用户"
+        return f"muted user \"{target}\"" if target else "muted a user"
 
     def get_stats(self) -> Dict[str, Any]:
         """获取统计信息"""
@@ -412,7 +412,7 @@ class GraphMemoryManager:
             updater = GraphMemoryUpdater(graph_id=graph_id, store=store)
             cls._updaters[simulation_id] = updater
             logger.info(
-                f"创建图谱记忆更新器: simulation_id={simulation_id}, graph_id={graph_id}"
+                f"Created graph memory updater: simulation_id={simulation_id}, graph_id={graph_id}"
             )
             return updater
 
@@ -428,14 +428,14 @@ class GraphMemoryManager:
         with cls._lock:
             if simulation_id in cls._updaters:
                 del cls._updaters[simulation_id]
-                logger.info(f"已停止图谱记忆更新器: simulation_id={simulation_id}")
+                logger.info(f"Stopped graph memory updater: simulation_id={simulation_id}")
 
     @classmethod
     def stop_all(cls):
         """移除所有更新器"""
         with cls._lock:
             cls._updaters.clear()
-            logger.info("已停止所有图谱记忆更新器")
+            logger.info("Stopped all graph memory updaters")
 
     @classmethod
     def get_all_stats(cls) -> Dict[str, Dict[str, Any]]:

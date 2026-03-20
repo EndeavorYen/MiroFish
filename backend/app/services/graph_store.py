@@ -79,20 +79,24 @@ class SearchResult:
         }
 
     def to_text(self, query: str = "") -> str:
-        """Format for LLM consumption, matching ZepTools output format."""
+        """Format for LLM consumption."""
         lines = []
         if query:
-            lines.append(f"搜索查询: {query}")
-        lines.append(f"找到 {len(self.facts)} 条相关信息")
+            lines.append(f"Query: {query}")
+        lines.append(f"Found {len(self.facts)} related facts, {len(self.nodes)} entities, {len(self.edges)} relations")
         if self.facts:
-            lines.append("\n### 相关事实:")
+            lines.append("\n### Facts:")
             for i, fact in enumerate(self.facts, 1):
                 lines.append(f"{i}. {fact}")
         if self.nodes:
-            lines.append("\n### 相关实体:")
+            lines.append("\n### Entities:")
             for node in self.nodes:
                 labels_str = ", ".join(node.labels)
-                lines.append(f"- **{node.name}** [{labels_str}]: {node.summary}")
+                lines.append(f"- **{node.name}** ({labels_str}): {node.summary}")
+        if self.edges:
+            lines.append("\n### Relations:")
+            for edge in self.edges:
+                lines.append(f"- {edge.name}: {edge.fact}")
         return "\n".join(lines)
 
 

@@ -51,7 +51,7 @@ class LLMClient:
         self.api_key = Config.get_llm_api_key(api_key=api_key, base_url=self.base_url)
 
         if not self.api_key:
-            raise ValueError("LLM_API_KEY 未配置")
+            raise ValueError("LLM_API_KEY is not configured")
 
         self.timeout = Config.get_llm_timeout_seconds(self.base_url)
         self.is_local = Config.is_local_openai_compatible_base_url(self.base_url)
@@ -200,7 +200,7 @@ class LLMClient:
                 if not raw_content:
                     reasoning = getattr(response.choices[0].message, "reasoning", None) or ""
                     logger.warning(
-                        f"LLM content为空 (attempt {attempt+1}): "
+                        f"LLM content empty (attempt {attempt+1}): "
                         f"finish_reason={finish_reason}, "
                         f"reasoning_len={len(reasoning)}"
                     )
@@ -209,27 +209,27 @@ class LLMClient:
 
                 # 截断侦测与修复
                 if finish_reason == 'length':
-                    logger.warning(f"LLM JSON输出被截断 (attempt {attempt+1})，尝试修复...")
+                    logger.warning(f"LLM JSON output truncated (attempt {attempt+1}), attempting repair...")
                     content = fix_truncated_json(content)
 
                 content = self._clean_content(content)
 
                 if not content:
-                    raise json.JSONDecodeError("LLM返回空内容", "", 0)
+                    raise json.JSONDecodeError("LLM returned empty content", "", 0)
 
                 return json.loads(content)
 
             except json.JSONDecodeError as e:
                 last_error = e
-                logger.warning(f"JSON解析失败 (attempt {attempt+1}/{max_retries+1}): {str(e)[:100]}")
+                logger.warning(f"JSON parse failed (attempt {attempt+1}/{max_retries+1}): {str(e)[:100]}")
                 if attempt < max_retries:
                     continue
 
             except Exception as e:
                 last_error = e
-                logger.warning(f"LLM调用失败 (attempt {attempt+1}/{max_retries+1}): {str(e)[:100]}")
+                logger.warning(f"LLM call failed (attempt {attempt+1}/{max_retries+1}): {str(e)[:100]}")
                 if attempt < max_retries:
                     time.sleep(2 * (attempt + 1))
                     continue
 
-        raise ValueError(f"LLM返回的JSON格式无效（{max_retries+1}次尝试后）: {str(last_error)}")
+        raise ValueError(f"Invalid JSON from LLM after {max_retries+1} attempts: {str(last_error)}")

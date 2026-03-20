@@ -1,5 +1,6 @@
 import pytest
 from datetime import datetime
+from app.services.networkx_graph_store import NetworkXGraphStore
 
 
 @pytest.fixture
@@ -113,6 +114,22 @@ class TestSearch:
     def test_search_all(self, populated_store, graph_id):
         result = populated_store.search(graph_id, "researcher", scope="all")
         assert len(result.facts) >= 1
+
+    def test_search_tokenized_mixed_query(self, populated_store, graph_id):
+        """Mixed CJK + Latin queries should match on individual tokens."""
+        # "Alice研究" should match Alice (latin token "alice")
+        result = populated_store.search(graph_id, "Alice研究", scope="nodes")
+        assert len(result.nodes) >= 1
+        assert result.nodes[0].name == "Alice"
+
+    def test_tokenize_query(self):
+        tokens = NetworkXGraphStore._tokenize_query("OPEC石油价格")
+        assert "opec" in tokens
+        assert "石油价格" in tokens
+
+        tokens2 = NetworkXGraphStore._tokenize_query("Alice Bob")
+        assert "alice" in tokens2
+        assert "bob" in tokens2
 
 
 class TestTextStore:

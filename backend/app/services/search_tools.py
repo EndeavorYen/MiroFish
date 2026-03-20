@@ -49,10 +49,10 @@ class SearchTools:
         facts = []
         for e in active_edges:
             if e.fact:
-                facts.append(f"[活跃] {e.fact}")
+                facts.append(f"[Active] {e.fact}")
         for e in historical_edges:
             if e.fact:
-                facts.append(f"[历史] {e.fact}")
+                facts.append(f"[Historical] {e.fact}")
 
         # Add entity summaries
         for entity in all_entities:
@@ -129,8 +129,8 @@ class SearchTools:
 
         messages = [
             {"role": "system", "content": (
-                "你是一个搜索查询分析器。将用户的复杂问题分解为3-5个更简单、更具体的子问题。"
-                "返回JSON格式：{\"sub_questions\": [\"问题1\", \"问题2\", ...]}"
+                "You are a search query analyzer. Decompose the user's complex question into 3-5 simpler, more specific sub-questions. "
+                "Return JSON format: {\"sub_questions\": [\"question1\", \"question2\", ...]}"
             )},
             {"role": "user", "content": query},
         ]

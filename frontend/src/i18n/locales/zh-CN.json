@@ -278,7 +278,10 @@
   },
   "report": {
     "generatingSection": "正在生成{title}...",
-    "goToInteraction": "进入深度互动"
+    "goToInteraction": "进入深度互动",
+    "regenerate": "重新生成",
+    "regenerating": "重新生成中...",
+    "regenerateHint": "输入提示，例如：聚焦地缘政治影响（可选）"
   },
   "history": {
     "title": "推演记录",

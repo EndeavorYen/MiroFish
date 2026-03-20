@@ -278,7 +278,10 @@
   },
   "report": {
     "generatingSection": "Generating {title}...",
-    "goToInteraction": "Enter Interaction"
+    "goToInteraction": "Enter Interaction",
+    "regenerate": "Regenerate",
+    "regenerating": "Regenerating...",
+    "regenerateHint": "Enter hint, e.g.: focus on geopolitical impact (optional)"
   },
   "history": {
     "title": "History",

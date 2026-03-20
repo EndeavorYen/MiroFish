@@ -55,6 +55,7 @@
           :systemLogs="systemLogs"
           @add-log="addLog"
           @update-status="updateStatus"
+          @update-report-id="onReportIdUpdate"
         />
       </div>
     </main>
@@ -130,6 +131,12 @@ const addLog = (msg) => {
 
 const updateStatus = (status) => {
   currentStatus.value = status
+}
+
+const onReportIdUpdate = (newId) => {
+  currentReportId.value = newId
+  // Update URL without full navigation
+  router.replace({ name: 'Report', params: { reportId: newId } })
 }
 
 // --- Layout Methods ---

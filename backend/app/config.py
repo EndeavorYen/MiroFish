@@ -109,5 +109,5 @@ class Config:
         """验证必要配置"""
         errors = []
         if not cls.get_llm_api_key():
-            errors.append("LLM_API_KEY 未配置")
+            errors.append("LLM_API_KEY is not configured")
         return errors

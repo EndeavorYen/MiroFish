@@ -584,7 +584,52 @@ class RedditSimulationRunner:
             database_path=db_path,
             semaphore=30,  # 限制最大并发 LLM 请求数，防止 API 过载
         )
-        
+
+        # Patch OASIS 默认参数：降低每 round 的 prompt 膨胀
+        # 原始值：max_rec_post_len=100, refresh_rec_post_count=5
+        # 问题：随着 round 增加，帖子+评论数量线性膨胀，导致 prompt 越来越长
+        self.env.platform.max_rec_post_len = 5
+        self.env.platform.refresh_rec_post_count = 2
+        print(f"  已调整推荐参数: max_rec_post_len=5, refresh_rec_post_count=2")
+
+        # Patch 评论查询：限制每篇帖子只返回 top 3 评论（按 score 排序）
+        # 原始行为：撈取所有评论，随 round 增加无限膨胀
+        _original_add_comments = self.env.platform.pl_utils._add_comments_to_posts
+        _pl_utils = self.env.platform.pl_utils
+        MAX_COMMENTS_PER_POST = 3
+
+        def _add_comments_limited(results):
+            """Patched version: limit comments per post to top N by score."""
+            import copy
+            # Save original method's cursor reference
+            cursor = _pl_utils.db_cursor
+
+            # Temporarily replace the SQL query behavior
+            original_execute = cursor.execute
+            _in_comment_query = [False]
+
+            def patched_execute(sql, params=None):
+                if "FROM comment WHERE post_id" in sql:
+                    # Replace with limited + ordered query
+                    sql = (
+                        "SELECT comment_id, post_id, user_id, content, created_at, "
+                        "num_likes, num_dislikes FROM comment WHERE post_id = ? "
+                        "ORDER BY (num_likes - num_dislikes) DESC "
+                        f"LIMIT {MAX_COMMENTS_PER_POST}"
+                    )
+                    _in_comment_query[0] = True
+                return original_execute(sql, params)
+
+            cursor.execute = patched_execute
+            try:
+                result = _original_add_comments(results)
+            finally:
+                cursor.execute = original_execute
+            return result
+
+        self.env.platform.pl_utils._add_comments_to_posts = _add_comments_limited
+        print(f"  已限制每篇帖子评论数: max={MAX_COMMENTS_PER_POST}")
+
         await self.env.reset()
         print("环境初始化完成\n")
         

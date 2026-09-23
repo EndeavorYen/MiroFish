@@ -13,6 +13,7 @@ import os
 import json
 import time
 import re
+import functools
 from typing import Dict, Any, List, Optional, Callable
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -22,6 +23,7 @@ from ..config import Config
 from ..utils.llm_client import LLMClient
 from ..utils.logger import get_logger
 from ..utils.locale import get_language_instruction, t
+from ..utils.llm_usage import usage_stage
 from .zep_tools import (
     ZepToolsService, 
     SearchResult, 
@@ -868,6 +870,16 @@ CHAT_OBSERVATION_SUFFIX = "\n\n请简洁回答问题。"
 # ═══════════════════════════════════════════════════════════════
 
 
+def report_usage_tracked(func):
+    """Decorator to wrap ReportAgent methods with usage_stage('report')."""
+    @functools.wraps(func)
+    def wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
+        metrics_dir = self._get_metrics_dir() if hasattr(self, "_get_metrics_dir") else None
+        with usage_stage("report", metrics_dir=metrics_dir):
+            return func(self, *args, **kwargs)
+    return wrapper
+
+
 class ReportAgent:
     """
     Report Agent - 模拟报告生成Agent
@@ -921,6 +933,12 @@ class ReportAgent:
         self.console_logger: Optional[ReportConsoleLogger] = None
         
         logger.info(t('report.agentInitDone', graphId=graph_id, simulationId=simulation_id))
+
+    def _get_metrics_dir(self) -> Optional[str]:
+        """获取当前模拟的 metrics 目录"""
+        if getattr(self, "simulation_id", None):
+            return os.path.join(Config.UPLOAD_FOLDER, "simulations", self.simulation_id, "metrics")
+        return None
     
     def _define_tools(self) -> Dict[str, Dict[str, Any]]:
         """定义可用工具"""
@@ -1173,6 +1191,7 @@ class ReportAgent:
         cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
         return cleaned.strip()
 
+    @report_usage_tracked
     def plan_outline(
         self, 
         progress_callback: Optional[Callable] = None
@@ -1573,6 +1592,7 @@ class ReportAgent:
         
         return final_answer
     
+    @report_usage_tracked
     def generate_report(
         self, 
         progress_callback: Optional[Callable[[str, int, str], None]] = None,
@@ -1807,6 +1827,7 @@ class ReportAgent:
             
             return report
     
+    @report_usage_tracked
     def chat(
         self, 
         message: str,

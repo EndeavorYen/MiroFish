@@ -7,7 +7,9 @@ import json
 import logging
 import re
 from typing import Dict, Any, List, Optional
+import os
 from ..utils.llm_client import LLMClient
+from ..utils.llm_usage import usage_stage
 from ..utils.locale import get_language_instruction
 from ..utils.file_parser import split_text_into_chunks
 from ..utils.ontology import (
@@ -204,7 +206,9 @@ class OntologyGenerator:
         self,
         document_texts: List[str],
         simulation_requirement: str,
-        additional_context: Optional[str] = None
+        additional_context: Optional[str] = None,
+        project_id: Optional[str] = None,
+        metrics_dir: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         生成本体定义
@@ -213,39 +217,47 @@ class OntologyGenerator:
             document_texts: 文档文本列表
             simulation_requirement: 模拟需求描述
             additional_context: 额外上下文
+            project_id: 项目ID（用于确定metrics输出目录）
+            metrics_dir: 显式metrics目录覆盖
             
         Returns:
             本体定义（entity_types, edge_types等）
         """
-        # 构建用户消息
-        user_message = self._build_user_message(
-            document_texts, 
-            simulation_requirement,
-            additional_context
-        )
-        
-        lang_instruction = get_language_instruction()
-        system_prompt = f"{ONTOLOGY_SYSTEM_PROMPT}\n\n{lang_instruction}\nIMPORTANT: Entity type names MUST be in English PascalCase (e.g., 'PersonEntity', 'MediaOrganization'). Relationship type names MUST be in English UPPER_SNAKE_CASE (e.g., 'WORKS_FOR'). Attribute names MUST be in English snake_case. Only description fields and analysis_summary should use the specified language above."
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_message}
-        ]
-        
-        # 调用LLM
-        result = self.llm_client.chat_json(
-            messages=messages,
-            temperature=0.3,
-            # Structured ontology responses can exceed 4096 completion tokens,
-            # especially when a compatible provider counts hidden reasoning in
-            # the same budget. Let the provider use its model-specific limit.
-            max_tokens=None,
-            max_attempts=2,
-        )
-        
-        # 验证和后处理
-        result = self._validate_and_process(result)
-        
-        return result
+        target_metrics_dir = metrics_dir
+        if not target_metrics_dir and project_id:
+            from ..models.project import ProjectManager
+            target_metrics_dir = os.path.join(ProjectManager._get_project_dir(project_id), "metrics")
+
+        with usage_stage("ontology", metrics_dir=target_metrics_dir):
+            # 构建用户消息
+            user_message = self._build_user_message(
+                document_texts, 
+                simulation_requirement,
+                additional_context
+            )
+            
+            lang_instruction = get_language_instruction()
+            system_prompt = f"{ONTOLOGY_SYSTEM_PROMPT}\n\n{lang_instruction}\nIMPORTANT: Entity type names MUST be in English PascalCase (e.g., 'PersonEntity', 'MediaOrganization'). Relationship type names MUST be in English UPPER_SNAKE_CASE (e.g., 'WORKS_FOR'). Attribute names MUST be in English snake_case. Only description fields and analysis_summary should use the specified language above."
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_message}
+            ]
+            
+            # 调用LLM
+            result = self.llm_client.chat_json(
+                messages=messages,
+                temperature=0.3,
+                # Structured ontology responses can exceed 4096 completion tokens,
+                # especially when a compatible provider counts hidden reasoning in
+                # the same budget. Let the provider use its model-specific limit.
+                max_tokens=None,
+                max_attempts=2,
+            )
+            
+            # 验证和后处理
+            result = self._validate_and_process(result)
+            
+            return result
     
     # 传给 LLM 的文本最大长度（5万字）
     MAX_TEXT_LENGTH_FOR_LLM = 50000

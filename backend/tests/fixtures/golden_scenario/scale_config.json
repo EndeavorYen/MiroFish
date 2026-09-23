@@ -1,0 +1,13 @@
+{
+  "simulation_id": "golden_scenario_baseline",
+  "project_id": "proj_golden_scenario",
+  "platforms": ["twitter", "reddit"],
+  "scale": {
+    "agent_count": 20,
+    "max_rounds": 12,
+    "total_simulation_hours": 6,
+    "minutes_per_round": 30
+  },
+  "seed": 42,
+  "description": "Golden scenario baseline benchmark config for local-first testing"
+}

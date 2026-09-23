@@ -8,6 +8,7 @@ OASIS Agent Profile生成器
 3. 区分个人实体和抽象群体实体
 """
 
+import contextvars
 import json
 import random
 import time
@@ -1001,9 +1002,9 @@ class OasisProfileGenerator:
         
         # 使用线程池并行执行
         with concurrent.futures.ThreadPoolExecutor(max_workers=parallel_count) as executor:
-            # 提交所有任务
+            # 提交所有任务（每个任务使用独立的 context copy 保证并发安全和指标上下文传递）
             future_to_entity = {
-                executor.submit(generate_single_profile, idx, entity): (idx, entity)
+                executor.submit(contextvars.copy_context().run, generate_single_profile, idx, entity): (idx, entity)
                 for idx, entity in enumerate(entities)
             }
             

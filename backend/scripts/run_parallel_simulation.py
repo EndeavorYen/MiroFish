@@ -102,6 +102,8 @@ else:
         load_dotenv(_backend_env)
         print(f"已加载环境配置: {_backend_env}")
 
+from app.utils.llm_usage import wrap_camel_model, usage_stage
+
 
 class MaxTokensWarningFilter(logging.Filter):
     """过滤掉 camel-ai 关于 max_tokens 的警告（我们故意不设置 max_tokens，让模型自行决定）"""
@@ -333,7 +335,9 @@ class ParallelIPCHandler:
                 action_args={"prompt": prompt}
             )
             actions = {agent: interview_action}
-            await env.step(actions)
+            metrics_dir = os.path.join(self.simulation_dir, "metrics")
+            with usage_stage("interview", metrics_dir=metrics_dir):
+                await env.step(actions)
             
             result = self._get_interview_result(agent_id, actual_platform)
             result["platform"] = actual_platform
@@ -466,7 +470,9 @@ class ParallelIPCHandler:
                         print(f"  警告: 无法获取Twitter Agent {agent_id}: {e}")
                 
                 if twitter_actions:
-                    await self.twitter_env.step(twitter_actions)
+                    metrics_dir = os.path.join(self.simulation_dir, "metrics")
+                    with usage_stage("interview", metrics_dir=metrics_dir):
+                        await self.twitter_env.step(twitter_actions)
                     
                     for interview in twitter_interviews:
                         agent_id = interview.get("agent_id")
@@ -493,7 +499,9 @@ class ParallelIPCHandler:
                         print(f"  警告: 无法获取Reddit Agent {agent_id}: {e}")
                 
                 if reddit_actions:
-                    await self.reddit_env.step(reddit_actions)
+                    metrics_dir = os.path.join(self.simulation_dir, "metrics")
+                    with usage_stage("interview", metrics_dir=metrics_dir):
+                        await self.reddit_env.step(reddit_actions)
                     
                     for interview in reddit_interviews:
                         agent_id = interview.get("agent_id")
@@ -1031,19 +1039,22 @@ def create_model(config: Dict[str, Any], use_boost: bool = False):
     
     print(f"{config_label} model={llm_model}, base_url={llm_base_url[:40] if llm_base_url else '默认'}...")
     
-    return ModelFactory.create(
+    model = ModelFactory.create(
         model_platform=ModelPlatformType.OPENAI,
         model_type=llm_model,
     )
+    return wrap_camel_model(model, default_stage="simulation")
 
 
 def get_active_agents_for_round(
     env,
     config: Dict[str, Any],
     current_hour: int,
-    round_num: int
+    round_num: int,
+    rng: Optional[random.Random] = None
 ) -> List:
     """根据时间和配置决定本轮激活哪些Agent"""
+    r = rng if rng is not None else random
     time_config = config.get("time_config", {})
     agent_configs = config.get("agent_configs", [])
     
@@ -1060,7 +1071,7 @@ def get_active_agents_for_round(
     else:
         multiplier = 1.0
     
-    target_count = int(random.uniform(base_min, base_max) * multiplier)
+    target_count = int(r.uniform(base_min, base_max) * multiplier)
     
     candidates = []
     for cfg in agent_configs:
@@ -1071,10 +1082,10 @@ def get_active_agents_for_round(
         if current_hour not in active_hours:
             continue
         
-        if random.random() < activity_level:
+        if r.random() < activity_level:
             candidates.append(agent_id)
     
-    selected_ids = random.sample(
+    selected_ids = r.sample(
         candidates, 
         min(target_count, len(candidates))
     ) if candidates else []
@@ -1103,7 +1114,8 @@ async def run_twitter_simulation(
     simulation_dir: str,
     action_logger: Optional[PlatformActionLogger] = None,
     main_logger: Optional[SimulationLogManager] = None,
-    max_rounds: Optional[int] = None
+    max_rounds: Optional[int] = None,
+    rng: Optional[random.Random] = None
 ) -> PlatformSimulation:
     """运行Twitter模拟
     
@@ -1237,7 +1249,7 @@ async def run_twitter_simulation(
         simulated_day = simulated_minutes // (60 * 24) + 1
         
         active_agents = get_active_agents_for_round(
-            result.env, config, simulated_hour, round_num
+            result.env, config, simulated_hour, round_num, rng=rng
         )
         
         # 无论是否有活跃agent，都记录round开始
@@ -1251,7 +1263,9 @@ async def run_twitter_simulation(
             continue
         
         actions = {agent: LLMAction() for _, agent in active_agents}
-        await result.env.step(actions)
+        metrics_dir = os.path.join(simulation_dir, "metrics")
+        with usage_stage("simulation", metrics_dir=metrics_dir):
+            await result.env.step(actions)
         
         # 从数据库获取实际执行的动作并记录
         actual_actions, last_rowid = fetch_new_actions_from_db(
@@ -1295,7 +1309,8 @@ async def run_reddit_simulation(
     simulation_dir: str,
     action_logger: Optional[PlatformActionLogger] = None,
     main_logger: Optional[SimulationLogManager] = None,
-    max_rounds: Optional[int] = None
+    max_rounds: Optional[int] = None,
+    rng: Optional[random.Random] = None
 ) -> PlatformSimulation:
     """运行Reddit模拟
     
@@ -1436,7 +1451,7 @@ async def run_reddit_simulation(
         simulated_day = simulated_minutes // (60 * 24) + 1
         
         active_agents = get_active_agents_for_round(
-            result.env, config, simulated_hour, round_num
+            result.env, config, simulated_hour, round_num, rng=rng
         )
         
         # 无论是否有活跃agent，都记录round开始
@@ -1450,7 +1465,9 @@ async def run_reddit_simulation(
             continue
         
         actions = {agent: LLMAction() for _, agent in active_agents}
-        await result.env.step(actions)
+        metrics_dir = os.path.join(simulation_dir, "metrics")
+        with usage_stage("simulation", metrics_dir=metrics_dir):
+            await result.env.step(actions)
         
         # 从数据库获取实际执行的动作并记录
         actual_actions, last_rowid = fetch_new_actions_from_db(
@@ -1519,6 +1536,12 @@ async def main():
         default=False,
         help='模拟完成后立即关闭环境，不进入等待命令模式'
     )
+    parser.add_argument(
+        '--seed',
+        type=int,
+        default=None,
+        help='随机种子，用于复现Agent激活序列'
+    )
     
     args = parser.parse_args()
     
@@ -1576,15 +1599,23 @@ async def main():
     twitter_result: Optional[PlatformSimulation] = None
     reddit_result: Optional[PlatformSimulation] = None
     
+    raw_seed = args.seed if args.seed is not None else config.get("seed")
+    try:
+        seed = int(raw_seed) if raw_seed is not None else None
+    except (ValueError, TypeError):
+        seed = None
+    rng_twitter = random.Random(seed) if seed is not None else None
+    rng_reddit = random.Random(seed + 1) if seed is not None else None
+    
     if args.twitter_only:
-        twitter_result = await run_twitter_simulation(config, simulation_dir, twitter_logger, log_manager, args.max_rounds)
+        twitter_result = await run_twitter_simulation(config, simulation_dir, twitter_logger, log_manager, args.max_rounds, rng=rng_twitter)
     elif args.reddit_only:
-        reddit_result = await run_reddit_simulation(config, simulation_dir, reddit_logger, log_manager, args.max_rounds)
+        reddit_result = await run_reddit_simulation(config, simulation_dir, reddit_logger, log_manager, args.max_rounds, rng=rng_reddit)
     else:
         # 并行运行（每个平台使用独立的日志记录器）
         results = await asyncio.gather(
-            run_twitter_simulation(config, simulation_dir, twitter_logger, log_manager, args.max_rounds),
-            run_reddit_simulation(config, simulation_dir, reddit_logger, log_manager, args.max_rounds),
+            run_twitter_simulation(config, simulation_dir, twitter_logger, log_manager, args.max_rounds, rng=rng_twitter),
+            run_reddit_simulation(config, simulation_dir, reddit_logger, log_manager, args.max_rounds, rng=rng_reddit),
         )
         twitter_result, reddit_result = results
     

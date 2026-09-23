@@ -46,6 +46,8 @@ else:
     if os.path.exists(_backend_env):
         load_dotenv(_backend_env)
 
+from app.utils.llm_usage import wrap_camel_model, usage_stage
+
 
 import re
 
@@ -230,7 +232,9 @@ class IPCHandler:
             
             # 执行Interview
             actions = {agent: interview_action}
-            await self.env.step(actions)
+            metrics_dir = os.path.join(self.simulation_dir, "metrics")
+            with usage_stage("interview", metrics_dir=metrics_dir):
+                await self.env.step(actions)
             
             # 从数据库获取结果
             result = self._get_interview_result(agent_id)
@@ -276,7 +280,9 @@ class IPCHandler:
                 return False
             
             # 执行批量Interview
-            await self.env.step(actions)
+            metrics_dir = os.path.join(self.simulation_dir, "metrics")
+            with usage_stage("interview", metrics_dir=metrics_dir):
+                await self.env.step(actions)
             
             # 获取所有结果
             results = {}
@@ -395,18 +401,24 @@ class TwitterSimulationRunner:
         ActionType.QUOTE_POST,
     ]
     
-    def __init__(self, config_path: str, wait_for_commands: bool = True):
+    def __init__(self, config_path: str, wait_for_commands: bool = True, seed: Optional[int] = None):
         """
         初始化模拟运行器
         
         Args:
             config_path: 配置文件路径 (simulation_config.json)
             wait_for_commands: 模拟完成后是否等待命令（默认True）
+            seed: 随机种子（可选，用于复现Agent激活序列）
         """
         self.config_path = config_path
         self.config = self._load_config()
         self.simulation_dir = os.path.dirname(config_path)
-        self.wait_for_commands = wait_for_commands
+        raw_seed = seed if seed is not None else self.config.get("seed")
+        try:
+            self.seed = int(raw_seed) if raw_seed is not None else None
+        except (ValueError, TypeError):
+            self.seed = None
+        self.rng = random.Random(self.seed) if self.seed is not None else random
         self.env = None
         self.agent_graph = None
         self.ipc_handler = None
@@ -454,10 +466,11 @@ class TwitterSimulationRunner:
         
         print(f"LLM配置: model={llm_model}, base_url={llm_base_url[:40] if llm_base_url else '默认'}...")
         
-        return ModelFactory.create(
+        model = ModelFactory.create(
             model_platform=ModelPlatformType.OPENAI,
             model_type=llm_model,
         )
+        return wrap_camel_model(model, default_stage="simulation")
     
     def _get_active_agents_for_round(
         self, 
@@ -494,7 +507,7 @@ class TwitterSimulationRunner:
         else:
             multiplier = 1.0
         
-        target_count = int(random.uniform(base_min, base_max) * multiplier)
+        target_count = int(self.rng.uniform(base_min, base_max) * multiplier)
         
         # 根据每个Agent的配置计算激活概率
         candidates = []
@@ -508,11 +521,11 @@ class TwitterSimulationRunner:
                 continue
             
             # 根据活跃度计算概率
-            if random.random() < activity_level:
+            if self.rng.random() < activity_level:
                 candidates.append(agent_id)
         
         # 随机选择
-        selected_ids = random.sample(
+        selected_ids = self.rng.sample(
             candidates, 
             min(target_count, len(candidates))
         ) if candidates else []
@@ -622,45 +635,47 @@ class TwitterSimulationRunner:
                 except Exception as e:
                     print(f"  警告: 无法为Agent {agent_id}创建初始帖子: {e}")
             
+        metrics_dir = os.path.join(self.simulation_dir, "metrics")
+        with usage_stage("simulation", metrics_dir=metrics_dir):
             if initial_actions:
                 await self.env.step(initial_actions)
                 print(f"  已发布 {len(initial_actions)} 条初始帖子")
         
-        # 主模拟循环
-        print("\n开始模拟循环...")
-        start_time = datetime.now()
-        
-        for round_num in range(total_rounds):
-            # 计算当前模拟时间
-            simulated_minutes = round_num * minutes_per_round
-            simulated_hour = (simulated_minutes // 60) % 24
-            simulated_day = simulated_minutes // (60 * 24) + 1
+            # 主模拟循环
+            print("\n开始模拟循环...")
+            start_time = datetime.now()
             
-            # 获取本轮激活的Agent
-            active_agents = self._get_active_agents_for_round(
-                self.env, simulated_hour, round_num
-            )
-            
-            if not active_agents:
-                continue
-            
-            # 构建动作
-            actions = {
-                agent: LLMAction()
-                for _, agent in active_agents
-            }
-            
-            # 执行动作
-            await self.env.step(actions)
-            
-            # 打印进度
-            if (round_num + 1) % 10 == 0 or round_num == 0:
-                elapsed = (datetime.now() - start_time).total_seconds()
-                progress = (round_num + 1) / total_rounds * 100
-                print(f"  [Day {simulated_day}, {simulated_hour:02d}:00] "
-                      f"Round {round_num + 1}/{total_rounds} ({progress:.1f}%) "
-                      f"- {len(active_agents)} agents active "
-                      f"- elapsed: {elapsed:.1f}s")
+            for round_num in range(total_rounds):
+                # 计算当前模拟时间
+                simulated_minutes = round_num * minutes_per_round
+                simulated_hour = (simulated_minutes // 60) % 24
+                simulated_day = simulated_minutes // (60 * 24) + 1
+                
+                # 获取本轮激活的Agent
+                active_agents = self._get_active_agents_for_round(
+                    self.env, simulated_hour, round_num
+                )
+                
+                if not active_agents:
+                    continue
+                
+                # 构建动作
+                actions = {
+                    agent: LLMAction()
+                    for _, agent in active_agents
+                }
+                
+                # 执行动作
+                await self.env.step(actions)
+                
+                # 打印进度
+                if (round_num + 1) % 10 == 0 or round_num == 0:
+                    elapsed = (datetime.now() - start_time).total_seconds()
+                    progress = (round_num + 1) / total_rounds * 100
+                    print(f"  [Day {simulated_day}, {simulated_hour:02d}:00] "
+                          f"Round {round_num + 1}/{total_rounds} ({progress:.1f}%) "
+                          f"- {len(active_agents)} agents active "
+                          f"- elapsed: {elapsed:.1f}s")
         
         total_elapsed = (datetime.now() - start_time).total_seconds()
         print(f"\n模拟循环完成!")
@@ -724,6 +739,12 @@ async def main():
         default=False,
         help='模拟完成后立即关闭环境，不进入等待命令模式'
     )
+    parser.add_argument(
+        '--seed',
+        type=int,
+        default=None,
+        help='随机种子，用于复现Agent激活序列'
+    )
     
     args = parser.parse_args()
     
@@ -741,7 +762,8 @@ async def main():
     
     runner = TwitterSimulationRunner(
         config_path=args.config,
-        wait_for_commands=not args.no_wait
+        wait_for_commands=not args.no_wait,
+        seed=args.seed
     )
     await runner.run(max_rounds=args.max_rounds)
 

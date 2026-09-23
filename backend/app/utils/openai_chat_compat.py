@@ -7,7 +7,10 @@ gracefully adapting request parameters for GPT-5 family models.
 
 from __future__ import annotations
 
+import time
 from typing import Any, Dict, List, Optional
+
+from .llm_usage import record_usage
 
 
 def is_gpt5_family(model: Optional[str]) -> bool:
@@ -54,7 +57,11 @@ def create_chat_completion(
         else:
             kwargs["max_tokens"] = max_tokens
 
-    return client.chat.completions.create(**kwargs)
+    start_time = time.perf_counter()
+    response = client.chat.completions.create(**kwargs)
+    latency_ms = (time.perf_counter() - start_time) * 1000.0
+    record_usage(response, latency_ms=latency_ms, model=model)
+    return response
 
 
 def extract_chat_completion_text(response: Any) -> str:

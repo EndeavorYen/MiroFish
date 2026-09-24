@@ -95,12 +95,28 @@ def _post_stream(
                 if ttft_s is None and text:
                     ttft_s = time.perf_counter() - started
     except (ConnectionResetError, ConnectionAbortedError, TimeoutError) as exc:
-        if ttft_s is None:
+        if ttft_s is None or not usage:
             raise urllib.error.URLError(str(exc)) from exc
     total_s = time.perf_counter() - started
-    if ttft_s is None:
-        ttft_s = total_s
+    if ttft_s is None or total_s <= ttft_s or not usage:
+        raise urllib.error.URLError("stream ended before a complete timed response")
     return ttft_s, total_s, usage
+
+
+def _post_stream_once_retry(
+    url: str,
+    payload: dict[str, Any],
+    api_key: str,
+) -> tuple[float, float, dict[str, Any]]:
+    """Retry one connection reset. A server that is down fails both attempts."""
+    last_error: urllib.error.URLError | None = None
+    for _ in range(2):
+        try:
+            return _post_stream(url, payload, api_key)
+        except urllib.error.URLError as exc:
+            last_error = exc
+    assert last_error is not None
+    raise last_error
 
 
 def _chat_payload(model: str, prompt: str, max_tokens: int) -> dict[str, Any]:
@@ -143,12 +159,14 @@ class _VramSampler:
                     timeout=5,
                     check=False,
                 )
-            except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
-                self.peak_mib = None
+            except FileNotFoundError:
                 return
+            except (subprocess.TimeoutExpired, OSError):
+                self._stop.wait(self.interval_s)
+                continue
             if completed.returncode != 0:
-                self.peak_mib = None
-                return
+                self._stop.wait(self.interval_s)
+                continue
             used = parse_nvidia_smi_mib(completed.stdout)
             if used is not None:
                 self.peak_mib = used if self.peak_mib is None else max(self.peak_mib, used)
@@ -184,14 +202,15 @@ def main(argv: list[str] | None = None) -> int:
     sampler = _VramSampler()
     sampler.start()
     try:
-        first_ttft, first_total, first_usage = _post_stream(url, payload, args.api_key)
-        second_ttft, _second_total, _second_usage = _post_stream(url, payload, args.api_key)
+        first_ttft, first_total, first_usage = _post_stream_once_retry(url, payload, args.api_key)
+        second_ttft, _second_total, _second_usage = _post_stream_once_retry(url, payload, args.api_key)
 
         success_count = 0
         failure_count = 0
+        failure_errors: list[str] = []
 
         def _one() -> bool:
-            _post_stream(url, payload, args.api_key)
+            _post_stream_once_retry(url, payload, args.api_key)
             return True
 
         with ThreadPoolExecutor(max_workers=args.concurrency) as pool:
@@ -200,8 +219,10 @@ def main(argv: list[str] | None = None) -> int:
                 try:
                     future.result()
                     success_count += 1
-                except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError, ValueError):
+                except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError, ValueError) as exc:
                     failure_count += 1
+                    if len(failure_errors) < 3:
+                        failure_errors.append(f"{type(exc).__name__}: {exc}")
     finally:
         peak_vram_mib = sampler.stop()
 
@@ -217,6 +238,7 @@ def main(argv: list[str] | None = None) -> int:
         "concurrency": args.concurrency,
         "decode_tps": throughput["decode_tps"],
         "failure_count": failure_count,
+        "failure_errors": failure_errors,
         "first_ttft_s": first_ttft,
         "max_model_len": args.max_model_len,
         "peak_vram_mib": peak_vram_mib,

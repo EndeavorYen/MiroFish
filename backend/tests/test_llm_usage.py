@@ -144,6 +144,53 @@ class FakeCamelBackend:
         return self.response
 
 
+def test_wrapped_openai_backend_is_accepted_by_chat_agent(tmp_path):
+    from camel.agents import ChatAgent
+    from camel.models import ModelFactory
+    from camel.models.base_model import BaseModelBackend
+    from camel.types import ModelPlatformType
+
+    backend = ModelFactory.create(
+        model_platform=ModelPlatformType.OPENAI,
+        model_type="gpt-4o-mini",
+        api_key="test-key",
+        url="http://127.0.0.1:9/v1",
+    )
+    wrapped = wrap_camel_model(backend, default_stage="simulation")
+    assert wrapped is backend
+    assert isinstance(wrapped, BaseModelBackend)
+
+    # camel-ai 0.2.78 rejects any stand-in that is not a BaseModelBackend.
+    ChatAgent(system_message="You are a test agent.", model=wrapped)
+
+    fake = FakeResponse(prompt_tokens=11, completion_tokens=7, model="gpt-4o-mini")
+
+    def fake_run(messages, response_format=None, tools=None):
+        return fake
+
+    backend._run = fake_run
+    metrics_dir = str(tmp_path / "metrics")
+    with usage_stage("simulation", metrics_dir=metrics_dir):
+        result = wrapped.run([{"role": "user", "content": "hi"}])
+
+    assert result is fake
+    jsonl_path = tmp_path / "metrics" / "llm_usage.jsonl"
+    with open(jsonl_path, "r", encoding="utf-8") as f:
+        records = [json.loads(line) for line in f if line.strip()]
+    assert len(records) == 1
+    assert records[0]["stage"] == "simulation"
+    assert records[0]["prompt_tokens"] == 11
+    assert records[0]["completion_tokens"] == 7
+    assert "latency_ms" in records[0]
+
+    wrap_camel_model(backend)
+    with usage_stage("simulation", metrics_dir=metrics_dir):
+        wrapped.run([{"role": "user", "content": "again"}])
+    with open(jsonl_path, "r", encoding="utf-8") as f:
+        records = [json.loads(line) for line in f if line.strip()]
+    assert len(records) == 2
+
+
 @pytest.mark.asyncio
 async def test_camel_wrapper_sync_and_async(tmp_path):
     metrics_dir = str(tmp_path / "sim_metrics")

@@ -114,17 +114,18 @@ def load_action_entries(source: Union[str, List[Dict[str, Any]]]) -> List[Dict[s
     return entries
 
 
-def compute_sim_metrics(source: Union[str, List[Dict[str, Any]]]) -> Dict[str, Any]:
-    """
-    Compute simulation metrics from action entries.
+def _platform_action_files(directory: str) -> Dict[str, str]:
+    """Map platform name to its actions.jsonl when a simulation dir has both."""
+    found: Dict[str, str] = {}
+    for platform in ("twitter", "reddit"):
+        candidate = os.path.join(directory, platform, "actions.jsonl")
+        if os.path.isfile(candidate):
+            found[platform] = candidate
+    return found
 
-    Returns deterministic dict containing:
-    - rounds: list of round dicts sorted by round number
-    - total_rounds: count of unique rounds
-    - summary: overall statistics (total_actions, total_posts, overall_distinct_2, etc.)
-    """
-    entries = load_action_entries(source)
 
+def _summarize_entries(entries: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Summarize one action stream. Does not mix platforms."""
     # Group actions by round
     rounds_data: Dict[int, Dict[str, Any]] = {}
     all_post_texts: List[str] = []
@@ -194,6 +195,32 @@ def compute_sim_metrics(source: Union[str, List[Dict[str, Any]]]) -> Dict[str, A
         "summary": summary,
         "total_rounds": len(sorted_rounds),
     }
+
+
+def compute_sim_metrics(source: Union[str, List[Dict[str, Any]]]) -> Dict[str, Any]:
+    """
+    Compute simulation metrics from action entries.
+
+    A single actions file (or a list of records) returns:
+    - rounds: list of round dicts sorted by round number
+    - total_rounds: count of unique rounds
+    - summary: overall statistics (total_actions, total_posts, overall_distinct_2, etc.)
+
+    A simulation directory that contains twitter/ and/or reddit/ actions.jsonl
+    returns those summaries under ``platforms`` so overlapping agent ids are
+    not counted as one population.
+    """
+    if isinstance(source, str) and os.path.isdir(source):
+        platform_files = _platform_action_files(source)
+        if platform_files:
+            return {
+                "platforms": {
+                    name: _summarize_entries(load_action_entries(path))
+                    for name, path in platform_files.items()
+                }
+            }
+
+    return _summarize_entries(load_action_entries(source))
 
 
 def format_metrics_json(metrics: Dict[str, Any]) -> str:

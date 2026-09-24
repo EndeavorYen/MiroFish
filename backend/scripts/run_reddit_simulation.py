@@ -605,10 +605,10 @@ class RedditSimulationRunner:
         # 执行初始事件
         event_config = self.config.get("event_config", {})
         initial_posts = event_config.get("initial_posts", [])
-        
+        initial_actions = {}
+
         if initial_posts:
             print(f"执行初始事件 ({len(initial_posts)}条初始帖子)...")
-            initial_actions = {}
             for post in initial_posts:
                 agent_id = post.get("poster_agent_id", 0)
                 content = post.get("content", "")

@@ -107,6 +107,42 @@ def test_deterministic_json_output(fixture_actions_path):
     assert out1 == out2
 
 
+def test_directory_metrics_stay_split_by_platform(fixture_actions_path, tmp_path):
+    sim_dir = tmp_path / "sim"
+    twitter_dir = sim_dir / "twitter"
+    reddit_dir = sim_dir / "reddit"
+    twitter_dir.mkdir(parents=True)
+    reddit_dir.mkdir()
+
+    twitter_actions = Path(fixture_actions_path).read_text(encoding="utf-8")
+    (twitter_dir / "actions.jsonl").write_text(twitter_actions, encoding="utf-8")
+    reddit_line = json.dumps(
+        {
+            "round": 1,
+            "agent_id": 1,
+            "agent_name": "RedditOnly",
+            "action_type": "CREATE_POST",
+            "action_args": {"content": "reddit only post"},
+        },
+        ensure_ascii=False,
+    )
+    (reddit_dir / "actions.jsonl").write_text(reddit_line + "\n", encoding="utf-8")
+
+    metrics = compute_sim_metrics(str(sim_dir))
+    assert set(metrics["platforms"]) == {"reddit", "twitter"}
+
+    twitter = metrics["platforms"]["twitter"]
+    reddit = metrics["platforms"]["reddit"]
+    assert twitter["rounds"][0]["active_agents_count"] == 4
+    assert twitter["summary"]["total_actions"] == 7
+    assert reddit["rounds"][0]["active_agents_count"] == 1
+    assert reddit["rounds"][0]["action_type_distribution"] == {"CREATE_POST": 1}
+    assert reddit["summary"]["total_actions"] == 1
+
+    again = format_metrics_json(compute_sim_metrics(str(sim_dir)))
+    assert format_metrics_json(metrics) == again
+
+
 def test_cli_execution(fixture_actions_path, tmp_path):
     script_path = str(Path(__file__).parent.parent / "scripts" / "sim_metrics.py")
     out_file = tmp_path / "metrics_out.json"

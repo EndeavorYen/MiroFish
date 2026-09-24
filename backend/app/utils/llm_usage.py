@@ -177,48 +177,60 @@ def record_usage(
     return entry
 
 
-class WrappedCamelModel:
-    """Wrapper around a camel-ai ModelBackend to capture token usage and latency."""
-
-    def __init__(self, inner_model: Any, default_stage: str = "simulation"):
-        self._inner_model = inner_model
-        self._default_stage = default_stage
-
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._inner_model, name)
-
-    def run(self, *args: Any, **kwargs: Any) -> Any:
-        stage = get_current_stage() or self._default_stage
-        start_time = time.perf_counter()
-        response = self._inner_model.run(*args, **kwargs)
-        latency_ms = (time.perf_counter() - start_time) * 1000.0
-        model_name = getattr(self._inner_model, "model_type", None) or getattr(response, "model", None)
-        record_usage(response, latency_ms=latency_ms, stage=stage, model=model_name)
-        return response
-
-    async def arun(self, *args: Any, **kwargs: Any) -> Any:
-        stage = get_current_stage() or self._default_stage
-        start_time = time.perf_counter()
-        response = await self._inner_model.arun(*args, **kwargs)
-        latency_ms = (time.perf_counter() - start_time) * 1000.0
-        model_name = getattr(self._inner_model, "model_type", None) or getattr(response, "model", None)
-        record_usage(response, latency_ms=latency_ms, stage=stage, model=model_name)
-        return response
-
-    def step(self, *args: Any, **kwargs: Any) -> Any:
-        if hasattr(self._inner_model, "step"):
-            stage = get_current_stage() or self._default_stage
-            start_time = time.perf_counter()
-            response = self._inner_model.step(*args, **kwargs)
-            latency_ms = (time.perf_counter() - start_time) * 1000.0
-            model_name = getattr(self._inner_model, "model_type", None) or getattr(response, "model", None)
-            record_usage(response, latency_ms=latency_ms, stage=stage, model=model_name)
-            return response
-        raise AttributeError(f"'{type(self._inner_model).__name__}' object has no attribute 'step'")
+def _model_name_from(model_backend: Any, response: Any) -> Optional[str]:
+    resolved = getattr(response, "model", None)
+    if not resolved and isinstance(response, dict):
+        resolved = response.get("model")
+    if not resolved:
+        model_type = getattr(model_backend, "model_type", None)
+        resolved = getattr(model_type, "value", model_type)
+    if resolved is None:
+        return None
+    return str(resolved)
 
 
 def wrap_camel_model(model_backend: Any, default_stage: str = "simulation") -> Any:
-    """Wrap a camel-ai model backend if not already wrapped."""
-    if isinstance(model_backend, WrappedCamelModel):
+    """Record usage on a camel backend without changing its type.
+
+    camel-ai 0.2.78 ``ChatAgent._resolve_models`` accepts only
+    ``BaseModelBackend``. Replacing the instance with another class makes
+    every simulation fail at agent construction. Patch ``run`` / ``arun`` on
+    the original instance so ``isinstance`` still holds.
+    """
+    if getattr(model_backend, "_mirofish_usage_wrapped", False):
         return model_backend
-    return WrappedCamelModel(model_backend, default_stage=default_stage)
+
+    original_run = model_backend.run
+    original_arun = getattr(model_backend, "arun", None)
+
+    def run(*args: Any, **kwargs: Any) -> Any:
+        stage = get_current_stage() or default_stage
+        start_time = time.perf_counter()
+        response = original_run(*args, **kwargs)
+        latency_ms = (time.perf_counter() - start_time) * 1000.0
+        record_usage(
+            response,
+            latency_ms=latency_ms,
+            stage=stage,
+            model=_model_name_from(model_backend, response),
+        )
+        return response
+
+    async def arun(*args: Any, **kwargs: Any) -> Any:
+        stage = get_current_stage() or default_stage
+        start_time = time.perf_counter()
+        response = await original_arun(*args, **kwargs)
+        latency_ms = (time.perf_counter() - start_time) * 1000.0
+        record_usage(
+            response,
+            latency_ms=latency_ms,
+            stage=stage,
+            model=_model_name_from(model_backend, response),
+        )
+        return response
+
+    model_backend.run = run
+    if original_arun is not None:
+        model_backend.arun = arun
+    model_backend._mirofish_usage_wrapped = True
+    return model_backend

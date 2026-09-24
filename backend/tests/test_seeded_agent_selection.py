@@ -7,7 +7,7 @@ from __future__ import annotations
 import json
 import random
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -155,3 +155,80 @@ def test_runner_reads_seed_from_config(tmp_path):
     runner = TwitterSimulationRunner(cfg_file, wait_for_commands=False)
     assert runner.seed == 123
     assert runner.rng is not random
+    assert runner.wait_for_commands is False
+
+
+def _write_runner_config(path, *, hours: int, initial_posts):
+    payload = {
+        "simulation_id": "empty_initial_posts",
+        "time_config": {
+            "total_simulation_hours": hours,
+            "minutes_per_round": 30,
+        },
+        "agent_configs": [],
+        "event_config": {"initial_posts": initial_posts},
+    }
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return str(path)
+
+
+def _patch_runner_env(monkeypatch, module_name: str, graph_name: str):
+    env = MagicMock()
+    env.reset = AsyncMock()
+    env.step = AsyncMock()
+    env.close = AsyncMock()
+
+    async def fake_graph(**kwargs):
+        return MagicMock()
+
+    monkeypatch.setattr(f"{module_name}.{graph_name}", fake_graph)
+    monkeypatch.setattr(f"{module_name}.oasis.make", lambda **kwargs: env)
+    monkeypatch.setattr(
+        f"{module_name}.IPCHandler",
+        MagicMock(return_value=MagicMock()),
+    )
+    return env
+
+
+@pytest.mark.asyncio
+async def test_twitter_empty_initial_posts_does_not_raise(tmp_path, monkeypatch):
+    cfg = _write_runner_config(
+        tmp_path / "simulation_config.json",
+        hours=0,
+        initial_posts=[],
+    )
+    (tmp_path / "twitter_profiles.csv").write_text("user_id\n", encoding="utf-8")
+    runner = TwitterSimulationRunner(cfg, wait_for_commands=False, seed=1)
+    runner._create_model = lambda: object()
+    env = _patch_runner_env(
+        monkeypatch,
+        "scripts.run_twitter_simulation",
+        "generate_twitter_agent_graph",
+    )
+
+    await runner.run()
+
+    env.step.assert_not_called()
+    env.close.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_reddit_empty_initial_posts_does_not_raise(tmp_path, monkeypatch):
+    cfg = _write_runner_config(
+        tmp_path / "simulation_config.json",
+        hours=0,
+        initial_posts=[],
+    )
+    (tmp_path / "reddit_profiles.json").write_text("[]", encoding="utf-8")
+    runner = RedditSimulationRunner(cfg, wait_for_commands=False, seed=1)
+    runner._create_model = lambda: object()
+    env = _patch_runner_env(
+        monkeypatch,
+        "scripts.run_reddit_simulation",
+        "generate_reddit_agent_graph",
+    )
+
+    await runner.run()
+
+    env.step.assert_not_called()
+    env.close.assert_awaited()

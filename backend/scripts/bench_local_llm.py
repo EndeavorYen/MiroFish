@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import os
 import subprocess
@@ -94,7 +95,12 @@ def _post_stream(
                 text = delta.get("content") or delta.get("reasoning_content") or delta.get("reasoning")
                 if ttft_s is None and text:
                     ttft_s = time.perf_counter() - started
-    except (ConnectionResetError, ConnectionAbortedError, TimeoutError) as exc:
+    except (
+        ConnectionResetError,
+        ConnectionAbortedError,
+        TimeoutError,
+        http.client.HTTPException,
+    ) as exc:
         if ttft_s is None or not usage:
             raise urllib.error.URLError(str(exc)) from exc
     total_s = time.perf_counter() - started
@@ -219,7 +225,14 @@ def main(argv: list[str] | None = None) -> int:
                 try:
                     future.result()
                     success_count += 1
-                except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError, ValueError) as exc:
+                except (
+                    urllib.error.URLError,
+                    TimeoutError,
+                    json.JSONDecodeError,
+                    OSError,
+                    ValueError,
+                    http.client.HTTPException,
+                ) as exc:
                     failure_count += 1
                     if len(failure_errors) < 3:
                         failure_errors.append(f"{type(exc).__name__}: {exc}")

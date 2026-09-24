@@ -14,6 +14,7 @@ from enum import Enum
 
 from ..config import Config
 from ..utils.logger import get_logger
+from ..utils.llm_usage import usage_stage
 from .zep_entity_reader import ZepEntityReader, FilteredEntities
 from .oasis_profile_generator import OasisProfileGenerator, OasisAgentProfile
 from .simulation_config_generator import SimulationConfigGenerator, SimulationParameters
@@ -354,15 +355,17 @@ class SimulationManager:
                 realtime_output_path = os.path.join(sim_dir, "twitter_profiles.csv")
                 realtime_platform = "twitter"
             
-            profiles = generator.generate_profiles_from_entities(
-                entities=filtered.entities,
-                use_llm=use_llm_for_profiles,
-                progress_callback=profile_progress,
-                graph_id=state.graph_id,  # 传入graph_id用于Zep检索
-                parallel_count=parallel_profile_count,  # 并行生成数量
-                realtime_output_path=realtime_output_path,  # 实时保存路径
-                output_platform=realtime_platform  # 输出格式
-            )
+            metrics_dir = os.path.join(sim_dir, "metrics")
+            with usage_stage("profile", metrics_dir=metrics_dir):
+                profiles = generator.generate_profiles_from_entities(
+                    entities=filtered.entities,
+                    use_llm=use_llm_for_profiles,
+                    progress_callback=profile_progress,
+                    graph_id=state.graph_id,  # 传入graph_id用于Zep检索
+                    parallel_count=parallel_profile_count,  # 并行生成数量
+                    realtime_output_path=realtime_output_path,  # 实时保存路径
+                    output_platform=realtime_platform  # 输出格式
+                )
             
             state.profiles_count = len(profiles)
             state.profiles_generated = len(profiles) > 0
@@ -420,16 +423,18 @@ class SimulationManager:
                     total=3
                 )
             
-            sim_params = config_generator.generate_config(
-                simulation_id=simulation_id,
-                project_id=state.project_id,
-                graph_id=state.graph_id,
-                simulation_requirement=simulation_requirement,
-                document_text=document_text,
-                entities=filtered.entities,
-                enable_twitter=state.enable_twitter,
-                enable_reddit=state.enable_reddit
-            )
+            metrics_dir = os.path.join(sim_dir, "metrics")
+            with usage_stage("sim_config", metrics_dir=metrics_dir):
+                sim_params = config_generator.generate_config(
+                    simulation_id=simulation_id,
+                    project_id=state.project_id,
+                    graph_id=state.graph_id,
+                    simulation_requirement=simulation_requirement,
+                    document_text=document_text,
+                    entities=filtered.entities,
+                    enable_twitter=state.enable_twitter,
+                    enable_reddit=state.enable_reddit
+                )
             
             if progress_callback:
                 progress_callback(

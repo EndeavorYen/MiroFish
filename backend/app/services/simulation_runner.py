@@ -374,7 +374,8 @@ class SimulationRunner:
         platform: str = "parallel",  # twitter / reddit / parallel
         max_rounds: int = None,  # 最大模拟轮数（可选，用于截断过长的模拟）
         enable_graph_memory_update: bool = False,  # 是否将活动更新到Zep图谱
-        graph_id: str = None  # Zep图谱ID（启用图谱更新时必需）
+        graph_id: str = None,  # Zep图谱ID（启用图谱更新时必需）
+        seed: Optional[int] = None  # 随机种子（可选，用于复现Agent激活序列）
     ) -> SimulationRunState:
         """
         启动模拟
@@ -523,6 +524,11 @@ class SimulationRunner:
             # 如果指定了最大轮数，添加到命令行参数
             if max_rounds is not None and max_rounds > 0:
                 cmd.extend(["--max-rounds", str(max_rounds)])
+            
+            # 如果指定了随机种子，添加到命令行参数
+            effective_seed = seed if seed is not None else config.get("seed")
+            if effective_seed is not None:
+                cmd.extend(["--seed", str(effective_seed)])
             
             # 创建主日志文件，避免 stdout/stderr 管道缓冲区满导致进程阻塞
             main_log_path = os.path.join(sim_dir, "simulation.log")

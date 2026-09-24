@@ -362,7 +362,8 @@ def generate_ontology():
         ontology = generator.generate(
             document_texts=document_texts,
             simulation_requirement=simulation_requirement,
-            additional_context=additional_context if additional_context else None
+            additional_context=additional_context if additional_context else None,
+            project_id=project.project_id
         )
         
         # 保存本体到项目

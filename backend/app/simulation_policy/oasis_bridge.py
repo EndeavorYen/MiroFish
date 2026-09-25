@@ -95,6 +95,9 @@ async def system_one_actions(
     for agent_id, agent in active_agents:
         refreshed = await agent.env.action.refresh()
         feed = refreshed.get("posts", []) if isinstance(refreshed, dict) and refreshed.get("success") else []
+        # refresh() returns a random sample in random order; sort so the
+        # observation (and its state hash) does not depend on that order.
+        feed = sorted(feed, key=lambda post: post.get("post_id", 0))
         name, persona = _persona(agent)
         observations.append(
             (

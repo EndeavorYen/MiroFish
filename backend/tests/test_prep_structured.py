@@ -171,3 +171,28 @@ def test_ontology_generator_template_mode_makes_no_llm_calls(monkeypatch, tmp_pa
     ontology = OntologyGenerator(llm_client=NoLlm()).generate([SEED], "模擬", metrics_dir=str(tmp_path))
     assert len(ontology["entity_types"]) == ENTITY_TYPE_COUNT
     assert not (tmp_path / "llm_usage.jsonl").exists()
+
+
+def test_edge_pairs_cover_every_source_type_first():
+    from app.services.prep_structured import MAX_SOURCE_TARGETS, _round_robin_pairs
+
+    sources = ["A", "B", "C", "D", "E", "F"]
+    pairs = _round_robin_pairs(sources, ["X", "Y", "A"])
+    assert len(pairs) == MAX_SOURCE_TARGETS
+    assert {p["source"] for p in pairs[:6]} == set(sources)
+    assert all(p["source"] != p["target"] for p in pairs)
+
+
+def test_use_llm_false_stays_rule_based_in_structured_mode(monkeypatch):
+    from app.services import oasis_profile_generator as opg
+    from app.services.zep_entity_reader import EntityNode
+
+    monkeypatch.setattr(Config, "PROFILE_MODE", "structured")
+
+    def no_system_one():
+        raise AssertionError("use_llm=False must not call System One")
+
+    monkeypatch.setattr("app.system_one.client.get_system_one_client", no_system_one)
+    generator = opg.OasisProfileGenerator(api_key="k", base_url="http://127.0.0.1:9", zep_api_key=None)
+    entity = EntityNode(uuid="e1", name="陳維", labels=["Entity", "Person"], summary="s", attributes={})
+    assert generator.generate_profile_from_entity(entity, user_id=1, use_llm=False).name == "陳維"

@@ -302,8 +302,9 @@ class OasisProfileGenerator:
         # 构建上下文信息
         context = self._build_entity_context(entity)
         
-        if Config.structured_mode(Config.PROFILE_MODE):
-            # System One fills structured fields; bio/persona from templates.
+        if use_llm and Config.structured_mode(Config.PROFILE_MODE):
+            # PROFILE_MODE=structured replaces the LLM path with System One
+            # fields and template bio/persona; use_llm=False stays rule-based.
             from ..system_one.client import get_system_one_client
             from .prep_structured import structured_profile
 

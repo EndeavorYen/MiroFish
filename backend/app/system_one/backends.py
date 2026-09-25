@@ -39,21 +39,33 @@ class SystemOneBackend(Protocol):
     def ask(self, request: SystemOneRequest) -> SystemOneResponse: ...
 
 
-_local = threading.local()
+_CLIENT: httpx.Client | None = None
+_CLIENT_LOCK = threading.Lock()
+# Connection-level failures worth retrying for a side-effect-free question.
+_RETRYABLE = (
+    httpx.ConnectError,
+    httpx.ReadError,
+    httpx.WriteError,
+    httpx.RemoteProtocolError,
+    httpx.TimeoutException,
+)
 
 
 def _client() -> httpx.Client:
-    """One keep-alive client per thread.
+    """One process-wide keep-alive client (httpx.Client is thread-safe).
 
     Opening a new TCP connection per readout (thousands per simulation)
-    made Windows loopback drop connections; reusing them avoids that.
+    made Windows loopback drop connections; a shared pool avoids that.
     """
 
-    client = getattr(_local, "client", None)
-    if client is None:
-        client = httpx.Client(trust_env=False)
-        _local.client = client
-    return client
+    global _CLIENT
+    with _CLIENT_LOCK:
+        if _CLIENT is None:
+            _CLIENT = httpx.Client(
+                trust_env=False,
+                limits=httpx.Limits(max_connections=64, max_keepalive_connections=32),
+            )
+        return _CLIENT
 
 
 def _http_post(
@@ -75,7 +87,7 @@ def _http_post(
     for attempt in range(reset_retries + 1):
         try:
             response = _client().post(url, content=data, headers=headers, timeout=timeout)
-        except httpx.TransportError:
+        except _RETRYABLE:
             if attempt < reset_retries:
                 # A broken pooled connection is dropped by httpx; back off.
                 time.sleep(min(4.0, 0.25 * (2 ** attempt)))
@@ -85,7 +97,12 @@ def _http_post(
             raise RuntimeError(
                 f"System One HTTP {response.status_code} from {url}: {response.text[:500]}"
             )
-        return response.json()
+        try:
+            return response.json()
+        except ValueError as error:
+            raise RuntimeError(
+                f"System One response from {url} is not JSON: {response.text[:200]}"
+            ) from error
 
 
 def parse_top_logprobs(response: dict[str, Any]) -> dict[str, float]:

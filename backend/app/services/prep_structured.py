@@ -102,6 +102,20 @@ def _level(score: float, levels: int) -> float:
 # ------------------------------------------------------------------ ontology
 
 
+def _round_robin_pairs(sources: list[str], targets: list[str]) -> list[dict[str, str]]:
+    """Up to MAX_SOURCE_TARGETS pairs, one target per source per pass, so
+    every source type (media, residents, fallbacks) gets a pair before any
+    source gets a second one."""
+
+    queues = {s: [t for t in targets if t != s] for s in sources}
+    pairs: list[dict[str, str]] = []
+    while len(pairs) < MAX_SOURCE_TARGETS and any(queues.values()):
+        for source in sources:
+            if queues[source] and len(pairs) < MAX_SOURCE_TARGETS:
+                pairs.append({"source": source, "target": queues[source].pop(0)})
+    return pairs
+
+
 def template_ontology(client, document_text: str, requirement: str) -> dict[str, Any]:
     data = load_templates()
     templates = data["templates"]
@@ -146,12 +160,7 @@ def template_ontology(client, document_text: str, requirement: str) -> dict[str,
 
     edge_types = []
     for edge in data["edge_types"]:
-        pairs = [
-            {"source": s, "target": t}
-            for s in allowed(edge["source"])
-            for t in allowed(edge["target"])
-            if s != t
-        ][:MAX_SOURCE_TARGETS]
+        pairs = _round_robin_pairs(allowed(edge["source"]), allowed(edge["target"]))
         if pairs:
             edge_types.append(
                 {
@@ -250,7 +259,7 @@ def structured_profile(
         "age": age,
         "gender": gender,
         "mbti": mbti,
-        "country": "中國",
+        "country": "中国",  # same spelling as the LLM and rule paths
         "profession": profession,
         "interested_topics": interested,
         "stance_score": round(stance, 4),

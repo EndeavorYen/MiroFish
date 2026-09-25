@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, Protocol, runtime_checkable
 
 
 class GraphNotFoundError(LookupError):
@@ -64,6 +64,49 @@ class EpisodeHandle:
 
 
 ProgressCallback = Callable[[str, float], None]
+
+
+@dataclass(frozen=True)
+class FactNode:
+    """A node addressed by a stable caller key (``post:twitter:17``).
+
+    ``name`` is also used to attach to an existing entity node with the same
+    normalized name (a simulated agent onto its source entity).
+    """
+
+    key: str
+    name: str
+    label: str
+    summary: str = ""
+    attributes: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class StructuredFact:
+    """One edge written without text extraction.
+
+    ``key`` is the idempotency key: writing the same key again changes
+    nothing. ``mentions`` are entity names found in the target's text; each
+    existing entity node with that name gets a ``MENTIONS`` edge.
+    """
+
+    key: str
+    source: FactNode
+    relation: str
+    target: FactNode
+    fact: str
+    attributes: dict[str, Any] = field(default_factory=dict)
+    created_at: str | None = None
+    extra_nodes: tuple[FactNode, ...] = ()
+    extra_edges: tuple[tuple[str, str, str], ...] = ()  # (source key, relation, target key)
+    mentions: tuple[str, ...] = ()
+
+
+@runtime_checkable
+class StructuredFactStore(Protocol):
+    """Optional capability: write structured facts with no LLM (#8)."""
+
+    def add_structured_facts(self, graph_id: str, facts: list[StructuredFact]) -> list[str]: ...
 
 
 class GraphStore(Protocol):

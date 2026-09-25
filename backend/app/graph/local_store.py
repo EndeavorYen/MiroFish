@@ -38,6 +38,8 @@ from .embedding import Embedder, make_embedder
 from .extractor import ExtractedEntity, ExtractedRelation, Extraction, Extractor, StubExtractor
 from .store import (
     EpisodeHandle,
+    FactNode,
+    StructuredFact,
     GraphEdge,
     GraphNode,
     GraphNotFoundError,
@@ -98,6 +100,7 @@ CREATE TABLE IF NOT EXISTS episode_links (
     target_uuid TEXT NOT NULL,
     PRIMARY KEY (episode_uuid, kind, target_uuid)
 );
+CREATE TABLE IF NOT EXISTS node_keys (key TEXT PRIMARY KEY, node_uuid TEXT NOT NULL);
 CREATE VIRTUAL TABLE IF NOT EXISTS nodes_fts USING fts5(body);
 CREATE VIRTUAL TABLE IF NOT EXISTS edges_fts USING fts5(body);
 """
@@ -581,6 +584,167 @@ class LocalGraphStore:
                     f"INSERT INTO {table} (rowid, embedding) VALUES (?, ?)",
                     (rowid, sqlite_vec.serialize_float32(vector)),
                 )
+
+    # ------------------------------------------------------ structured facts
+
+    def add_structured_facts(self, graph_id: str, facts: list[StructuredFact]) -> list[str]:
+        """Write facts as nodes and edges without any model call (#8).
+
+        Idempotent: a fact whose ``key`` was already written changes nothing,
+        so replaying an action log keeps node and edge counts unchanged.
+        Simulation nodes are labelled ``["Node"]`` (kind in attributes) so the
+        entity filter never mistakes a post for an ontology entity; a
+        ``FactNode`` whose name matches an existing entity attaches to it.
+        """
+
+        graph = self._graph(graph_id)
+        node_texts: dict[int, str] = {}
+        edge_texts: dict[int, str] = {}
+        new_nodes: list[str] = []
+        edge_ids: list[str] = []
+        with graph.use() as conn, _transaction(conn):
+            for fact in facts:
+                created_at = fact.created_at or _now()
+                keyed = {}
+                for node in (fact.source, fact.target, *fact.extra_nodes):
+                    keyed[node.key] = self._upsert_fact_node(
+                        conn, node, created_at, node_texts, new_nodes
+                    )
+                edge_ids.append(
+                    self._upsert_fact_edge(
+                        conn,
+                        f"fact:{fact.key}",
+                        fact.relation,
+                        keyed[fact.source.key],
+                        keyed[fact.target.key],
+                        fact.fact,
+                        fact.attributes,
+                        created_at,
+                        edge_texts,
+                    )
+                )
+                for source_key, relation, target_key in fact.extra_edges:
+                    self._upsert_fact_edge(
+                        conn,
+                        f"fact:{fact.key}:{source_key}:{relation}:{target_key}",
+                        relation,
+                        keyed[source_key],
+                        keyed[target_key],
+                        fact.fact,
+                        fact.attributes,
+                        created_at,
+                        edge_texts,
+                    )
+                for name in fact.mentions:
+                    entity = self._node_uuid_by_name(conn, name)
+                    if entity is None or entity == keyed[fact.target.key]:
+                        continue
+                    self._upsert_fact_edge(
+                        conn,
+                        f"fact:{fact.key}:mentions:{normalize_name(name)}",
+                        "MENTIONS",
+                        keyed[fact.target.key],
+                        entity,
+                        f"{fact.target.name} 提到 {name}",
+                        fact.attributes,
+                        created_at,
+                        edge_texts,
+                    )
+        if new_nodes:
+            with self._registry_lock, _transaction(self._registry):
+                self._registry.executemany(
+                    "INSERT OR REPLACE INTO node_index VALUES (?, ?)",
+                    [(node_uuid, graph_id) for node_uuid in new_nodes],
+                )
+        vectors = self._embed(node_texts, edge_texts)
+        if vectors:
+            with graph.use() as conn, _transaction(conn):
+                self._store_vectors(graph, vectors)
+        return edge_ids
+
+    def _upsert_fact_node(
+        self,
+        conn: sqlite3.Connection,
+        node: FactNode,
+        created_at: str,
+        node_texts: dict[int, str],
+        new_nodes: list[str],
+    ) -> str:
+        row = conn.execute("SELECT node_uuid FROM node_keys WHERE key = ?", (node.key,)).fetchone()
+        if row:
+            return row[0]
+        existing = conn.execute(
+            "SELECT uuid FROM nodes WHERE name_key = ?", (normalize_name(node.name),)
+        ).fetchone()
+        if existing:
+            node_uuid = existing[0]
+        else:
+            node_uuid = uuidlib.uuid4().hex
+            attributes = {"kind": node.label, **node.attributes}
+            # name_key must stay unique; simulation objects (posts) can share
+            # display names, so their key includes the caller key.
+            cursor = conn.execute(
+                "INSERT INTO nodes (uuid, name, name_key, labels, summary, attributes, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    node_uuid,
+                    node.name,
+                    normalize_name(node.name) if node.label == "SimAgent" else f"key:{node.key}",
+                    json.dumps(["Node"]),
+                    node.summary,
+                    json.dumps(attributes, ensure_ascii=False),
+                    created_at,
+                ),
+            )
+            text = self._node_text(node.name, ["Node"], node.summary)
+            conn.execute(
+                "INSERT INTO nodes_fts (rowid, body) VALUES (?, ?)",
+                (cursor.lastrowid, index_text(text)),
+            )
+            node_texts[cursor.lastrowid] = text
+            new_nodes.append(node_uuid)
+        conn.execute("INSERT INTO node_keys VALUES (?, ?)", (node.key, node_uuid))
+        return node_uuid
+
+    @staticmethod
+    def _upsert_fact_edge(
+        conn: sqlite3.Connection,
+        dedupe_key: str,
+        relation: str,
+        source: str,
+        target: str,
+        fact: str,
+        attributes: dict[str, Any],
+        created_at: str,
+        edge_texts: dict[int, str],
+    ) -> str:
+        row = conn.execute("SELECT uuid FROM edges WHERE dedupe_key = ?", (dedupe_key,)).fetchone()
+        if row:
+            return row[0]
+        edge_uuid = uuidlib.uuid4().hex
+        cursor = conn.execute(
+            "INSERT INTO edges (uuid, name, fact, source_uuid, target_uuid, attributes, "
+            "created_at, valid_at, episodes, fact_type, dedupe_key) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, ?)",
+            (
+                edge_uuid,
+                relation,
+                fact,
+                source,
+                target,
+                json.dumps(attributes, ensure_ascii=False),
+                created_at,
+                created_at,
+                relation,
+                dedupe_key,
+            ),
+        )
+        text = f"{relation} {fact}"
+        conn.execute(
+            "INSERT INTO edges_fts (rowid, body) VALUES (?, ?)", (cursor.lastrowid, index_text(text))
+        )
+        edge_texts[cursor.lastrowid] = text
+        return edge_uuid
 
     def wait_until_processed(
         self,

@@ -790,6 +790,8 @@ def _enrich_action_context(
                 row = cursor.fetchone()
                 if row and row[0]:
                     original_post_id = row[0]
+                    # Structured graph writeback keys the reposted post by id.
+                    action_args['original_post_id'] = original_post_id
                     original_info = _get_post_info(cursor, original_post_id, agent_names)
                     if original_info:
                         action_args['original_content'] = original_info.get('content', '')

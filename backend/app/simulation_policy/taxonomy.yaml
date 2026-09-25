@@ -1,0 +1,93 @@
+# Action taxonomy for System One decisions (#9).
+#
+# Each level is one System One `choice` (at most 26 options). Every level has
+# a `none` (or `other`) exit. A leaf names the OASIS ActionType it performs.
+# `needs` tells the policy what else to pick: a feed post, a comment, a user,
+# a search query, or text content (handed to ContentProvider, #10).
+
+twitter:
+  name: action
+  instructions: 這位使用者看完目前的動態後，這一輪最可能做哪一類事？
+  options:
+    engage:
+      description: 對動態中的某則貼文按讚、轉發或引用
+      name: engage
+      instructions: 這位使用者會怎麼與貼文互動？
+      options:
+        like_post: {description: 按讚一則貼文, action: LIKE_POST, needs: [post]}
+        repost: {description: 直接轉發一則貼文, action: REPOST, needs: [post]}
+        quote_post: {description: 引用一則貼文並加上自己的評論, action: QUOTE_POST, needs: [post, content]}
+        none: {description: 其實不互動, action: DO_NOTHING}
+    create:
+      description: 自己發一則新貼文
+      name: create
+      instructions: 這位使用者要發什麼？
+      options:
+        create_post: {description: 發表一則原創貼文, action: CREATE_POST, needs: [content]}
+        none: {description: 其實不發文, action: DO_NOTHING}
+    social:
+      description: 追蹤某位使用者
+      name: social
+      instructions: 這位使用者會追蹤誰嗎？
+      options:
+        follow: {description: 追蹤動態中某則貼文的作者, action: FOLLOW, needs: [user]}
+        none: {description: 其實不追蹤任何人, action: DO_NOTHING}
+    none:
+      description: 什麼都不做，只是瀏覽
+      action: DO_NOTHING
+
+reddit:
+  name: action
+  instructions: 這位使用者看完目前的動態後，這一輪最可能做哪一類事？
+  options:
+    engage:
+      description: 對貼文或留言按讚或按倒讚
+      name: engage
+      instructions: 這位使用者會怎麼回應？
+      options:
+        like_post: {description: 對一則貼文按讚, action: LIKE_POST, needs: [post]}
+        dislike_post: {description: 對一則貼文按倒讚, action: DISLIKE_POST, needs: [post]}
+        like_comment: {description: 對一則留言按讚, action: LIKE_COMMENT, needs: [comment]}
+        dislike_comment: {description: 對一則留言按倒讚, action: DISLIKE_COMMENT, needs: [comment]}
+        none: {description: 其實不回應, action: DO_NOTHING}
+    create:
+      description: 發文或留言
+      name: create
+      instructions: 這位使用者要寫什麼？
+      options:
+        create_post: {description: 發表一則新貼文, action: CREATE_POST, needs: [content]}
+        create_comment: {description: 在一則貼文下留言, action: CREATE_COMMENT, needs: [post, content]}
+        none: {description: 其實不寫, action: DO_NOTHING}
+    info:
+      description: 搜尋、看趨勢或重新整理，取得更多資訊
+      name: info
+      instructions: 這位使用者想怎麼取得資訊？
+      options:
+        search_posts: {description: 搜尋貼文, action: SEARCH_POSTS, needs: [query]}
+        search_user: {description: 搜尋使用者, action: SEARCH_USER, needs: [query]}
+        trend: {description: 看熱門趨勢, action: TREND}
+        refresh: {description: 重新整理動態, action: REFRESH}
+        none: {description: 其實不查資訊, action: DO_NOTHING}
+    social:
+      description: 追蹤或封鎖某位使用者
+      name: social
+      instructions: 這位使用者會怎麼處理與其他人的關係？
+      options:
+        follow: {description: 追蹤某則貼文的作者, action: FOLLOW, needs: [user]}
+        mute: {description: 封鎖某則貼文的作者, action: MUTE, needs: [user]}
+        none: {description: 其實不做, action: DO_NOTHING}
+    none:
+      description: 什麼都不做，只是瀏覽
+      action: DO_NOTHING
+
+# Dialogue kinds for content intents (#10). The last one is the exit.
+dialogue_kinds:
+  opinion: 表達自己的看法
+  support: 支持或讚揚
+  criticism: 批評或質疑
+  question: 提出問題或要求說明
+  worry: 表達擔憂
+  rumor: 轉述未經證實的消息
+  clarification: 澄清或更正
+  humor: 開玩笑或反諷
+  other: 其他

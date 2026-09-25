@@ -43,7 +43,15 @@ FORCED_LOCAL = {
     "EXTRACT_SUMMARY_LLM": "0",
     "SYSTEM_ONE_BACKEND": "local",
 }
-DROPPED_KEYS = ("SYSTEM_ONE_API_KEY", "EMBED_API_KEY", "ZEP_API_KEY")
+DROPPED_KEYS = (
+    "SYSTEM_ONE_API_KEY",
+    "EMBED_API_KEY",
+    "ZEP_API_KEY",
+    # run_parallel_simulation sends Reddit agents to the boost endpoint when set.
+    "LLM_BOOST_API_KEY",
+    "LLM_BOOST_BASE_URL",
+    "LLM_BOOST_MODEL_NAME",
+)
 
 
 def dotenv_files() -> list[Path]:

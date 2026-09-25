@@ -12,6 +12,8 @@ def test_local_env_forces_local_backends_and_drops_cloud_keys(monkeypatch, tmp_p
     monkeypatch.setenv("SYSTEM_ONE_BACKEND", "http")
     monkeypatch.setenv("SYSTEM_ONE_API_KEY", "secret")
     monkeypatch.setenv("ZEP_API_KEY", "z")
+    monkeypatch.setenv("LLM_BOOST_API_KEY", "boost")
+    monkeypatch.setenv("LLM_BOOST_BASE_URL", "https://boost.example/v1")
     monkeypatch.setenv("LLM_BASE_URL", "https://cloud.example/v1")  # e.g. from a .env
     env = gp.local_env(tmp_path)
     assert env["SYSTEM_ONE_BACKEND"] == "local"

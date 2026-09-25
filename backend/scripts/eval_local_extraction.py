@@ -183,10 +183,21 @@ def main(argv: list[str] | None = None) -> int:
         )
     )
     decode_fn = None
+    decode_stats = {"calls": 0, "failed": 0, "truncated": 0}
     if args.ner == "decode":
         from app.utils.llm_client import LLMClient
 
-        decode_fn = llm_decode_fn(LLMClient(api_key="local", base_url=args.base_url, model=args.model))
+        inner = llm_decode_fn(LLMClient(api_key="local", base_url=args.base_url, model=args.model))
+
+        def decode_fn(prompt, max_tokens):
+            decode_stats["calls"] += 1
+            try:
+                result = inner(prompt, max_tokens)
+            except Exception:
+                decode_stats["failed"] += 1
+                raise
+            decode_stats["truncated"] += int(result.truncated)
+            return result
     extractor = LocalExtractor(client, embedder=embedder, ner=args.ner, decode_fn=decode_fn)
     if args.ner == "gliner":
         extractor._load_gliner()  # load before measuring VRAM / time
@@ -214,6 +225,7 @@ def main(argv: list[str] | None = None) -> int:
         "chunks": len(chunks),
         "seconds": round(elapsed, 1),
         "system_one_questions": client.questions,
+        "decode_calls": decode_stats if args.ner == "decode" else None,
         "llm_usage": {
             "rows": len(rows),
             "stages": sorted({r["stage"] for r in rows}),

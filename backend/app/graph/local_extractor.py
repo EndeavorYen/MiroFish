@@ -49,10 +49,17 @@ MAX_CHOICE_TYPES = 25  # 26 labels minus "none"
 FALLBACK_TYPES = {"Person", "Organization"}
 
 SummaryFn = Callable[[str, str, list[str]], str]
-# (prompt, max_tokens) -> generated text
-DecodeFn = Callable[[str, int], str]
+# (prompt, max_tokens) -> generated text; a DecodeResult marks truncation
+DecodeFn = Callable[[str, int], "str | DecodeResult"]
 DECODE_MAX_TOKENS = 400
 MAX_DECODED_NAME_CHARS = 30
+MAX_DECODED_NAMES = 40  # per chunk; bounds System One calls if the model echoes the text
+
+
+@dataclass(frozen=True)
+class DecodeResult:
+    text: str
+    truncated: bool = False
 _LIST_MARKER = re.compile(r"^\s*(?:[-*•·]|\d+[.、)）]|[（(]\d+[)）])\s*")
 
 
@@ -60,16 +67,25 @@ def decode_prompt(text: str) -> str:
     return (
         "列出下文中出現的所有具名的人名與機構全名（政府機關、公司、學校、團體、媒體、"
         "開發案等），照原文寫法，每行一個，不要編號、不要解釋。"
-        "不要列出泛稱（如「政府」「市民」）或職稱。\n\n" + text
+        "不要列出泛稱（如「政府」「市民」）或職稱。\n\n<<<原文\n" + text + "\n原文>>>"
     )
 
 
-def parse_decoded_names(raw: str, text: str) -> list[str]:
-    """Names from the model's list that occur verbatim in ``text``."""
+def parse_decoded_names(raw: str, text: str, *, truncated: bool = False) -> list[str]:
+    """Names from the model's list that occur verbatim in ``text``.
 
+    Reasoning (``<think>`` blocks, closed or not) is dropped, and so is the
+    last line of a truncated answer (it may be a cut-off name).
+    """
+
+    raw = re.sub(r"<think>.*?</think>", "", raw or "", flags=re.S)
+    raw = raw.split("<think>", 1)[0]
+    lines = raw.splitlines()
+    if truncated and lines:
+        lines = lines[:-1]
     names: list[str] = []
-    for line in (raw or "").splitlines():
-        for piece in re.split(r"[、，,；;]", _LIST_MARKER.sub("", line)):
+    for line in lines:
+        for piece in re.split(r"[、，,；;：:]", _LIST_MARKER.sub("", line)):
             name = piece.strip().strip("「」『』\"'“”《》：:。 ")
             if 2 <= len(name) <= MAX_DECODED_NAME_CHARS and name in text and name not in names:
                 names.append(name)
@@ -223,16 +239,25 @@ class LocalExtractor:
         if self.ner != "decode":
             return candidates
         try:
-            raw = self.decode_fn(decode_prompt(text), DECODE_MAX_TOKENS)
+            result = self.decode_fn(decode_prompt(text), DECODE_MAX_TOKENS)
         except Exception as error:  # noqa: BLE001 - keep the rule candidates
             logger.warning("decode entity fallback failed: %s", error)
             return candidates
-        covered = {option for c in candidates for option in c.options()}
-        for name in parse_decoded_names(raw, text):
-            if name not in covered:
-                start = text.index(name)
-                candidates.append(Candidate(name, start, start + len(name), "decoded"))
-                covered.add(name)
+        if not isinstance(result, DecodeResult):
+            result = DecodeResult(str(result or ""))
+        covered = [option for c in candidates for option in c.options()]
+        added = 0
+        for name in parse_decoded_names(result.text, text, truncated=result.truncated):
+            # Exact matches only: a rule span with a wrong boundary
+            # (東海晨光昨日報) can contain the right name (東海晨光).
+            if name in covered:
+                continue
+            start = text.index(name)
+            candidates.append(Candidate(name, start, start + len(name), "decoded"))
+            covered.append(name)
+            added += 1
+            if added >= MAX_DECODED_NAMES:
+                break
         return candidates
 
     def _typed_candidates(self, text: str, types: dict[str, str]) -> list[_Typed]:
@@ -542,12 +567,20 @@ def llm_decode_fn(client=None) -> DecodeFn:
 
         client = LLMClient()
 
-    def decode(prompt: str, max_tokens: int) -> str:
-        return client.chat(
+    from ..utils.openai_chat_compat import extract_chat_completion_text
+
+    def decode(prompt: str, max_tokens: int) -> DecodeResult:
+        # The raw completion (usage is recorded under the caller's stage)
+        # so a length-truncated answer can be recognised.
+        response = client._create_completion(
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=max_tokens,
             temperature=0.0,
+            max_tokens=max_tokens,
+            response_format=None,
         )
+        choices = getattr(response, "choices", None) or []
+        finish = getattr(choices[0], "finish_reason", None) if choices else None
+        return DecodeResult(extract_chat_completion_text(response), truncated=finish == "length")
 
     return decode
 

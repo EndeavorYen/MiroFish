@@ -252,6 +252,26 @@ def generate_report():
                         message=t('api.initReportAgent')
                     )
 
+                    if Config.REPORT_MODE == "metrics":
+                        # Deterministic metrics + one short summary (#12).
+                        from ..services.metrics_report import generate_metrics_report
+
+                        report = generate_metrics_report(
+                            simulation_id, graph_id, simulation_requirement, report_id
+                        )
+                        if report.status == ReportStatus.COMPLETED:
+                            task_manager.complete_task(
+                                task_id,
+                                result={
+                                    "report_id": report.report_id,
+                                    "simulation_id": simulation_id,
+                                    "status": "completed",
+                                },
+                            )
+                        else:
+                            task_manager.fail_task(task_id, report.error or t('api.reportGenerateFailed'))
+                        return
+
                     agent = ReportAgent(
                         graph_id=graph_id,
                         simulation_id=simulation_id,

@@ -484,7 +484,7 @@ def _build_graph_impl():
         
         # 检查配置
         errors = []
-        if not Config.ZEP_API_KEY:
+        if Config.zep_key_missing():
             errors.append(t('api.zepApiKeyMissing'))
         if errors:
             logger.error(f"配置错误: {errors}")
@@ -794,7 +794,7 @@ def _build_graph_impl():
                             "node_count": node_count,
                             "edge_count": edge_count,
                             "chunk_count": total_chunks,
-                            "zep_batch_id": submission.batch_id,
+                            "zep_batch_id": getattr(submission, "batch_id", None),
                         }
                     )
                 
@@ -882,7 +882,7 @@ def get_graph_data(graph_id: str):
     获取图谱数据（节点和边）
     """
     try:
-        if not Config.ZEP_API_KEY:
+        if Config.zep_key_missing():
             return jsonify({
                 "success": False,
                 "error": t('api.zepApiKeyMissing')
@@ -910,7 +910,7 @@ def delete_graph(graph_id: str):
     删除Zep图谱
     """
     try:
-        if not Config.ZEP_API_KEY:
+        if Config.zep_key_missing():
             return jsonify({
                 "success": False,
                 "error": t('api.zepApiKeyMissing')

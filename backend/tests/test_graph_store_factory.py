@@ -5,8 +5,13 @@ from app.graph.store import get_graph_store
 from app.graph.zep_store import ZepGraphStore
 
 
-def test_local_backend_raises_not_implemented(monkeypatch):
+def test_local_backend_needs_no_zep_key(monkeypatch, tmp_path):
+    from app.graph.local_store import LocalGraphStore
+
     monkeypatch.delenv("ZEP_API_KEY", raising=False)
+    monkeypatch.setattr(Config, "ZEP_API_KEY", None)
+    monkeypatch.setattr(Config, "GRAPH_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(Config, "GRAPH_EMBEDDER", "hash")
     calls = {"count": 0}
 
     def reject_client(*_args, **_kwargs):
@@ -15,9 +20,10 @@ def test_local_backend_raises_not_implemented(monkeypatch):
 
     monkeypatch.setattr("app.utils.zep.get_zep_client", reject_client)
 
-    with pytest.raises(NotImplementedError, match="GRAPH_BACKEND=local"):
-        get_graph_store(backend="local")
+    store = get_graph_store(backend="local")
+    assert isinstance(store, LocalGraphStore)
     assert calls["count"] == 0
+    store.close()
 
 
 def test_default_backend_returns_zep_store(monkeypatch):

@@ -268,11 +268,11 @@ class OasisProfileGenerator:
         if self.zep_api_key or Config.GRAPH_BACKEND != "zep":
             try:
                 self.store = get_graph_store(api_key=self.zep_api_key)
-            except NotImplementedError:
-                # An unfinished backend must fail loudly, not silently drop
-                # graph context.
-                raise
             except Exception as e:
+                if Config.GRAPH_BACKEND != "zep":
+                    # A misconfigured local store must fail loudly, not
+                    # silently drop graph context.
+                    raise
                 logger.warning(f"Zep客户端初始化失败: {e}")
                 self.store = None
     

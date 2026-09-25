@@ -156,20 +156,30 @@ _SERVICES = [
 
 
 @pytest.mark.parametrize("name,build", _SERVICES, ids=[name for name, _ in _SERVICES])
-def test_local_backend_fails_clearly_without_zep_key(monkeypatch, name, build):
+def test_local_backend_builds_services_without_zep_key(monkeypatch, tmp_path, name, build):
+    from app.graph.local_store import LocalGraphStore
+
     monkeypatch.setattr(Config, "GRAPH_BACKEND", "local")
     monkeypatch.setattr(Config, "ZEP_API_KEY", None)
+    monkeypatch.setattr(Config, "GRAPH_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(Config, "GRAPH_EMBEDDER", "hash")
 
-    with pytest.raises(NotImplementedError, match="GRAPH_BACKEND=local"):
-        build()
+    service = build()
+    assert isinstance(service.store, LocalGraphStore)
+    service.store.close()
 
 
-def test_profile_generator_fails_clearly_for_local_backend(monkeypatch):
+def test_profile_generator_uses_local_store(monkeypatch, tmp_path):
+    from app.graph.local_store import LocalGraphStore
+
     monkeypatch.setattr(Config, "GRAPH_BACKEND", "local")
     monkeypatch.setattr(Config, "ZEP_API_KEY", None)
+    monkeypatch.setattr(Config, "GRAPH_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(Config, "GRAPH_EMBEDDER", "hash")
 
-    with pytest.raises(NotImplementedError, match="GRAPH_BACKEND=local"):
-        OasisProfileGenerator(api_key="llm-key", base_url="http://127.0.0.1:9")
+    generator = OasisProfileGenerator(api_key="llm-key", base_url="http://127.0.0.1:9")
+    assert isinstance(generator.store, LocalGraphStore)
+    generator.store.close()
 
 
 @pytest.mark.parametrize("name,build", _SERVICES, ids=[name for name, _ in _SERVICES])

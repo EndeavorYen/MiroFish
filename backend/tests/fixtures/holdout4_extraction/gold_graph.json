@@ -6,8 +6,7 @@
       "name": "西平縣政府教育處",
       "type": "GovernmentAgency",
       "aliases": [
-        "教育處",
-        "西平縣政府"
+        "教育處"
       ]
     },
     {
@@ -75,10 +74,7 @@
     {
       "name": "國立西平教育大學教育政策與管理學系",
       "type": "School",
-      "aliases": [
-        "國立西平教育大學",
-        "西平教育大學"
-      ]
+      "aliases": []
     },
     {
       "name": "卓文彥",
@@ -148,6 +144,11 @@
       "source": "西平縣政府教育處",
       "target": "溪口國小",
       "type": "MERGES"
+    },
+    {
+      "source": "石門國小家長會",
+      "target": "西平縣議會",
+      "type": "PETITIONS"
     }
   ]
 }

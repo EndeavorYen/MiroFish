@@ -42,7 +42,6 @@
       "name": "環境部環境影響評估審查委員會",
       "type": "GovernmentAgency",
       "aliases": [
-        "環境部",
         "環境影響評估審查委員會"
       ]
     },
@@ -64,10 +63,7 @@
     {
       "name": "國立海洋科技大學海洋生物研究所",
       "type": "School",
-      "aliases": [
-        "國立海洋科技大學",
-        "海洋科技大學"
-      ]
+      "aliases": []
     },
     {
       "name": "甘明哲",
@@ -78,8 +74,7 @@
       "name": "東濱縣政府農業處",
       "type": "GovernmentAgency",
       "aliases": [
-        "農業處",
-        "東濱縣政府"
+        "農業處"
       ]
     },
     {
@@ -145,6 +140,11 @@
       "source": "東濱區漁會",
       "target": "東濱一號離岸風場",
       "type": "PROTESTS"
+    },
+    {
+      "source": "環境部環境影響評估審查委員會",
+      "target": "東濱一號離岸風場",
+      "type": "REVIEWS"
     }
   ]
 }

@@ -28,8 +28,7 @@
       "name": "南岸市政府衛生局",
       "type": "GovernmentAgency",
       "aliases": [
-        "衛生局",
-        "南岸市衛生局"
+        "衛生局"
       ]
     },
     {
@@ -72,9 +71,7 @@
     {
       "name": "南岸大學公共衛生研究所",
       "type": "School",
-      "aliases": [
-        "南岸大學"
-      ]
+      "aliases": []
     },
     {
       "name": "羅志遠",

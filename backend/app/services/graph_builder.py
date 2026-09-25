@@ -3,7 +3,7 @@
 接口2：使用Zep API构建Standalone Graph
 """
 
-import time
+import time  # ingestion timeout tests patch graph_builder.time
 import threading
 from typing import Dict, Any, List, Optional, Callable
 from dataclasses import dataclass

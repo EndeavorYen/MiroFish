@@ -434,6 +434,7 @@ class ZepToolsService:
         self.store = get_graph_store(api_key=self.api_key)
         # LLM客户端用于InsightForge生成子问题
         self._llm_client = llm_client
+        logger.info(t("console.zepToolsInitialized"))
 
     def _store(self) -> ZepGraphStore:
         store = getattr(self, "store", None)
@@ -441,7 +442,6 @@ class ZepToolsService:
             store = ZepGraphStore(self.client)
             self.store = store
         return store
-        logger.info(t("console.zepToolsInitialized"))
     
     @property
     def llm(self) -> LLMClient:

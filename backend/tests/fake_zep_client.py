@@ -163,6 +163,8 @@ class FakeBatch:
             status="pending",
             metadata=kwargs.get("metadata") or {},
             item_count=0,
+            items=[],
+            progress=None,
         )
         self._client.batches[batch_id] = batch
         return batch
@@ -180,25 +182,33 @@ class FakeBatch:
             )
             self._client.episodes[episode_uuid] = episode
             sequence = batch.item_count + offset
-            items.append(SimpleNamespace(
+            recorded = SimpleNamespace(
                 sequence_index=sequence,
                 uuid_=episode_uuid,
                 episode_uuid=episode_uuid,
-            ))
+                source_uuid=episode_uuid,
+                status="succeeded",
+            )
+            batch.items.append(recorded)
+            items.append(recorded)
         batch.item_count += len(items)
         return items
 
     def process(self, **kwargs: Any) -> Any:
         self.process_calls.append(kwargs)
         batch = self._client.batches[kwargs["batch_id"]]
-        batch.status = "completed"
+        batch.status = "succeeded"
         return batch
 
     def get(self, batch_id: str) -> Any:
         batch = self._client.batches.get(batch_id)
         if batch is None:
             raise NotFoundError("batch not found")
-        batch.status = "completed"
+        batch.status = "succeeded"
+        batch.progress = SimpleNamespace(
+            percent_complete=100,
+            succeeded_items=batch.item_count,
+        )
         return batch
 
     def list(self, **kwargs: Any) -> Any:
@@ -208,7 +218,9 @@ class FakeBatch:
         )
 
     def list_items(self, batch_id: str, **kwargs: Any) -> Any:
-        return SimpleNamespace(items=[], next_cursor=None)
+        batch = self._client.batches.get(batch_id)
+        items = [] if batch is None else list(batch.items)
+        return SimpleNamespace(items=items, next_cursor=None)
 
 
 class FakeZepClient:

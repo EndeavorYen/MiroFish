@@ -493,11 +493,12 @@ class ZepGraphStore:
         self,
         submission: BatchSubmission,
         progress_callback: Callable | None = None,
-        timeout: int | None = None,
+        timeout: float | None = None,
     ) -> list[str]:
         """Wait for a Batch API terminal state and validate every item."""
 
-        timeout = timeout or ZEP_INGESTION_WAIT_TIMEOUT_SECONDS
+        if timeout is None:
+            timeout = ZEP_INGESTION_WAIT_TIMEOUT_SECONDS
         start_time = time.time()
         terminal_states = {"succeeded", "partial", "failed", "invalid", "canceled"}
 
@@ -699,11 +700,14 @@ class ZepGraphStore:
         on_progress: ProgressCallback | None = None,
     ) -> list[str]:
         if handle.batch_id:
-            remaining = None
+            timeout = None
             if deadline is not None:
-                remaining = max(0, int(deadline - time.time()))
-            self._wait_for_batch(handle, on_progress, remaining)
-            return list(handle.episode_ids)
+                timeout = deadline - time.time()
+                if timeout <= 0:
+                    raise TimeoutError(
+                        f"Zep batch {handle.batch_id} did not finish within 0s"
+                    )
+            return self._wait_for_batch(handle, on_progress, timeout)
         if deadline is not None:
             self._wait_for_episodes_until(
                 list(handle.episode_ids),

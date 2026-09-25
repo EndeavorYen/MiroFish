@@ -1,0 +1,29 @@
+{
+  "source": "news_seed.txt",
+  "label_source": "Second held-out set for #7: written and hand-annotated by the implementer (Claude Opus 5.5) after the extractor rules were frozen at the commit that adds it; run once, no tuning afterwards.",
+  "entities": [
+    {"name": "北港市自來水事業處", "type": "GovernmentAgency", "aliases": ["自來水事業處", "事業處"]},
+    {"name": "鄭國棟", "type": "GovernmentOfficial", "aliases": []},
+    {"name": "北港市政府經濟發展局", "type": "GovernmentAgency", "aliases": ["經濟發展局", "北港市政府"]},
+    {"name": "楊淑惠", "type": "GovernmentOfficial", "aliases": []},
+    {"name": "北港市議會交通及公用事業委員會", "type": "GovernmentAgency", "aliases": ["北港市議會", "交通及公用事業委員會"]},
+    {"name": "賴俊宏", "type": "GovernmentOfficial", "aliases": []},
+    {"name": "北港消費者權益促進會", "type": "CivicGroup", "aliases": []},
+    {"name": "吳佩珊", "type": "GroupLeader", "aliases": []},
+    {"name": "北港工商發展協會", "type": "BusinessAssociation", "aliases": []},
+    {"name": "蔡明達", "type": "GroupLeader", "aliases": []},
+    {"name": "北港科技大學環境工程系", "type": "Organization", "aliases": ["北港科技大學"]},
+    {"name": "林志豪", "type": "Academic", "aliases": []},
+    {"name": "北港晨報", "type": "MediaOutlet", "aliases": []},
+    {"name": "陳柏宇", "type": "GovernmentOfficial", "aliases": []}
+  ],
+  "relations": [
+    {"source": "鄭國棟", "target": "北港市自來水事業處", "type": "LEADS"},
+    {"source": "楊淑惠", "target": "北港市政府經濟發展局", "type": "LEADS"},
+    {"source": "賴俊宏", "target": "北港市議會交通及公用事業委員會", "type": "LEADS"},
+    {"source": "賴俊宏", "target": "北港市自來水事業處", "type": "CRITICIZES"},
+    {"source": "吳佩珊", "target": "北港消費者權益促進會", "type": "LEADS"},
+    {"source": "蔡明達", "target": "北港工商發展協會", "type": "WORKS_FOR"},
+    {"source": "林志豪", "target": "北港科技大學環境工程系", "type": "WORKS_FOR"}
+  ]
+}

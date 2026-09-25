@@ -38,7 +38,11 @@ class Config:
         "GRAPH_DATA_DIR", os.path.join(os.path.dirname(__file__), "../uploads/graphs")
     )
     GRAPH_EMBEDDER = os.environ.get("GRAPH_EMBEDDER", "http").strip().lower()
-    GRAPH_EXTRACTOR = os.environ.get("GRAPH_EXTRACTOR", "stub").strip().lower()
+    # local = zero-decode LocalExtractor (#7); stub = empty lexicon (tests).
+    GRAPH_EXTRACTOR = os.environ.get("GRAPH_EXTRACTOR", "local").strip().lower()
+    LOCAL_NER = os.environ.get("LOCAL_NER", "candidates").strip().lower()
+    LOCAL_NER_GLINER_MODEL = os.environ.get("LOCAL_NER_GLINER_MODEL", "urchade/gliner_multi-v2.1")
+    EXTRACT_SUMMARY_LLM = os.environ.get("EXTRACT_SUMMARY_LLM", "0").strip() == "1"
     EMBED_BASE_URL = os.environ.get("EMBED_BASE_URL", "http://localhost:8001/v1")
     EMBED_MODEL_NAME = os.environ.get("EMBED_MODEL_NAME", "intfloat/multilingual-e5-small")
     EMBED_API_KEY = os.environ.get("EMBED_API_KEY")

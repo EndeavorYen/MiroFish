@@ -50,6 +50,7 @@ from .text_index import index_text, match_query
 
 RRF_K = 60
 MAX_SUMMARY_CHARS = 1200
+MAX_ALIASES = 50
 _GRAPH_ID_RE = re.compile(r"^[A-Za-z0-9_\-]{1,128}$")
 
 _GRAPH_SCHEMA = """
@@ -321,7 +322,9 @@ class LocalGraphStore:
         total = len(episodes)
         for index, episode in enumerate(episodes, 1):
             episode_id = uuidlib.uuid4().hex
-            extraction = self.extractor.extract(episode.text, ontology)
+            extraction = self.extractor.extract(
+                episode.text, ontology, known_entities=self._known_entities(graph)
+            )
             self._write_episode(graph, graph_id, episode_id, episode, extraction)
             episode_ids.append(episode_id)
             if on_progress:
@@ -394,6 +397,16 @@ class LocalGraphStore:
             conn.execute("UPDATE episodes SET processed = 1 WHERE uuid = ?", (episode_id,))
 
     @staticmethod
+    def _known_entities(graph: _Graph) -> list[tuple[str, str]]:
+        with graph.use() as conn:
+            rows = conn.execute("SELECT name, labels FROM nodes ORDER BY rowid").fetchall()
+        known = []
+        for name, labels in rows:
+            types = [label for label in json.loads(labels) if label not in ("Entity", "Node")]
+            known.append((name, types[0] if types else "Entity"))
+        return known
+
+    @staticmethod
     def _link(conn: sqlite3.Connection, episode_id: str, kind: str, target: str) -> None:
         conn.execute("INSERT OR IGNORE INTO episode_links VALUES (?, ?, ?)", (episode_id, kind, target))
 
@@ -428,6 +441,8 @@ class LocalGraphStore:
             labels = ["Entity", *[t for t in type_labels if t != "Entity"]]
             summary = entity.summary[:MAX_SUMMARY_CHARS]
             attributes = dict(entity.attributes)
+            if isinstance(attributes.get("aliases"), list):
+                attributes["aliases"] = attributes["aliases"][:MAX_ALIASES]
             cursor = conn.execute(
                 "INSERT INTO nodes (uuid, name, name_key, labels, summary, attributes, created_at) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -454,7 +469,16 @@ class LocalGraphStore:
                 summary = f"{summary} {entity.summary}".strip()[:MAX_SUMMARY_CHARS]
             attributes = json.loads(row[4])
             for k, v in entity.attributes.items():
-                attributes.setdefault(k, v)
+                if isinstance(v, list) and isinstance(attributes.get(k), list):
+                    # Union list attributes such as aliases across episodes
+                    # (values may be unhashable).
+                    merged = list(attributes[k])
+                    for item in v:
+                        if item not in merged:
+                            merged.append(item)
+                    attributes[k] = merged[:MAX_ALIASES] if k == "aliases" else merged
+                else:
+                    attributes.setdefault(k, v)
             conn.execute(
                 "UPDATE nodes SET labels = ?, summary = ?, attributes = ? WHERE rowid = ?",
                 (
@@ -751,6 +775,19 @@ def make_extractor() -> Extractor:
     kind = Config.GRAPH_EXTRACTOR
     if kind == "stub":
         return StubExtractor()
+    if kind == "local":
+        from ..system_one.client import get_system_one_client
+        from .local_extractor import LocalExtractor, llm_summary_fn
+
+        if Config.LOCAL_NER not in ("candidates", "gliner"):
+            raise ValueError(f"LOCAL_NER must be candidates or gliner, got {Config.LOCAL_NER!r}")
+        return LocalExtractor(
+            get_system_one_client(),
+            embedder=make_embedder(),
+            ner=Config.LOCAL_NER,
+            gliner_model=Config.LOCAL_NER_GLINER_MODEL,
+            summary_fn=llm_summary_fn() if Config.EXTRACT_SUMMARY_LLM else None,
+        )
     raise ValueError(f"unknown GRAPH_EXTRACTOR: {kind!r}")
 
 

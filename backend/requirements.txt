@@ -37,3 +37,6 @@ pydantic>=2.0.0
 
 # Local graph store (GRAPH_BACKEND=local)
 sqlite-vec>=0.1.6
+
+# Local extraction (GRAPH_EXTRACTOR=local)
+jieba>=0.42.1

@@ -1,0 +1,29 @@
+{
+  "source": "news_seed.txt",
+  "label_source": "Hand-annotated by the implementer of #7 (Claude Opus 5.5) from news_seed.txt; actors only, matching the ontology rule that entities must be able to post. Aliases list other surface forms of the same entity in the text.",
+  "entities": [
+    {"name": "東海市創新科技局", "type": "GovernmentAgency", "aliases": ["創新科技局"]},
+    {"name": "交通運輸委員會", "type": "GovernmentAgency", "aliases": ["市交通委", "交通委", "東海市交通運輸委員會"]},
+    {"name": "凌雲飛行智能公司", "type": "TechCompany", "aliases": ["凌雲科技", "凌雲飛行"]},
+    {"name": "東海市出租汽車行業工會", "type": "LaborUnion", "aliases": ["出租汽車行業工會"]},
+    {"name": "翠湖灣沿線社區業主聯誼會", "type": "CommunityGroup", "aliases": ["社區業主聯誼會"]},
+    {"name": "市人大", "type": "GovernmentAgency", "aliases": []},
+    {"name": "東海大學法學院", "type": "Organization", "aliases": ["東海大學"]},
+    {"name": "東海綠色能源研究所", "type": "ResearchInstitute", "aliases": []},
+    {"name": "市府監管聯合工作組", "type": "GovernmentAgency", "aliases": ["監管聯合工作組"]},
+    {"name": "林建東", "type": "GovernmentOfficial", "aliases": []},
+    {"name": "陳維", "type": "CorporateExecutive", "aliases": []},
+    {"name": "周德勝", "type": "Person", "aliases": []},
+    {"name": "王淑芬", "type": "Person", "aliases": []},
+    {"name": "趙成遠", "type": "Academic", "aliases": []}
+  ],
+  "relations": [
+    {"source": "東海市創新科技局", "target": "交通運輸委員會", "type": "COLLABORATES_WITH"},
+    {"source": "林建東", "target": "交通運輸委員會", "type": "WORKS_FOR"},
+    {"source": "陳維", "target": "凌雲飛行智能公司", "type": "WORKS_FOR"},
+    {"source": "周德勝", "target": "東海市出租汽車行業工會", "type": "LEADS"},
+    {"source": "王淑芬", "target": "翠湖灣沿線社區業主聯誼會", "type": "REPRESENTS"},
+    {"source": "王淑芬", "target": "市人大", "type": "PETITIONS"},
+    {"source": "趙成遠", "target": "東海大學法學院", "type": "WORKS_FOR"}
+  ]
+}

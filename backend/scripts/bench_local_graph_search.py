@@ -61,7 +61,7 @@ class ScriptedExtractor:
     def __init__(self, extractions: list[Extraction]) -> None:
         self._items = iter(extractions)
 
-    def extract(self, text, ontology):
+    def extract(self, text, ontology, known_entities=None):
         return next(self._items)
 
 

@@ -51,7 +51,7 @@ def _agent(sim: str, agent_id: Any, name: str) -> FactNode:
         key=f"agent:{sim}:{agent_id}",
         name=name or f"Agent_{agent_id}",
         label="SimAgent",
-        attributes={"agent_id": agent_id},
+        attributes={"agent_id": agent_id, "scope": sim},
     )
 
 
@@ -59,9 +59,16 @@ def _user(sim: str, name: str, user_id: Any = None, fallback: str = "") -> FactN
     if user_id not in (None, ""):
         return _agent(sim, user_id, name)
     if name:
-        return FactNode(key=f"user:{sim}:{name}", name=name, label="SimAgent")
+        return FactNode(
+            key=f"user:{sim}:{name}", name=name, label="SimAgent", attributes={"scope": sim}
+        )
     # Unknown target: keep it per action rather than one shared placeholder.
-    return FactNode(key=f"user:{sim}:unknown:{fallback}", name="未知用户", label="SimAgent")
+    return FactNode(
+        key=f"user:{sim}:unknown:{fallback}",
+        name=f"未知用户#{fallback}",
+        label="SimAgent",
+        attributes={"scope": sim, "unknown": True},
+    )
 
 
 def _post(

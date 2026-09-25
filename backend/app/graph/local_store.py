@@ -657,7 +657,8 @@ class LocalGraphStore:
                         continue
                     self._upsert_fact_edge(
                         conn,
-                        f"fact:{fact.key}:mentions:{normalize_name(name)}",
+                        # Keyed by entity: a name and its alias give one edge.
+                        f"fact:{fact.key}:mentions:{entity}",
                         "MENTIONS",
                         keyed[fact.target.key],
                         entity,
@@ -690,9 +691,20 @@ class LocalGraphStore:
         if row:
             self._requeue_missing_node_vector(conn, row[0], node_texts)
             return row[0]
-        existing = conn.execute(
-            "SELECT uuid FROM nodes WHERE name_key = ?", (normalize_name(node.name),)
-        ).fetchone()
+        # A simulated agent attaches to the ontology entity of the same name;
+        # otherwise agents are identified per simulation scope and name, so
+        # runs never share agent nodes. Posts and comments never attach by name.
+        existing = None
+        if node.label == "SimAgent":
+            row = conn.execute(
+                "SELECT uuid, labels FROM nodes WHERE name_key = ?", (normalize_name(node.name),)
+            ).fetchone()
+            if row and "Entity" in json.loads(row[1]):
+                existing = row
+            else:
+                existing = conn.execute(
+                    "SELECT uuid FROM nodes WHERE name_key = ?", (self._fact_name_key(node),)
+                ).fetchone()
         if existing:
             node_uuid = existing[0]
         else:
@@ -706,7 +718,7 @@ class LocalGraphStore:
                 (
                     node_uuid,
                     node.name,
-                    normalize_name(node.name) if node.label == "SimAgent" else f"key:{node.key}",
+                    self._fact_name_key(node),
                     json.dumps(["Node"]),
                     node.summary,
                     json.dumps(attributes, ensure_ascii=False),
@@ -722,6 +734,12 @@ class LocalGraphStore:
             new_nodes.append(node_uuid)
         conn.execute("INSERT INTO node_keys VALUES (?, ?)", (node.key, node_uuid))
         return node_uuid
+
+    @staticmethod
+    def _fact_name_key(node: FactNode) -> str:
+        if node.label == "SimAgent":
+            return f"sim:{node.attributes.get('scope', '')}:{normalize_name(node.name)}"
+        return f"key:{node.key}"
 
     def _requeue_missing_node_vector(
         self, conn: sqlite3.Connection, node_uuid: str, node_texts: dict[int, str]

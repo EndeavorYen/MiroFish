@@ -286,3 +286,22 @@ def test_mentions_resolve_entity_aliases(tmp_path):
     company = next(n for n in store.list_nodes("g1") if n.name == "凌雲飛行智能公司")
     assert any(e.name == "MENTIONS" and e.target_node_uuid == company.uuid for e in store.list_edges("g1"))
     store.close()
+
+
+def test_unknown_targets_and_same_named_agents_stay_separate(tmp_path):
+    store = _store(tmp_path)
+    store.create_graph("g", graph_id="g1")
+    facts = []
+    for seq in range(2):
+        mute = _activity("MUTE", seq=seq)
+        mute.action_args = {}
+        facts.append(activity_to_fact(mute, seq, simulation_id="s"))
+    store.add_structured_facts("g1", facts)
+    unknown = [n for n in store.list_nodes("g1") if n.name.startswith("未知用户")]
+    assert len(unknown) == 2
+
+    other = activity_to_fact(_activity("CREATE_POST"), 0, simulation_id="t")
+    store.add_structured_facts("g1", [other])
+    alices = [n for n in store.list_nodes("g1") if n.name == "Alice"]
+    assert len(alices) == 2  # one per simulation, no ontology entity to attach to
+    store.close()

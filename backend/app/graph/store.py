@@ -120,14 +120,17 @@ class GraphStore(Protocol):
 def get_graph_store(*, backend: str | None = None, api_key: str | None = None) -> GraphStore:
     """Return the configured graph store.
 
-    ``zep_store`` and the Zep client are imported only for the zep backend.
+    ``zep_store`` and the Zep client are imported only for the zep backend;
+    the local backend never needs ``ZEP_API_KEY``.
     """
 
     from app.config import Config
 
     selected = Config.GRAPH_BACKEND if backend is None else backend.strip().lower()
     if selected == "local":
-        raise NotImplementedError("GRAPH_BACKEND=local 尚未实现，不能改用 Zep")
+        from app.graph.local_store import build_local_graph_store
+
+        return build_local_graph_store()
     if selected != "zep":
         raise ValueError(f"未知的 GRAPH_BACKEND: {selected}")
 

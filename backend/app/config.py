@@ -33,6 +33,19 @@ class Config:
     ZEP_API_KEY = os.environ.get('ZEP_API_KEY')
     GRAPH_BACKEND = os.environ.get("GRAPH_BACKEND", "zep").strip().lower()
 
+    # Local graph store (GRAPH_BACKEND=local): one SQLite file per graph.
+    GRAPH_DATA_DIR = os.environ.get(
+        "GRAPH_DATA_DIR", os.path.join(os.path.dirname(__file__), "../uploads/graphs")
+    )
+    GRAPH_EMBEDDER = os.environ.get("GRAPH_EMBEDDER", "http").strip().lower()
+    GRAPH_EXTRACTOR = os.environ.get("GRAPH_EXTRACTOR", "stub").strip().lower()
+    EMBED_BASE_URL = os.environ.get("EMBED_BASE_URL", "http://localhost:8001/v1")
+    EMBED_MODEL_NAME = os.environ.get("EMBED_MODEL_NAME", "intfloat/multilingual-e5-small")
+    EMBED_API_KEY = os.environ.get("EMBED_API_KEY")
+    # None = pick from the model name (e5 uses "query: " / "passage: ").
+    EMBED_QUERY_PREFIX = os.environ.get("EMBED_QUERY_PREFIX")
+    EMBED_PASSAGE_PREFIX = os.environ.get("EMBED_PASSAGE_PREFIX")
+
     # System One decisions (Jev-compatible). local = logit readout on the
     # local model server; http = POST {base}/v1/systemone.
     SYSTEM_ONE_BACKEND = os.environ.get("SYSTEM_ONE_BACKEND", "local").strip().lower()
@@ -70,6 +83,11 @@ class Config:
     REPORT_AGENT_MAX_REFLECTION_ROUNDS = int(os.environ.get('REPORT_AGENT_MAX_REFLECTION_ROUNDS', '2'))
     REPORT_AGENT_TEMPERATURE = float(os.environ.get('REPORT_AGENT_TEMPERATURE', '0.5'))
     
+    @classmethod
+    def zep_key_missing(cls) -> bool:
+        """True only when the zep graph backend is selected without a key."""
+        return cls.GRAPH_BACKEND == "zep" and not cls.ZEP_API_KEY
+
     @classmethod
     def validate(cls) -> list[str]:
         """验证必要配置"""

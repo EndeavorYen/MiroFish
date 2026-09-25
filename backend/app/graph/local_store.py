@@ -541,9 +541,16 @@ class LocalGraphStore:
         for table, by_rowid in vectors.items():
             graph.ensure_vec_tables(len(next(iter(by_rowid.values()))[1]))
             for rowid, (text, vector) in by_rowid.items():
-                if table == "vec_nodes" and self._current_node_text(graph.conn, rowid) != text:
-                    # A concurrent episode merged newer text into this node;
-                    # its own vector write covers the current text.
+                if (
+                    table == "vec_nodes"
+                    and self._current_node_text(graph.conn, rowid) != text
+                    and graph.conn.execute(
+                        "SELECT 1 FROM vec_nodes WHERE rowid = ?", (rowid,)
+                    ).fetchone()
+                ):
+                    # A concurrent episode merged newer text into this node
+                    # and already stored a vector; keep that one. With no
+                    # vector yet, an older vector beats none.
                     continue
                 graph.conn.execute(f"DELETE FROM {table} WHERE rowid = ?", (rowid,))
                 graph.conn.execute(

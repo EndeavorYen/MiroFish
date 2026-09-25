@@ -128,3 +128,17 @@ def test_stale_node_vector_is_not_written_over_newer_text(tmp_path):
     assert after == before
     assert after[0] != sqlite_vec.serialize_float32([1.0] + [0.0] * 255)
     store.close()
+
+
+def test_stale_vector_is_still_written_when_node_has_none(tmp_path):
+    store = LocalGraphStore(str(tmp_path), embedder=HashEmbedder(), extractor=StubExtractor(LEXICON))
+    store.create_graph("g", graph_id="g1")
+    store.add_text_episodes("g1", [TextEpisode("Alice.")], durable=True)
+    graph = store._graph("g1")
+    rowid = graph.conn.execute("SELECT rowid FROM nodes WHERE name = 'Alice'").fetchone()[0]
+    graph.conn.execute("DELETE FROM vec_nodes WHERE rowid = ?", (rowid,))
+
+    with graph.use():
+        store._store_vectors(graph, {"vec_nodes": {rowid: ("older text", [1.0] + [0.0] * 255)}})
+    assert graph.conn.execute("SELECT 1 FROM vec_nodes WHERE rowid = ?", (rowid,)).fetchone()
+    store.close()

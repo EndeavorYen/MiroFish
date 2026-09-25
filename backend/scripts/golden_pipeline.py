@@ -294,6 +294,87 @@ def action_counts(sim_dir: Path) -> dict[str, dict[str, int]]:
     return counts
 
 
+TEXT_KEYS = ("content", "quote_content")
+
+
+def post_texts(sim_dir: Path) -> list[str]:
+    """Text the agents wrote (posts, quotes, comments) from actions.jsonl."""
+
+    texts = []
+    for platform in ("twitter", "reddit"):
+        path = sim_dir / platform / "actions.jsonl"
+        if not path.exists():
+            continue
+        for line in path.read_text(encoding="utf-8").splitlines():
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if "event_type" in row or row.get("action_type") not in (
+                "CREATE_POST", "QUOTE_POST", "CREATE_COMMENT"
+            ):
+                continue
+            args = row.get("action_args") or {}
+            text = args.get("quote_content") or args.get("content")
+            if text:
+                texts.append(str(text))
+    return texts
+
+
+def entity_names(work: Path, prepared: dict[str, Any]) -> list[str]:
+    """Seed entities: ontology-typed nodes of the prepared graph (+ aliases)."""
+
+    import sqlite3
+
+    db = work / "graphs" / f"{prepared['graph_id']}.sqlite"
+    if not db.exists():
+        return []
+    conn = sqlite3.connect(db)
+    try:
+        rows = conn.execute("SELECT name, labels, attributes FROM nodes").fetchall()
+    finally:
+        conn.close()
+    names = []
+    for name, labels, attributes in rows:
+        if "Entity" not in json.loads(labels):
+            continue
+        names.append(name)
+        names.extend(json.loads(attributes).get("aliases") or [])
+    return [n for n in names if len(n) >= 2]
+
+
+def content_stats(texts: list[str], names: list[str]) -> dict[str, Any]:
+    sys.path.insert(0, str(BACKEND_DIR))
+    from app.simulation_policy.tiers import distinct_2
+
+    with_entity = sum(1 for t in texts if any(n in t for n in names))
+    return {
+        "posts": len(texts),
+        "distinct_2": round(distinct_2(texts), 4),
+        "entity_mention_rate": round(with_entity / len(texts), 4) if texts else None,
+    }
+
+
+def content_tiers(sim_dir: Path) -> dict[str, Any]:
+    tiers = {"template": 0, "shared": 0, "full": 0}
+    decode = 0
+    rounds = 0
+    for path in sim_dir.glob("content_metrics_*.jsonl"):
+        for line in path.read_text(encoding="utf-8").splitlines():
+            row = json.loads(line)
+            rounds += 1
+            decode += row.get("decode_tokens_total", 0)
+            for tier, n in row.get("tiers", {}).items():
+                tiers[tier] = tiers.get(tier, 0) + n
+    total = sum(tiers.values())
+    return {
+        "tiers": tiers,
+        "tier_share": {k: round(v / total, 4) for k, v in tiers.items()} if total else {},
+        "content_decode_tokens": decode,
+        "platform_rounds": rounds,
+    }
+
+
 def replay_graph_writeback(run: Path, prepared: dict[str, Any]) -> dict[str, Any]:
     """Feed the run's actions to the memory updater on the local graph."""
 
@@ -337,6 +418,8 @@ def cmd_simulate(args: argparse.Namespace) -> int:
     env = local_env(run, {"SIM_DECISION_BACKEND": args.decision_backend})
     if args.content_mode:
         env["CONTENT_MODE"] = args.content_mode
+    if args.content_budget is not None:
+        env["CONTENT_DECODE_BUDGET_PER_ROUND"] = str(args.content_budget)
     config = run / "sim" / "simulation_config.json"
     command = [
         sys.executable,
@@ -377,6 +460,8 @@ def cmd_simulate(args: argparse.Namespace) -> int:
             for k, v in latencies.items()
         },
         "actions": action_counts(run / "sim"),
+        "content": content_stats(post_texts(run / "sim"), entity_names(work, prepared)),
+        "content_tiers": content_tiers(run / "sim"),
         "vram_mib": {
             "before": vram_before,
             "peak": max(vram.samples) if vram.samples else None,
@@ -387,6 +472,20 @@ def cmd_simulate(args: argparse.Namespace) -> int:
     (run / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps(summary, ensure_ascii=False, indent=2))
     return 0 if completed.returncode == 0 else completed.returncode
+
+
+def cmd_summarize(args: argparse.Namespace) -> int:
+    """Recompute content stats for an existing run (e.g. a baseline)."""
+
+    work = Path(args.work).resolve()
+    prepared = json.loads((work / "prepared.json").read_text(encoding="utf-8"))
+    run = Path(args.out).resolve()
+    result = {
+        "content": content_stats(post_texts(run / "sim"), entity_names(work, prepared)),
+        "content_tiers": content_tiers(run / "sim"),
+    }
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -406,8 +505,12 @@ def main(argv: list[str] | None = None) -> int:
     sim.add_argument("--decision-backend", choices=["llm", "system_one"], default="llm")
     sim.add_argument("--seed", type=int, default=42)
     sim.add_argument("--max-rounds", type=int, default=12)
-    sim.add_argument("--content-mode", default=None)
+    sim.add_argument("--content-mode", default=None, help="tiered | template (system_one only)")
+    sim.add_argument("--content-budget", type=int, default=None)
     sim.add_argument("--graph-writeback", action="store_true")
+    summ = sub.add_parser("summarize")
+    summ.add_argument("--work", required=True)
+    summ.add_argument("--out", required=True)
     args = parser.parse_args(argv)
     dotenvs = dotenv_files()
     if dotenvs and not args.allow_dotenv:
@@ -417,7 +520,11 @@ def main(argv: list[str] | None = None) -> int:
         parser.error(
             f"{', '.join(map(str, dotenvs))} exists; move it aside or pass --allow-dotenv"
         )
-    return cmd_prepare(args) if args.command == "prepare" else cmd_simulate(args)
+    if args.command == "prepare":
+        return cmd_prepare(args)
+    if args.command == "summarize":
+        return cmd_summarize(args)
+    return cmd_simulate(args)
 
 
 if __name__ == "__main__":

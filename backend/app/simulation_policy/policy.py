@@ -250,7 +250,7 @@ class SystemOnePolicy:
             agent_name=obs.agent_name,
             persona=obs.persona,
             target_text=target_text,
-            topic=obs.topics[0] if obs.topics else "",
+            topic=rng.choice(obs.topics) if obs.topics else "",
             emotion=dict(emotion),
         )
         record = {

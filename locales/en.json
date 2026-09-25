@@ -75,7 +75,13 @@
     "layoutGraph": "Graph",
     "layoutSplit": "Split",
     "layoutWorkbench": "Workbench",
-    "stepNames": ["Graph Build", "Env Setup", "Run Simulation", "Report Generation", "Deep Interaction"]
+    "stepNames": [
+      "Graph Build",
+      "Env Setup",
+      "Run Simulation",
+      "Report Generation",
+      "Deep Interaction"
+    ]
   },
   "step1": {
     "ontologyGeneration": "Ontology Generation",
@@ -663,5 +669,165 @@
     "llmSelectAgentFailed": "LLM agent selection failed, using default selection: {error}",
     "generateInterviewQuestionsFailed": "Failed to generate interview questions: {error}",
     "generateInterviewSummaryFailed": "Failed to generate interview summary: {error}"
+  },
+  "simContent": {
+    "templates": {
+      "opinion": {
+        "neg": [
+          "Honestly, I'm not optimistic about {topic}.",
+          "{topic} looks like more trouble than it's worth."
+        ],
+        "neu": [
+          "Still watching how {topic} plays out.",
+          "{topic} has pros and cons; need more info."
+        ],
+        "pos": [
+          "I think {topic} is a good thing, worth a try.",
+          "{topic} is heading the right way. Support."
+        ]
+      },
+      "support": {
+        "neg": [
+          "Some doubts, but {entity} did OK on {topic}.",
+          "I'll back {topic} only with proper safeguards."
+        ],
+        "neu": [
+          "Let's give {entity} a chance with {topic}.",
+          "Supporting {topic} for now; execution matters."
+        ],
+        "pos": [
+          "Fully behind {topic}! Go {entity}!",
+          "{topic} is finally here, can't wait!"
+        ]
+      },
+      "criticism": {
+        "neg": [
+          "{entity} rushed {topic}; this is reckless!",
+          "{topic} is full of problems and {entity} must answer."
+        ],
+        "neu": [
+          "{entity} still owes us details on {topic}.",
+          "Some questions about {topic}; {entity} should respond."
+        ],
+        "pos": [
+          "Fine with {topic}, but {entity} should communicate better.",
+          "Right direction on {topic}, details need work."
+        ]
+      },
+      "question": {
+        "neg": [
+          "Who is liable if {topic} goes wrong, {entity}?",
+          "Is {topic} really safe? Any data?"
+        ],
+        "neu": [
+          "When does {topic} start and how do we join?",
+          "Anyone know the details of {topic}?"
+        ],
+        "pos": [
+          "When can I try {topic}? I want to be first!",
+          "Will {entity} expand {topic} to more areas?"
+        ]
+      },
+      "worry": {
+        "neg": [
+          "Worried {topic} will disrupt our lives. Has {entity} thought about it?",
+          "{topic} makes me uneasy. How big is the risk?"
+        ],
+        "neu": [
+          "A bit worried about {topic}; hope safeguards are ready.",
+          "Let's be careful with {topic}."
+        ],
+        "pos": [
+          "Confident about {topic}, just hope safety keeps improving.",
+          "Looking forward to {topic}; hope nothing goes wrong."
+        ]
+      },
+      "rumor": {
+        "neg": [
+          "Heard there's more behind {topic}; is {entity} hiding something?",
+          "Word is {topic} had an incident that was covered up."
+        ],
+        "neu": [
+          "Rumor has it {topic} has news; can't confirm.",
+          "Heard {entity} has new plans for {topic}; checking."
+        ],
+        "pos": [
+          "Heard {topic} will expand soon, great news!",
+          "Word is {entity} will add subsidies for {topic}."
+        ]
+      },
+      "clarification": {
+        "neg": [
+          "To clarify: {topic} is not as safe as claimed.",
+          "Correction: {entity} never promised {topic} is risk-free."
+        ],
+        "neu": [
+          "To clarify: official info on {topic} is still incomplete.",
+          "Note: rely on {entity}'s notice for {topic} details."
+        ],
+        "pos": [
+          "To clarify: {topic} went through thorough safety tests.",
+          "Correction: {entity} has explained the safeguards for {topic}."
+        ]
+      },
+      "humor": {
+        "neg": [
+          "{topic}... I don't know whether to laugh or cry.",
+          "{topic}: I admire {entity}'s imagination."
+        ],
+        "neu": [
+          "With {topic}, one fewer excuse for being late.",
+          "{topic}: the future is here, just not at my stop."
+        ],
+        "pos": [
+          "With {topic} my commute finally has a view, haha.",
+          "{topic} is so cool, feels like sci-fi!"
+        ]
+      },
+      "other": {
+        "neg": [
+          "Hard to feel good about {topic}.",
+          "{topic}? No thanks."
+        ],
+        "neu": [
+          "Everyone is talking about {topic} today.",
+          "{topic} is trending again."
+        ],
+        "pos": [
+          "My feed is all {topic} today, lively!",
+          "{topic} is a great topic."
+        ]
+      }
+    },
+    "prefixes": [
+      "",
+      "",
+      "Honestly, ",
+      "Personally, ",
+      "Just saw this: ",
+      "Quick take: "
+    ],
+    "suffixes": [
+      "",
+      "",
+      "",
+      "#{topicTag}",
+      "Thoughts?",
+      "..."
+    ],
+    "synonyms": {
+      "worried": [
+        "concerned",
+        "anxious"
+      ],
+      "support": [
+        "back",
+        "endorse"
+      ],
+      "problems": [
+        "issues",
+        "flaws"
+      ]
+    }
   }
 }

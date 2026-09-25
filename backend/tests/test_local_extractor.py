@@ -340,3 +340,71 @@ def test_person_like_type_uses_the_head_word():
         assert _person_like_type(t), t
     for t in ("StudentUnion", "ExecutiveYuan", "ParentCompany", "PresidentialOffice", "AcademicInstitution", "Organization"):
         assert not _person_like_type(t), t
+
+
+class TypingOracle:
+    """Types the names in ``types``; everything else is none."""
+
+    def __init__(self, types):
+        self.types = types
+        self.typed = []
+
+    def choice(self, state, instructions, criteria):
+        if "邊界正確" in instructions:
+            pick = next((k for k, v in criteria.items() if v in self.types), "none")
+        elif "候選名稱" in state:
+            name = re.search(r"候選名稱：(.+)", state).group(1).strip()
+            self.typed.append(name)
+            pick = self.types.get(name, "none")
+        else:
+            pick = "none"
+        probs = {k: (0.9 if k == pick else 0.1 / max(len(criteria) - 1, 1)) for k in criteria}
+        return ChoiceAnswer(choice=pick, probabilities=probs, confidence=probs[pick])
+
+    def noul(self, state, instructions):
+        return NoulAnswer(noul=0.05)
+
+
+def test_parse_decoded_names_keeps_verbatim_names_only():
+    from app.graph.local_extractor import parse_decoded_names
+
+    text = "東海晨光引述陳大文與東海市交通局的說法。"
+    raw = "1. 東海晨光\n- 陳大文、東海市交通局\n東海晨光\n不存在的機構\n「交通局」\n甲"
+    assert parse_decoded_names(raw, text) == ["東海晨光", "陳大文", "東海市交通局", "交通局"]
+    assert parse_decoded_names("", text) == []
+
+
+def test_decode_mode_adds_names_the_rules_miss():
+    text = "東海晨光昨日報導，陳大文表示支持。"
+    oracle = TypingOracle({"東海晨光": "Organization", "陳大文": "Person"})
+    prompts = []
+
+    def decode(prompt, max_tokens):
+        prompts.append((prompt, max_tokens))
+        return "東海晨光\n陳大文\n捏造公司"
+
+    rules = LocalExtractor(TypingOracle(oracle.types), embedder=HashEmbedder()).extract(text, ONTOLOGY)
+    assert "東海晨光" not in {e.name for e in rules.entities}
+
+    extraction = LocalExtractor(
+        oracle, embedder=HashEmbedder(), ner="decode", decode_fn=decode
+    ).extract(text, ONTOLOGY)
+    assert {e.name for e in extraction.entities} == {"東海晨光", "陳大文"}
+    assert len(prompts) == 1 and text in prompts[0][0]
+    assert "捏造公司" not in oracle.typed  # not in the text, never typed
+    assert oracle.typed.count("陳大文") == 1  # already a rule candidate
+
+
+def test_decode_failure_keeps_the_rule_candidates():
+    def broken(prompt, max_tokens):
+        raise TimeoutError("down")
+
+    extraction = LocalExtractor(
+        TypingOracle({"陳大文": "Person"}), embedder=HashEmbedder(), ner="decode", decode_fn=broken
+    ).extract("陳大文表示支持。", ONTOLOGY)
+    assert [e.name for e in extraction.entities] == ["陳大文"]
+
+
+def test_decode_mode_needs_a_decode_fn():
+    with pytest.raises(ValueError):
+        LocalExtractor(TypingOracle({}), ner="decode")

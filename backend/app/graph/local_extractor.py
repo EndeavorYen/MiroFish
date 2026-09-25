@@ -5,6 +5,9 @@ Pipeline per episode (the caller has already chunked the document with
 
 1. Candidates: ``find_candidates`` (jieba person names, organisation-suffix
    spans, quoted names) or, with ``ner="gliner"``, GLiNER multi on CPU.
+   ``ner="decode"`` adds names the small model lists for the chunk (one
+   short decode per episode, recorded under the caller's usage stage) to
+   the rule candidates; names that do not occur verbatim are dropped.
 2. Typing: System One ``choice`` over the ontology entity types plus
    ``none``; ``none`` drops fragments, slogans and generic words.
 3. Aliases: pairs whose names, with organisation suffixes removed, share a
@@ -20,11 +23,13 @@ Pipeline per episode (the caller has already chunked the document with
    optional small-model summary (``EXTRACT_SUMMARY_LLM=1``) is off by
    default.
 
-Only System One readouts are used by default, so no decode step runs.
+Only System One readouts are used by default, so no decode step runs;
+``ner="decode"`` is the opt-in fallback for text the rules do not cover.
 """
 
 from __future__ import annotations
 
+import logging
 import math
 import re
 import threading
@@ -32,9 +37,11 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from .candidates import ORG_SUFFIXES, SURNAMES, find_candidates
+from .candidates import ORG_SUFFIXES, SURNAMES, Candidate, find_candidates
 from .embedding import Embedder
 from .extractor import ExtractedEntity, ExtractedRelation, Extraction, split_sentences
+
+logger = logging.getLogger(__name__)
 
 NONE_KEY = "none"
 MAX_SUMMARY_SENTENCES = 3
@@ -42,6 +49,31 @@ MAX_CHOICE_TYPES = 25  # 26 labels minus "none"
 FALLBACK_TYPES = {"Person", "Organization"}
 
 SummaryFn = Callable[[str, str, list[str]], str]
+# (prompt, max_tokens) -> generated text
+DecodeFn = Callable[[str, int], str]
+DECODE_MAX_TOKENS = 400
+MAX_DECODED_NAME_CHARS = 30
+_LIST_MARKER = re.compile(r"^\s*(?:[-*•·]|\d+[.、)）]|[（(]\d+[)）])\s*")
+
+
+def decode_prompt(text: str) -> str:
+    return (
+        "列出下文中出現的所有具名的人名與機構全名（政府機關、公司、學校、團體、媒體、"
+        "開發案等），照原文寫法，每行一個，不要編號、不要解釋。"
+        "不要列出泛稱（如「政府」「市民」）或職稱。\n\n" + text
+    )
+
+
+def parse_decoded_names(raw: str, text: str) -> list[str]:
+    """Names from the model's list that occur verbatim in ``text``."""
+
+    names: list[str] = []
+    for line in (raw or "").splitlines():
+        for piece in re.split(r"[、，,；;]", _LIST_MARKER.sub("", line)):
+            name = piece.strip().strip("「」『』\"'“”《》：:。 ")
+            if 2 <= len(name) <= MAX_DECODED_NAME_CHARS and name in text and name not in names:
+                names.append(name)
+    return names
 
 
 @dataclass(frozen=True)
@@ -114,13 +146,16 @@ class LocalExtractor:
         system_one,
         *,
         embedder: Embedder | None = None,
-        ner: Literal["candidates", "gliner"] = "candidates",
+        ner: Literal["candidates", "gliner", "decode"] = "candidates",
         gliner_model: str = "urchade/gliner_multi-v2.1",
         gliner_threshold: float = 0.5,
         merge_cosine: float | None = None,
         merge_min_noul: float = 0.7,
         summary_fn: SummaryFn | None = None,
+        decode_fn: DecodeFn | None = None,
     ) -> None:
+        if ner == "decode" and decode_fn is None:
+            raise ValueError('ner="decode" needs a decode_fn')
         self.system_one = system_one
         self.embedder = embedder
         self.ner = ner
@@ -129,6 +164,7 @@ class LocalExtractor:
         self.merge_cosine = merge_cosine
         self.merge_min_noul = merge_min_noul
         self.summary_fn = summary_fn
+        self.decode_fn = decode_fn
         self._gliner = None
         self._gliner_lock = threading.Lock()
 
@@ -182,6 +218,23 @@ class LocalExtractor:
                     found[name] = typed
         return list(found.values())
 
+    def _candidates(self, text: str) -> list[Candidate]:
+        candidates = find_candidates(text)
+        if self.ner != "decode":
+            return candidates
+        try:
+            raw = self.decode_fn(decode_prompt(text), DECODE_MAX_TOKENS)
+        except Exception as error:  # noqa: BLE001 - keep the rule candidates
+            logger.warning("decode entity fallback failed: %s", error)
+            return candidates
+        covered = {option for c in candidates for option in c.options()}
+        for name in parse_decoded_names(raw, text):
+            if name not in covered:
+                start = text.index(name)
+                candidates.append(Candidate(name, start, start + len(name), "decoded"))
+                covered.add(name)
+        return candidates
+
     def _typed_candidates(self, text: str, types: dict[str, str]) -> list[_Typed]:
         sentences = split_sentences(text)
         criteria = dict(types)
@@ -190,7 +243,7 @@ class LocalExtractor:
             "項目名稱、不完整的片段"
         )
         typed: dict[str, _Typed] = {}
-        for candidate in find_candidates(text):
+        for candidate in self._candidates(text):
             options = candidate.options()
             sentence = next((s for s in sentences if options[0] in s), text[:200])
             name = options[0]
@@ -479,6 +532,24 @@ class LocalExtractor:
             )
         relations = self._relations(sentences, surfaces, entity_type, ontology)
         return Extraction(entities, relations)
+
+
+def llm_decode_fn(client=None) -> DecodeFn:
+    """Small-model name listing for ``ner="decode"`` (LOCAL_NER=decode)."""
+
+    if client is None:
+        from ..utils.llm_client import LLMClient
+
+        client = LLMClient()
+
+    def decode(prompt: str, max_tokens: int) -> str:
+        return client.chat(
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=max_tokens,
+            temperature=0.0,
+        )
+
+    return decode
 
 
 def llm_summary_fn(max_tokens: int = 120) -> SummaryFn:

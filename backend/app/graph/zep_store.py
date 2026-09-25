@@ -710,13 +710,13 @@ class ZepGraphStore:
         deadline: float | None = None,
         on_progress: ProgressCallback | None = None,
     ) -> list[str]:
-        if getattr(handle, "batch_id", None):
+        if isinstance(handle, BatchSubmission) and handle.batch_id:
             timeout = None
             if deadline is not None:
                 timeout = deadline - time.time()
                 if timeout <= 0:
                     raise TimeoutError(
-                        f"Zep batch {handle.batch_id} did not finish within 0s"
+                        f"Zep batch {handle.batch_id} did not finish before its deadline"
                     )
             return self._wait_for_batch(handle, on_progress, timeout)
         if deadline is not None:

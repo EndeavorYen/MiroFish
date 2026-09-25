@@ -9,10 +9,9 @@ import traceback
 import threading
 from contextlib import ExitStack, nullcontext
 from flask import request, jsonify
-from zep_cloud import NotFoundError
-
 from . import graph_bp
 from ..config import Config
+from ..graph.store import GraphNotFoundError
 from ..services.ontology_generator import OntologyGenerator
 from ..services.graph_builder import BatchSubmission, GraphBuilderService
 from ..services.text_processor import TextProcessor
@@ -90,7 +89,7 @@ def _delete_cloud_graph_if_present(graph_id: str | None) -> None:
             )
         try:
             GraphBuilderService(api_key=Config.ZEP_API_KEY).delete_graph(graph_id)
-        except NotFoundError:
+        except GraphNotFoundError:
             logger.info("Zep Cloud graph already absent: %s", graph_id)
 
 

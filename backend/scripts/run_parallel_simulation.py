@@ -103,6 +103,7 @@ else:
         print(f"已加载环境配置: {_backend_env}")
 
 from app.utils.llm_usage import wrap_camel_model, usage_stage
+from app.simulation_policy.oasis_bridge import build_policy, decision_backend, system_one_actions
 
 
 class MaxTokensWarningFilter(logging.Filter):
@@ -1125,7 +1126,8 @@ async def run_twitter_simulation(
     action_logger: Optional[PlatformActionLogger] = None,
     main_logger: Optional[SimulationLogManager] = None,
     max_rounds: Optional[int] = None,
-    rng: Optional[random.Random] = None
+    rng: Optional[random.Random] = None,
+    policy: Any = None,
 ) -> PlatformSimulation:
     """运行Twitter模拟
     
@@ -1272,9 +1274,19 @@ async def run_twitter_simulation(
                 action_logger.log_round_end(round_num + 1, 0)
             continue
         
-        actions = {agent: LLMAction() for _, agent in active_agents}
         metrics_dir = os.path.join(simulation_dir, "metrics")
         with usage_stage("simulation", metrics_dir=metrics_dir):
+            if policy is not None:
+                actions = await system_one_actions(
+                    result.env,
+                    active_agents,
+                    policy,
+                    "twitter",
+                    round_num + 1,  # same numbering as actions.jsonl
+                    topics=config.get("event_config", {}).get("hot_topics", []),
+                )
+            else:
+                actions = {agent: LLMAction() for _, agent in active_agents}
             await result.env.step(actions)
         
         # 从数据库获取实际执行的动作并记录
@@ -1320,7 +1332,8 @@ async def run_reddit_simulation(
     action_logger: Optional[PlatformActionLogger] = None,
     main_logger: Optional[SimulationLogManager] = None,
     max_rounds: Optional[int] = None,
-    rng: Optional[random.Random] = None
+    rng: Optional[random.Random] = None,
+    policy: Any = None,
 ) -> PlatformSimulation:
     """运行Reddit模拟
     
@@ -1474,9 +1487,19 @@ async def run_reddit_simulation(
                 action_logger.log_round_end(round_num + 1, 0)
             continue
         
-        actions = {agent: LLMAction() for _, agent in active_agents}
         metrics_dir = os.path.join(simulation_dir, "metrics")
         with usage_stage("simulation", metrics_dir=metrics_dir):
+            if policy is not None:
+                actions = await system_one_actions(
+                    result.env,
+                    active_agents,
+                    policy,
+                    "reddit",
+                    round_num + 1,  # same numbering as actions.jsonl
+                    topics=config.get("event_config", {}).get("hot_topics", []),
+                )
+            else:
+                actions = {agent: LLMAction() for _, agent in active_agents}
             await result.env.step(actions)
         
         # 从数据库获取实际执行的动作并记录
@@ -1552,6 +1575,12 @@ async def main():
         default=None,
         help='随机种子，用于复现Agent激活序列'
     )
+    parser.add_argument(
+        '--decision-backend',
+        choices=['llm', 'system_one'],
+        default=None,
+        help='Agent decision backend (default: SIM_DECISION_BACKEND or llm)'
+    )
     
     args = parser.parse_args()
     
@@ -1616,16 +1645,25 @@ async def main():
         seed = None
     rng_twitter = random.Random(seed) if seed is not None else None
     rng_reddit = random.Random(seed + 1) if seed is not None else None
+
+    policy_twitter = policy_reddit = None
+    if decision_backend(args.decision_backend) == "system_one":
+        if seed is not None:
+            # OASIS refresh/recsys draw from the global random module.
+            random.seed(seed)
+        policy_twitter = build_policy("twitter", simulation_dir, seed=seed)
+        policy_reddit = build_policy("reddit", simulation_dir, seed=seed + 1 if seed is not None else None)
+        log_manager.info("决策后端: system_one（不经 LLM decode）")
     
     if args.twitter_only:
-        twitter_result = await run_twitter_simulation(config, simulation_dir, twitter_logger, log_manager, args.max_rounds, rng=rng_twitter)
+        twitter_result = await run_twitter_simulation(config, simulation_dir, twitter_logger, log_manager, args.max_rounds, rng=rng_twitter, policy=policy_twitter)
     elif args.reddit_only:
-        reddit_result = await run_reddit_simulation(config, simulation_dir, reddit_logger, log_manager, args.max_rounds, rng=rng_reddit)
+        reddit_result = await run_reddit_simulation(config, simulation_dir, reddit_logger, log_manager, args.max_rounds, rng=rng_reddit, policy=policy_reddit)
     else:
         # 并行运行（每个平台使用独立的日志记录器）
         results = await asyncio.gather(
-            run_twitter_simulation(config, simulation_dir, twitter_logger, log_manager, args.max_rounds, rng=rng_twitter),
-            run_reddit_simulation(config, simulation_dir, reddit_logger, log_manager, args.max_rounds, rng=rng_reddit),
+            run_twitter_simulation(config, simulation_dir, twitter_logger, log_manager, args.max_rounds, rng=rng_twitter, policy=policy_twitter),
+            run_reddit_simulation(config, simulation_dir, reddit_logger, log_manager, args.max_rounds, rng=rng_reddit, policy=policy_reddit),
         )
         twitter_result, reddit_result = results
     

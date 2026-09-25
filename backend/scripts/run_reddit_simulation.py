@@ -408,7 +408,13 @@ class RedditSimulationRunner:
         ActionType.MUTE,
     ]
     
-    def __init__(self, config_path: str, wait_for_commands: bool = True, seed: Optional[int] = None):
+    def __init__(
+        self,
+        config_path: str,
+        wait_for_commands: bool = True,
+        seed: Optional[int] = None,
+        decision_backend: Optional[str] = None,
+    ):
         """
         初始化模拟运行器
         
@@ -427,6 +433,9 @@ class RedditSimulationRunner:
         except (ValueError, TypeError):
             self.seed = None
         self.rng = random.Random(self.seed) if self.seed is not None else random
+        from app.simulation_policy.oasis_bridge import decision_backend as _decision_backend
+        self.decision_backend = _decision_backend(decision_backend)
+        self.policy = None
         self.env = None
         self.agent_graph = None
         self.ipc_handler = None
@@ -597,6 +606,14 @@ class RedditSimulationRunner:
         
         await self.env.reset()
         print("环境初始化完成\n")
+
+        if self.decision_backend == "system_one":
+            from app.simulation_policy.oasis_bridge import build_policy
+            if self.seed is not None:
+                # OASIS refresh/recsys draw from the global random module.
+                random.seed(self.seed)
+            self.policy = build_policy("reddit", self.simulation_dir, seed=self.seed)
+            print("决策后端: system_one（不经 LLM decode）")
         
         # 初始化IPC处理器
         self.ipc_handler = IPCHandler(self.simulation_dir, self.env, self.agent_graph)
@@ -651,10 +668,21 @@ class RedditSimulationRunner:
                 if not active_agents:
                     continue
                 
-                actions = {
-                    agent: LLMAction()
-                    for _, agent in active_agents
-                }
+                if self.policy is not None:
+                    from app.simulation_policy.oasis_bridge import system_one_actions
+                    actions = await system_one_actions(
+                        self.env,
+                        active_agents,
+                        self.policy,
+                        "reddit",
+                        round_num + 1,  # same numbering as actions.jsonl
+                        topics=event_config.get("hot_topics", []),
+                    )
+                else:
+                    actions = {
+                        agent: LLMAction()
+                        for _, agent in active_agents
+                    }
                 
                 await self.env.step(actions)
                 
@@ -734,6 +762,12 @@ async def main():
         default=None,
         help='随机种子，用于复现Agent激活序列'
     )
+    parser.add_argument(
+        '--decision-backend',
+        choices=['llm', 'system_one'],
+        default=None,
+        help='Agent decision backend (default: SIM_DECISION_BACKEND or llm)'
+    )
     
     args = parser.parse_args()
     
@@ -752,7 +786,8 @@ async def main():
     runner = RedditSimulationRunner(
         config_path=args.config,
         wait_for_commands=not args.no_wait,
-        seed=args.seed
+        seed=args.seed,
+        decision_backend=args.decision_backend,
     )
     await runner.run(max_rounds=args.max_rounds)
 

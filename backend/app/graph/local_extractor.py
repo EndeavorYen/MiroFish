@@ -247,8 +247,14 @@ class LocalExtractor:
             if source_of.get(name) == "org" or _strip_suffix(name) != name:
                 return "org"
             # Known graph names carry no source: a 2-4 character name that
-            # starts with a common surname reads as a person.
-            if 2 <= len(name) <= 4 and name[0] in SURNAMES and re.fullmatch(r"[\u4e00-\u9fff]+", name):
+            # starts with a common surname reads as a person, unless the graph
+            # already typed it as something other than Person (高雄, 金門).
+            if (
+                type_of.get(name) in (None, "Person")
+                and 2 <= len(name) <= 4
+                and name[0] in SURNAMES
+                and re.fullmatch(r"[\u4e00-\u9fff]+", name)
+            ):
                 return "person"
             return None
 

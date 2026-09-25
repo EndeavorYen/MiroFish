@@ -228,6 +228,11 @@ def test_hard_stop_characters_still_end_spans():
     for text, name in {
         "市府將於衛生局召開會議。": "衛生局",
         "此案並經衛生局核准。": "衛生局",
+        "市府因為衛生局延宕。": "衛生局",
+        "市府作為衛生局上級。": "衛生局",
+        "此案已經衛生局核准。": "衛生局",
+        "市民以為衛生局會出面。": "衛生局",
+        "情勢緩和衛生局表示。": "衛生局",
     }.items():
         options = [c.options() for c in find_candidates(text) if name in "".join(c.options())]
         assert options and options[0][0] == name, (text, options)
@@ -263,3 +268,18 @@ def test_known_person_names_never_pair_with_organisation_names():
         [_Typed("王明大學", "University", 0.9, "org")], [("王明", "Person")], []
     )
     assert canonical["王明大學"] == "王明大學" and fake.calls["noul"] == 0
+
+
+def test_known_non_person_names_with_surname_characters_can_still_merge():
+    from app.graph.local_extractor import _Typed
+
+    class AlwaysSame(FakeSystemOne):
+        def noul(self, state, instructions):
+            self.calls["noul"] += 1
+            return NoulAnswer(noul=0.99)
+
+    fake = AlwaysSame()
+    canonical = LocalExtractor(fake)._merge(
+        [_Typed("高鐵公司", "Company", 0.9, "org")], [("高鐵", "Company")], []
+    )
+    assert fake.calls["noul"] == 1 and canonical["高鐵公司"] == "高鐵"

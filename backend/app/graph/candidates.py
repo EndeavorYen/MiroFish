@@ -179,24 +179,28 @@ def _left_edge(
     *,
     cross_orgs: bool,
     token_span: dict[int, tuple[int, int]] | None = None,
+    loose: bool = False,
 ) -> int:
     """Walk left to punctuation or a stop word; unless ``cross_orgs``, also
     stop where another organisation name ends (科技局|聯合交通...).
 
-    A soft one-character stop word (和, 經, 同 ...) is kept when jieba glues
-    it into a word with a neighbour that is not a hard stop (和平, 財經,
-    緩和); 於, 將, 並 and the other one-character stop words always stop.
+    One-character stop words 於, 將, 並 ... always stop. A soft one (和, 經,
+    同 ...) is kept when jieba glues it to the character on its right
+    (和平, 同濟, 經濟). With ``loose`` it is also kept when glued to its left
+    neighbour (財經, 緩和) unless that neighbour is a hard stop; this also
+    admits function words (因為, 已經), so the loose span is only ever
+    offered as an extra variant for System One to accept or reject.
     """
 
     spans = token_span or {}
 
     def soft_kept(position: int) -> bool:
         t_start, t_end = spans.get(position, (position, position + 1))
-        neighbours = [
-            text[i] for i in range(t_start, t_end) if i != position
-        ]
-        return bool(neighbours) and not any(ch in HARD_STOP_CHARS for ch in neighbours)
-
+        if t_end > position + 1:
+            return True  # glued to the right
+        if not loose or t_start == position:
+            return False
+        return not any(text[i] in HARD_STOP_CHARS for i in range(t_start, position))
 
     begin = suffix_start
     while begin > 0 and end - begin < MAX_ORG_CHARS:
@@ -227,14 +231,17 @@ def _organisations(text: str, tokens: list[tuple[str, str, int, int]]) -> list[C
     by_end: dict[int, Candidate] = {}
     for start, end, suffix in _suffix_matches(text):
         begin = _left_edge(text, start, end, cross_orgs=False, token_span=token_span)
-        wide = _left_edge(text, start, end, cross_orgs=True, token_span=token_span)
-        if end - begin <= len(suffix) and end - wide <= len(suffix):
+        loose = _left_edge(text, start, end, cross_orgs=False, token_span=token_span, loose=True)
+        wide = _left_edge(text, start, end, cross_orgs=True, token_span=token_span, loose=True)
+        if end - min(begin, loose, wide) <= len(suffix):
             continue
         starts = [begin] + [s for s in range(begin + 1, start) if s in token_starts]
-        # A name that spans another organisation (東海大學|法學院) is offered
-        # after the in-boundary variants.
-        if wide < begin:
-            starts.append(wide)
+        # Longer readings come after the conservative ones: a soft stop word
+        # glued on its left (台灣財經研究院), then a name that spans another
+        # organisation (東海大學|法學院).
+        for extra in (loose, wide):
+            if extra < begin:
+                starts.append(extra)
         variants = []
         for s in starts:
             name = text[s:end]

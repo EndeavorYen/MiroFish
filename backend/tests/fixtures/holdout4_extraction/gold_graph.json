@@ -1,0 +1,153 @@
+{
+  "source": "news_seed.txt",
+  "label_source": "Held-out set for #19: written and hand-annotated by the implementer (Claude Opus 5.5) and committed before any #19 extractor change; each extractor mode is run once on it, no tuning afterwards.",
+  "entities": [
+    {
+      "name": "西平縣政府教育處",
+      "type": "GovernmentAgency",
+      "aliases": [
+        "教育處",
+        "西平縣政府"
+      ]
+    },
+    {
+      "name": "石門國小",
+      "type": "School",
+      "aliases": []
+    },
+    {
+      "name": "溪口國小",
+      "type": "School",
+      "aliases": []
+    },
+    {
+      "name": "孫慧玲",
+      "type": "GovernmentOfficial",
+      "aliases": []
+    },
+    {
+      "name": "石門國小家長會",
+      "type": "ParentGroup",
+      "aliases": []
+    },
+    {
+      "name": "馬建民",
+      "type": "GroupLeader",
+      "aliases": []
+    },
+    {
+      "name": "西平縣議會",
+      "type": "GovernmentAgency",
+      "aliases": []
+    },
+    {
+      "name": "龔怡君",
+      "type": "GovernmentOfficial",
+      "aliases": []
+    },
+    {
+      "name": "原住民族委員會",
+      "type": "GovernmentAgency",
+      "aliases": []
+    },
+    {
+      "name": "西平縣教師會",
+      "type": "TeacherGroup",
+      "aliases": []
+    },
+    {
+      "name": "施宏彬",
+      "type": "GroupLeader",
+      "aliases": []
+    },
+    {
+      "name": "全國家長團體聯盟西平分會",
+      "type": "ParentGroup",
+      "aliases": [
+        "全國家長團體聯盟"
+      ]
+    },
+    {
+      "name": "溫美如",
+      "type": "GroupLeader",
+      "aliases": []
+    },
+    {
+      "name": "國立西平教育大學教育政策與管理學系",
+      "type": "School",
+      "aliases": [
+        "國立西平教育大學",
+        "西平教育大學"
+      ]
+    },
+    {
+      "name": "卓文彥",
+      "type": "Academic",
+      "aliases": []
+    },
+    {
+      "name": "西平日報",
+      "type": "MediaOutlet",
+      "aliases": []
+    },
+    {
+      "name": "原住民族委員會教育文化處",
+      "type": "GovernmentAgency",
+      "aliases": [
+        "教育文化處"
+      ]
+    },
+    {
+      "name": "伍振邦",
+      "type": "GovernmentOfficial",
+      "aliases": []
+    }
+  ],
+  "relations": [
+    {
+      "source": "孫慧玲",
+      "target": "西平縣政府教育處",
+      "type": "LEADS"
+    },
+    {
+      "source": "馬建民",
+      "target": "石門國小家長會",
+      "type": "LEADS"
+    },
+    {
+      "source": "龔怡君",
+      "target": "西平縣議會",
+      "type": "WORKS_FOR"
+    },
+    {
+      "source": "施宏彬",
+      "target": "西平縣教師會",
+      "type": "LEADS"
+    },
+    {
+      "source": "溫美如",
+      "target": "全國家長團體聯盟西平分會",
+      "type": "LEADS"
+    },
+    {
+      "source": "卓文彥",
+      "target": "國立西平教育大學教育政策與管理學系",
+      "type": "WORKS_FOR"
+    },
+    {
+      "source": "伍振邦",
+      "target": "原住民族委員會教育文化處",
+      "type": "LEADS"
+    },
+    {
+      "source": "西平縣政府教育處",
+      "target": "石門國小",
+      "type": "MERGES"
+    },
+    {
+      "source": "西平縣政府教育處",
+      "target": "溪口國小",
+      "type": "MERGES"
+    }
+  ]
+}

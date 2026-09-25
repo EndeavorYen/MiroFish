@@ -1,0 +1,163 @@
+{
+  "entity_types": [
+    {
+      "name": "Company",
+      "description": "公司或開發商",
+      "attributes": []
+    },
+    {
+      "name": "GovernmentAgency",
+      "description": "政府機關、部會、署處或審查委員會",
+      "attributes": []
+    },
+    {
+      "name": "GovernmentOfficial",
+      "description": "政府官員或首長",
+      "attributes": []
+    },
+    {
+      "name": "FisheryGroup",
+      "description": "漁會或漁民團體",
+      "attributes": []
+    },
+    {
+      "name": "EnvironmentalGroup",
+      "description": "環保團體",
+      "attributes": []
+    },
+    {
+      "name": "GroupLeader",
+      "description": "團體負責人、總幹事或發言人",
+      "attributes": []
+    },
+    {
+      "name": "Executive",
+      "description": "公司高階主管",
+      "attributes": []
+    },
+    {
+      "name": "School",
+      "description": "大學或其系所、研究所",
+      "attributes": []
+    },
+    {
+      "name": "Academic",
+      "description": "學者或教授",
+      "attributes": []
+    },
+    {
+      "name": "MediaOutlet",
+      "description": "新聞媒體或廣播電台",
+      "attributes": []
+    },
+    {
+      "name": "Journalist",
+      "description": "記者或節目主持人",
+      "attributes": []
+    },
+    {
+      "name": "Project",
+      "description": "具名的開發案或工程",
+      "attributes": []
+    },
+    {
+      "name": "Person",
+      "description": "不屬於上述具體類型的自然人",
+      "attributes": []
+    },
+    {
+      "name": "Organization",
+      "description": "不屬於上述具體類型的組織",
+      "attributes": []
+    }
+  ],
+  "edge_types": [
+    {
+      "name": "WORKS_FOR",
+      "description": "任職於",
+      "source_targets": [
+        {
+          "source": "GovernmentOfficial",
+          "target": "GovernmentAgency"
+        },
+        {
+          "source": "Executive",
+          "target": "Company"
+        },
+        {
+          "source": "Academic",
+          "target": "School"
+        },
+        {
+          "source": "Journalist",
+          "target": "MediaOutlet"
+        },
+        {
+          "source": "GroupLeader",
+          "target": "EnvironmentalGroup"
+        }
+      ],
+      "attributes": []
+    },
+    {
+      "name": "LEADS",
+      "description": "擔任首長、總經理、處長或總幹事",
+      "source_targets": [
+        {
+          "source": "GovernmentOfficial",
+          "target": "GovernmentAgency"
+        },
+        {
+          "source": "Executive",
+          "target": "Company"
+        },
+        {
+          "source": "GroupLeader",
+          "target": "FisheryGroup"
+        }
+      ],
+      "attributes": []
+    },
+    {
+      "name": "DEVELOPS",
+      "description": "開發",
+      "source_targets": [
+        {
+          "source": "Company",
+          "target": "Project"
+        }
+      ],
+      "attributes": []
+    },
+    {
+      "name": "PROTESTS",
+      "description": "抗議",
+      "source_targets": [
+        {
+          "source": "FisheryGroup",
+          "target": "Project"
+        },
+        {
+          "source": "EnvironmentalGroup",
+          "target": "Project"
+        },
+        {
+          "source": "FisheryGroup",
+          "target": "Company"
+        }
+      ],
+      "attributes": []
+    },
+    {
+      "name": "REVIEWS",
+      "description": "審查或主管",
+      "source_targets": [
+        {
+          "source": "GovernmentAgency",
+          "target": "Project"
+        }
+      ],
+      "attributes": []
+    }
+  ]
+}

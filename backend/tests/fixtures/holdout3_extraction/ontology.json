@@ -1,0 +1,149 @@
+{
+  "entity_types": [
+    {
+      "name": "Hospital",
+      "description": "醫院或醫療院所",
+      "attributes": []
+    },
+    {
+      "name": "GovernmentAgency",
+      "description": "政府機關，包括中央部會、地方局處及其下屬司署",
+      "attributes": []
+    },
+    {
+      "name": "GovernmentOfficial",
+      "description": "政府官員或首長",
+      "attributes": []
+    },
+    {
+      "name": "ProfessionalBody",
+      "description": "職業工會、公會等專業團體",
+      "attributes": []
+    },
+    {
+      "name": "AdvocacyGroup",
+      "description": "倡議或權益團體",
+      "attributes": []
+    },
+    {
+      "name": "GroupLeader",
+      "description": "工會、公會或團體的負責人、秘書長",
+      "attributes": []
+    },
+    {
+      "name": "School",
+      "description": "大學、專科學校或其系所、研究所",
+      "attributes": []
+    },
+    {
+      "name": "Academic",
+      "description": "學者或教授",
+      "attributes": []
+    },
+    {
+      "name": "MediaOutlet",
+      "description": "新聞媒體",
+      "attributes": []
+    },
+    {
+      "name": "Executive",
+      "description": "醫院或機構的院長、主管",
+      "attributes": []
+    },
+    {
+      "name": "Person",
+      "description": "不屬於上述具體類型的自然人",
+      "attributes": []
+    },
+    {
+      "name": "Organization",
+      "description": "不屬於上述具體類型的組織",
+      "attributes": []
+    }
+  ],
+  "edge_types": [
+    {
+      "name": "WORKS_FOR",
+      "description": "任職於",
+      "source_targets": [
+        {
+          "source": "GovernmentOfficial",
+          "target": "GovernmentAgency"
+        },
+        {
+          "source": "Executive",
+          "target": "Hospital"
+        },
+        {
+          "source": "Academic",
+          "target": "School"
+        },
+        {
+          "source": "Person",
+          "target": "Organization"
+        }
+      ],
+      "attributes": []
+    },
+    {
+      "name": "LEADS",
+      "description": "擔任負責人、院長、局長、理事長或秘書長",
+      "source_targets": [
+        {
+          "source": "GovernmentOfficial",
+          "target": "GovernmentAgency"
+        },
+        {
+          "source": "Executive",
+          "target": "Hospital"
+        },
+        {
+          "source": "GroupLeader",
+          "target": "ProfessionalBody"
+        },
+        {
+          "source": "GroupLeader",
+          "target": "AdvocacyGroup"
+        }
+      ],
+      "attributes": []
+    },
+    {
+      "name": "PARTNERS_WITH",
+      "description": "合作",
+      "source_targets": [
+        {
+          "source": "Hospital",
+          "target": "School"
+        }
+      ],
+      "attributes": []
+    },
+    {
+      "name": "FUNDS",
+      "description": "補助或撥款",
+      "source_targets": [
+        {
+          "source": "GovernmentAgency",
+          "target": "Hospital"
+        }
+      ],
+      "attributes": []
+    },
+    {
+      "name": "PROTESTS",
+      "description": "抗議、施壓",
+      "source_targets": [
+        {
+          "source": "ProfessionalBody",
+          "target": "Hospital"
+        },
+        {
+          "source": "AdvocacyGroup",
+          "target": "Hospital"
+        }
+      ],
+      "attributes": []
+    }
+  ]
+}

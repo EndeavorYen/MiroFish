@@ -293,9 +293,15 @@ def test_longer_readings_offer_inner_word_boundaries():
     }.items():
         options = {o for c in find_candidates(text) for o in c.options()}
         assert name in options, (text, options)
-    for text in ("經過衛生局審查。", "當時衛生局表示。", "如果衛生局同意。"):
-        first = [c.options()[0] for c in find_candidates(text) if "衛生局" in "".join(c.options())]
-        assert first == ["衛生局"], (text, first)
+    for text, name in (
+        ("經過衛生局審查。", "衛生局"),
+        ("當時衛生局表示。", "衛生局"),
+        ("如果衛生局同意。", "衛生局"),
+        ("與此同時衛生局宣布停業。", "衛生局"),
+        ("與其環保署出面，不如市府說明。", "環保署"),
+    ):
+        first = [c.options()[0] for c in find_candidates(text) if name in "".join(c.options())]
+        assert first == [name], (text, first)
 
 
 def test_specific_person_types_keep_the_person_guard():
@@ -327,7 +333,10 @@ def test_function_words_inside_names_do_not_cut_them():
 def test_person_like_type_uses_the_head_word():
     from app.graph.local_extractor import _person_like_type
 
-    for t in (None, "Person", "Student", "GovernmentOfficial", "Celebrity", "CorporateExecutive"):
+    for t in (
+        None, "Person", "Student", "GovernmentOfficial", "Celebrity", "CorporateExecutive",
+        "Spokesman", "Chairperson", "Officials", "Mayor",
+    ):
         assert _person_like_type(t), t
     for t in ("StudentUnion", "ExecutiveYuan", "ParentCompany", "PresidentialOffice", "AcademicInstitution", "Organization"):
         assert not _person_like_type(t), t

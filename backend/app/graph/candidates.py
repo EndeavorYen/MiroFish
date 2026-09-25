@@ -48,7 +48,9 @@ STOP_WORDS = (
 )
 # Function words that jieba glues around a soft stop character. Their
 # characters also occur inside names (工業經濟, 大同時代), so they stop a span
-# only when jieba produced exactly that word as a token.
+# only when they line up with jieba's segmentation: the word starts and ends
+# on token boundaries (與|其, 所以), or it ends the token just before the span
+# (與此同時).
 FUNCTION_WORDS = (
     "經過", "當時", "如果", "以前", "以後", "使得", "與其", "為此", "同時", "如何",
     "因為", "作為", "所以", "例如", "已經", "業經", "可以", "以為", "如同", "雖然",
@@ -180,6 +182,20 @@ def _suffix_matches(text: str) -> list[tuple[int, int, str]]:
     return matches
 
 
+def _function_word_aligned(
+    text: str, begin: int, length: int, spans: dict[int, tuple[int, int]]
+) -> bool:
+    """True when text[begin-length:begin] follows jieba's segmentation."""
+
+    last_start, last_end = spans.get(begin - 1, (begin - 1, begin))
+    if last_end != begin:
+        return False  # the word ends inside a token (工業|經濟: 業經 ...)
+    if last_start <= begin - length:
+        return True  # one token ends with the word (與此同時, 所以)
+    first_start, _ = spans.get(begin - length, (begin - length, begin - length + 1))
+    return first_start == begin - length  # the word spans whole tokens (與|其)
+
+
 def _left_edge(
     text: str,
     suffix_start: int,
@@ -222,7 +238,7 @@ def _left_edge(
         ):
             break
         if any(
-            prefix.endswith(word) and spans.get(begin - 1) == (begin - len(word), begin)
+            prefix.endswith(word) and _function_word_aligned(text, begin, len(word), spans)
             for word in FUNCTION_WORDS
         ):
             break

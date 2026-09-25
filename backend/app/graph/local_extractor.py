@@ -70,7 +70,9 @@ PERSON_TYPE_WORDS = {
     "resident", "citizen", "worker", "driver", "teacher", "doctor", "lawyer",
     "influencer", "blogger", "individual", "user", "spokesperson", "member",
     "representative", "activist", "parent", "passenger", "celebrity", "consumer",
-    "employee", "commuter", "victim", "fan", "voter", "patient",
+    "employee", "commuter", "victim", "fan", "voter", "patient", "mayor", "minister",
+    "legislator", "lawmaker", "senator", "governor", "president", "councillor",
+    "councilor", "director", "manager", "founder", "owner", "witness", "commentator",
 }
 
 
@@ -82,7 +84,12 @@ def _person_like_type(entity_type: str | None) -> bool:
     if entity_type is None:
         return True
     words = re.findall(r"[A-Z]?[a-z]+|[A-Z]+(?![a-z])", entity_type)
-    return bool(words) and words[-1].lower() in PERSON_TYPE_WORDS
+    if not words:
+        return False
+    head = words[-1].lower()
+    if head.endswith("s") and head[:-1] in PERSON_TYPE_WORDS:
+        head = head[:-1]  # Officials, Students
+    return head in PERSON_TYPE_WORDS or head.endswith(("person", "man", "woman", "men", "women"))
 
 
 def _strip_suffix(name: str) -> str:

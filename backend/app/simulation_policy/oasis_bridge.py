@@ -63,6 +63,8 @@ def build_policy(
     )
 
 
+# Process-lifetime cache: build_policy runs in the per-simulation script
+# process, which exits with the simulation.
 _SHARED: dict[tuple[type, str], Any] = {}
 _SHARED_LOCK = threading.Lock()
 
@@ -117,6 +119,7 @@ async def system_one_actions(
 
     # env.step() refreshes the recommendation table only before acting; do
     # it now so observations include last round's posts, as the LLM path's do.
+    # This costs a second rec-table rebuild per round (twhin-bert on Twitter).
     platform_api = getattr(env, "platform", None)
     update_rec = getattr(platform_api, "update_rec_table", None)
     if callable(update_rec):

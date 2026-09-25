@@ -33,6 +33,10 @@ from pathlib import Path
 from typing import Any
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
+REPO_DOTENV = BACKEND_DIR.parent / ".env"
+# Environment before app.config loads any .env; local settings are derived
+# from this snapshot, never from values a .env injected later.
+_INITIAL_ENV = dict(os.environ)
 FIXTURE = BACKEND_DIR / "tests" / "fixtures" / "golden_scenario"
 LOCAL_DEFAULTS = {
     "LLM_API_KEY": "local",
@@ -59,6 +63,11 @@ def force_local_config(work: Path) -> None:
     env = local_env(work)
     os.environ.update(env)
     Config.GRAPH_BACKEND = "local"
+    Config.GRAPH_EXTRACTOR = "local"
+    Config.EXTRACT_SUMMARY_LLM = False
+    Config.SYSTEM_ONE_BACKEND = "local"
+    Config.SYSTEM_ONE_API_KEY = None
+    Config.EMBED_API_KEY = None
     Config.GRAPH_DATA_DIR = env["GRAPH_DATA_DIR"]
     Config.GRAPH_EMBEDDER = env["GRAPH_EMBEDDER"]
     Config.EMBED_BASE_URL = env["EMBED_BASE_URL"]
@@ -71,9 +80,15 @@ def force_local_config(work: Path) -> None:
 
 
 def local_env(work: Path, extra: dict[str, str] | None = None) -> dict[str, str]:
+    """Local settings on top of the pre-.env environment.
+
+    A value the caller exported explicitly (e.g. another local port) wins
+    over the default; a value that only came from a .env file does not.
+    """
+
     env = dict(os.environ)
     for key, value in LOCAL_DEFAULTS.items():
-        env.setdefault(key, value)
+        env[key] = _INITIAL_ENV.get(key, value)
     env["GRAPH_BACKEND"] = "local"
     env["GRAPH_DATA_DIR"] = str(work / "graphs")
     env["MIROFISH_METRICS_DIR"] = str(work / "metrics")
@@ -344,6 +359,11 @@ def cmd_simulate(args: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument(
+        "--allow-dotenv",
+        action="store_true",
+        help="run even if a repo .env exists (the simulation subprocess re-loads it)",
+    )
     sub = parser.add_subparsers(dest="command", required=True)
     prep = sub.add_parser("prepare")
     prep.add_argument("--work", required=True)
@@ -357,6 +377,10 @@ def main(argv: list[str] | None = None) -> int:
     sim.add_argument("--content-mode", default=None)
     sim.add_argument("--graph-writeback", action="store_true")
     args = parser.parse_args(argv)
+    if REPO_DOTENV.exists() and not args.allow_dotenv:
+        # app.config loads it with override=True in every process, including
+        # the simulation subprocess; refuse rather than risk cloud endpoints.
+        parser.error(f"{REPO_DOTENV} exists; move it aside or pass --allow-dotenv")
     return cmd_prepare(args) if args.command == "prepare" else cmd_simulate(args)
 
 

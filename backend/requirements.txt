@@ -40,3 +40,6 @@ sqlite-vec>=0.1.6
 
 # Local extraction (GRAPH_EXTRACTOR=local)
 jieba>=0.42.1
+
+# System One simulation policy (SIM_DECISION_BACKEND=system_one)
+pyyaml>=6.0

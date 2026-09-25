@@ -328,3 +328,33 @@ def test_oasis_bridge_builds_manual_actions(tmp_path):
         assert isinstance(action.action_type, ActionType)
     rows = (tmp_path / "decisions.jsonl").read_text(encoding="utf-8").splitlines()
     assert len(rows) == 2
+
+
+def test_oasis_bridge_degrades_a_failed_decision_to_do_nothing(tmp_path):
+    from oasis import ActionType
+
+    from app.simulation_policy.oasis_bridge import system_one_actions
+
+    class Broken(FakeSystemOne):
+        def ask(self, request):
+            raise TimeoutError("timed out")
+
+    class FakeActionApi:
+        async def refresh(self):
+            return {"success": True, "posts": _feed()}
+
+    class FakeAgent:
+        def __init__(self, agent_id):
+            self.social_agent_id = agent_id
+            self.user_info = None
+            self.env = type("E", (), {"action": FakeActionApi()})()
+
+    agent = FakeAgent(1)
+    env = type("Env", (), {"agent_graph": type("G", (), {"get_agents": lambda self: [(1, agent)]})()})()
+    policy = SystemOnePolicy(
+        Broken(), load_taxonomy("twitter"), seed=1, decision_log=DecisionLog(str(tmp_path / "d.jsonl"))
+    )
+    actions = asyncio.run(system_one_actions(env, [(1, agent)], policy, "twitter", 0))
+    assert actions[agent].action_type == ActionType.DO_NOTHING
+    row = json.loads((tmp_path / "d.jsonl").read_text(encoding="utf-8"))
+    assert row["action"] == "DO_NOTHING" and row["error"].startswith("TimeoutError")

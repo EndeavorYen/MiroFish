@@ -7,6 +7,7 @@ run_parallel_simulation.py when ``SIM_DECISION_BACKEND=system_one``.
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 from typing import Any
 
@@ -15,6 +16,7 @@ from .policy import DecisionLog, Observation, SystemOnePolicy
 from .taxonomy import load_taxonomy
 
 DECISION_BACKENDS = ("llm", "system_one")
+logger = logging.getLogger("mirofish.simulation_policy")
 
 
 def decision_backend(cli_value: str | None = None) -> str:
@@ -109,10 +111,38 @@ async def system_one_actions(
                 ),
             )
         )
-    decisions = await asyncio.gather(
-        *(asyncio.to_thread(policy.decide, obs) for _, obs in observations)
-    )
-    return {
-        agent: ManualAction(action_type=ActionType[decision.action], action_args=decision.args)
-        for (agent, _), decision in zip(observations, decisions)
-    }
+    # Bound concurrent agents so the model server's slots are not flooded
+    # (each decision already issues several parallel readouts).
+    limit = asyncio.Semaphore(max(1, int(os.environ.get("SIM_DECISION_CONCURRENCY", "4"))))
+
+    async def decide(obs: Observation):
+        async with limit:
+            try:
+                return await asyncio.to_thread(policy.decide, obs)
+            except Exception as error:  # noqa: BLE001 - one agent must not stop the round
+                logger.warning(
+                    "System One decision failed for agent %s round %s: %s",
+                    obs.agent_id, obs.round_num, error,
+                )
+                policy.log.write(
+                    {
+                        "round": obs.round_num,
+                        "platform": obs.platform,
+                        "agent_id": obs.agent_id,
+                        "action": "DO_NOTHING",
+                        "args": {},
+                        "error": f"{type(error).__name__}: {error}",
+                    }
+                )
+                return None
+
+    decisions = await asyncio.gather(*(decide(obs) for _, obs in observations))
+    actions = {}
+    for (agent, _), decision in zip(observations, decisions):
+        if decision is None:
+            actions[agent] = ManualAction(action_type=ActionType.DO_NOTHING, action_args={})
+        else:
+            actions[agent] = ManualAction(
+                action_type=ActionType[decision.action], action_args=decision.args
+            )
+    return actions

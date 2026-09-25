@@ -37,11 +37,16 @@ class SystemOneBackend(Protocol):
     def ask(self, request: SystemOneRequest) -> SystemOneResponse: ...
 
 
+_RETRYABLE = (ConnectionResetError, ConnectionAbortedError, TimeoutError)
+
+
 def _is_connection_reset(error: BaseException) -> bool:
-    if isinstance(error, (ConnectionResetError, ConnectionAbortedError)):
+    """Dropped or stalled connection; safe to retry a side-effect-free question."""
+
+    if isinstance(error, _RETRYABLE):
         return True
     reason = getattr(error, "reason", None)
-    return isinstance(reason, (ConnectionResetError, ConnectionAbortedError))
+    return isinstance(reason, _RETRYABLE)
 
 
 def _http_post(
@@ -52,8 +57,9 @@ def _http_post(
     *,
     reset_retries: int = 4,
 ) -> Any:
-    """POST JSON. System One questions have no side effects, so a dropped
-    connection (seen on Windows loopback) is retried a bounded number of times.
+    """POST JSON. System One questions have no side effects, so a dropped or
+    timed-out connection (seen on Windows loopback and under a full server
+    queue) is retried a bounded number of times.
     """
 
     headers = {"Content-Type": "application/json"}

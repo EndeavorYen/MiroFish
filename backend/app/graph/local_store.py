@@ -27,7 +27,8 @@ import threading
 import time
 import unicodedata
 import uuid as uuidlib
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any, Literal
 
@@ -124,41 +125,70 @@ def _connect(path: str) -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
     conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute("PRAGMA busy_timeout=30000")
     conn.enable_load_extension(True)
     sqlite_vec.load(conn)
     conn.enable_load_extension(False)
     return conn
 
 
+@contextmanager
+def _transaction(conn: sqlite3.Connection) -> Iterator[None]:
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        yield
+    except BaseException:
+        conn.execute("ROLLBACK")
+        raise
+    conn.execute("COMMIT")
+
+
 class _Graph:
-    """One open graph database. All access is serialised by ``lock``."""
+    """One open graph database. All access goes through ``use()``."""
 
     def __init__(self, path: str) -> None:
         self.path = path
         self.lock = threading.RLock()
+        self.closed = False
         self.conn = _connect(path)
         self.conn.executescript(_GRAPH_SCHEMA)
-        self.dim = self._meta_int("embedding_dim")
 
-    def _meta_int(self, key: str) -> int | None:
-        row = self.conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+    @contextmanager
+    def use(self) -> Iterator[sqlite3.Connection]:
+        with self.lock:
+            if self.closed:
+                raise GraphNotFoundError(
+                    f"graph was deleted: {os.path.basename(self.path)}"
+                )
+            yield self.conn
+
+    def current_dim(self) -> int | None:
+        # Read every time: a rolled-back transaction or another process may
+        # have changed it, so an in-memory copy can go stale.
+        row = self.conn.execute(
+            "SELECT value FROM meta WHERE key = 'embedding_dim'"
+        ).fetchone()
         return int(row[0]) if row else None
 
     def ensure_vec_tables(self, dim: int) -> None:
-        if self.dim is None:
-            self.conn.execute("INSERT OR REPLACE INTO meta VALUES ('embedding_dim', ?)", (str(dim),))
+        current = self.current_dim()
+        if current is None:
+            self.conn.execute(
+                "INSERT OR REPLACE INTO meta VALUES ('embedding_dim', ?)", (str(dim),)
+            )
             for table in ("vec_nodes", "vec_edges"):
                 self.conn.execute(
                     f"CREATE VIRTUAL TABLE IF NOT EXISTS {table} "
                     f"USING vec0(embedding float[{dim}] distance_metric=cosine)"
                 )
-            self.dim = dim
-        elif dim != self.dim:
-            raise ValueError(f"embedding dimension changed from {self.dim} to {dim}")
+        elif dim != current:
+            raise ValueError(f"embedding dimension changed from {current} to {dim}")
 
     def close(self) -> None:
         with self.lock:
-            self.conn.close()
+            if not self.closed:
+                self.closed = True
+                self.conn.close()
 
 
 class LocalGraphStore:
@@ -176,8 +206,10 @@ class LocalGraphStore:
         self._registry_lock = threading.RLock()
         self._registry = _connect(os.path.join(self.data_dir, "registry.sqlite"))
         self._registry.executescript(_REGISTRY_SCHEMA)
+        # Lock order: _graphs_lock -> graph.lock -> _registry_lock.
         self._graphs: dict[str, _Graph] = {}
-        self._graphs_lock = threading.Lock()
+        self._graphs_lock = threading.RLock()
+        self.closed = False
 
     # ------------------------------------------------------------------ graphs
 
@@ -194,9 +226,9 @@ class LocalGraphStore:
         return row is not None
 
     def _graph(self, graph_id: str) -> _Graph:
-        if not self._exists(graph_id):
-            raise GraphNotFoundError(f"graph not found: {graph_id}")
         with self._graphs_lock:
+            if not self._exists(graph_id):
+                raise GraphNotFoundError(f"graph not found: {graph_id}")
             graph = self._graphs.get(graph_id)
             if graph is None:
                 graph = _Graph(self._graph_path(graph_id))
@@ -214,45 +246,48 @@ class LocalGraphStore:
         self._graph_path(graph_id)
         if graph_id_callback:
             graph_id_callback(graph_id)
-        with self._registry_lock:
-            self._registry.execute(
-                "INSERT OR IGNORE INTO graphs VALUES (?, ?, ?)", (graph_id, name, _now())
-            )
-        self._graph(graph_id)
+        with self._graphs_lock:
+            with self._registry_lock, _transaction(self._registry):
+                self._registry.execute(
+                    "INSERT OR IGNORE INTO graphs VALUES (?, ?, ?)", (graph_id, name, _now())
+                )
+            self._graph(graph_id)
         return graph_id
 
     def delete_graph(self, graph_id: str) -> None:
-        if not self._exists(graph_id):
-            raise GraphNotFoundError(f"graph not found: {graph_id}")
         with self._graphs_lock:
+            if not self._exists(graph_id):
+                raise GraphNotFoundError(f"graph not found: {graph_id}")
             graph = self._graphs.pop(graph_id, None)
-        if graph is not None:
-            graph.close()
-        with self._registry_lock:
-            self._registry.execute("BEGIN")
-            self._registry.execute("DELETE FROM graphs WHERE graph_id = ?", (graph_id,))
-            self._registry.execute("DELETE FROM node_index WHERE graph_id = ?", (graph_id,))
-            self._registry.execute("DELETE FROM episode_index WHERE graph_id = ?", (graph_id,))
-            self._registry.execute("COMMIT")
-        path = self._graph_path(graph_id)
-        for suffix in ("", "-wal", "-shm"):
-            try:
-                os.remove(path + suffix)
-            except FileNotFoundError:
-                pass
+            if graph is not None:
+                graph.close()  # waits for in-flight operations on this graph
+            path = self._graph_path(graph_id)
+            # Files first: if Windows refuses (file held elsewhere) the
+            # registry still lists the graph, so the delete can be retried.
+            for suffix in ("", "-wal", "-shm"):
+                try:
+                    os.remove(path + suffix)
+                except FileNotFoundError:
+                    pass
+            with self._registry_lock, _transaction(self._registry):
+                self._registry.execute("DELETE FROM graphs WHERE graph_id = ?", (graph_id,))
+                self._registry.execute("DELETE FROM node_index WHERE graph_id = ?", (graph_id,))
+                self._registry.execute(
+                    "DELETE FROM episode_index WHERE graph_id = ?", (graph_id,)
+                )
 
     def set_ontology(self, graph_id: str, ontology: dict[str, Any]) -> None:
         graph = self._graph(graph_id)
-        with graph.lock:
-            graph.conn.execute(
+        with graph.use() as conn:
+            conn.execute(
                 "INSERT OR REPLACE INTO ontology (id, body) VALUES (1, ?)",
                 (json.dumps(ontology, ensure_ascii=False),),
             )
 
     def get_ontology(self, graph_id: str) -> dict[str, Any] | None:
         graph = self._graph(graph_id)
-        with graph.lock:
-            row = graph.conn.execute("SELECT body FROM ontology WHERE id = 1").fetchone()
+        with graph.use() as conn:
+            row = conn.execute("SELECT body FROM ontology WHERE id = 1").fetchone()
         return json.loads(row[0]) if row else None
 
     # --------------------------------------------------------------- ingestion
@@ -269,9 +304,9 @@ class LocalGraphStore:
     ) -> IngestionHandle:
         """Extract and write each episode now.
 
-        Every local write is durable (one SQLite transaction per episode), so
-        ``durable`` does not change behaviour. ``on_submitted`` is never
-        called: there is no remote batch identity to journal.
+        Every local write is durable (SQLite transactions), so ``durable``
+        does not change behaviour. ``on_submitted`` is never called: there is
+        no remote batch identity to journal.
         """
 
         graph = self._graph(graph_id)
@@ -281,8 +316,7 @@ class LocalGraphStore:
         for index, episode in enumerate(episodes, 1):
             episode_id = uuidlib.uuid4().hex
             extraction = self.extractor.extract(episode.text, ontology)
-            with graph.lock:
-                self._write_episode(graph, graph_id, episode_id, episode, extraction)
+            self._write_episode(graph, graph_id, episode_id, episode, extraction)
             episode_ids.append(episode_id)
             if on_progress:
                 on_progress(f"processed episode {index}/{total}", index / total)
@@ -296,13 +330,18 @@ class LocalGraphStore:
         episode: TextEpisode,
         extraction: Extraction,
     ) -> None:
-        conn = graph.conn
+        """Rows, then embeddings outside any lock, then vectors + processed.
+
+        The episode is marked processed only after its vectors are stored, so
+        a failed embedding call leaves it unprocessed (BM25 still finds the
+        rows) and ``wait_until_processed`` reports it.
+        """
+
         created_at = episode.created_at or _now()
         node_texts: dict[int, str] = {}
         edge_texts: dict[int, str] = {}
         new_nodes: list[str] = []
-        conn.execute("BEGIN")
-        try:
+        with graph.use() as conn, _transaction(conn):
             conn.execute(
                 "INSERT INTO episodes VALUES (?, ?, ?, ?, ?, 0)",
                 (
@@ -335,14 +374,7 @@ class LocalGraphStore:
                 )
                 edge_texts[rowid] = text
                 self._link(conn, episode_id, "edge", edge_uuid)
-            self._index_embeddings(graph, node_texts, edge_texts)
-            conn.execute("UPDATE episodes SET processed = 1 WHERE uuid = ?", (episode_id,))
-            conn.execute("COMMIT")
-        except BaseException:
-            conn.execute("ROLLBACK")
-            raise
-        with self._registry_lock:
-            self._registry.execute("BEGIN")
+        with self._registry_lock, _transaction(self._registry):
             self._registry.execute(
                 "INSERT OR REPLACE INTO episode_index VALUES (?, ?)", (episode_id, graph_id)
             )
@@ -350,7 +382,10 @@ class LocalGraphStore:
                 "INSERT OR REPLACE INTO node_index VALUES (?, ?)",
                 [(node_uuid, graph_id) for node_uuid in new_nodes],
             )
-            self._registry.execute("COMMIT")
+        vectors = self._embed(node_texts, edge_texts)
+        with graph.use() as conn, _transaction(conn):
+            self._store_vectors(graph, vectors)
+            conn.execute("UPDATE episodes SET processed = 1 WHERE uuid = ?", (episode_id,))
 
     @staticmethod
     def _link(conn: sqlite3.Connection, episode_id: str, kind: str, target: str) -> None:
@@ -472,16 +507,22 @@ class LocalGraphStore:
             )
         return edge_uuid, rowid, text
 
-    def _index_embeddings(
-        self, graph: _Graph, node_texts: dict[int, str], edge_texts: dict[int, str]
-    ) -> None:
+    def _embed(
+        self, node_texts: dict[int, str], edge_texts: dict[int, str]
+    ) -> dict[str, dict[int, list[float]]]:
+        result: dict[str, dict[int, list[float]]] = {}
         for table, texts in (("vec_nodes", node_texts), ("vec_edges", edge_texts)):
-            if not texts:
-                continue
-            rowids = list(texts)
-            vectors = self.embedder.embed_documents([texts[r] for r in rowids])
-            graph.ensure_vec_tables(len(vectors[0]))
-            for rowid, vector in zip(rowids, vectors):
+            if texts:
+                rowids = list(texts)
+                vectors = self.embedder.embed_documents([texts[r] for r in rowids])
+                result[table] = dict(zip(rowids, vectors))
+        return result
+
+    @staticmethod
+    def _store_vectors(graph: _Graph, vectors: dict[str, dict[int, list[float]]]) -> None:
+        for table, by_rowid in vectors.items():
+            graph.ensure_vec_tables(len(next(iter(by_rowid.values()))))
+            for rowid, vector in by_rowid.items():
                 graph.conn.execute(f"DELETE FROM {table} WHERE rowid = ?", (rowid,))
                 graph.conn.execute(
                     f"INSERT INTO {table} (rowid, embedding) VALUES (?, ?)",
@@ -524,7 +565,7 @@ class LocalGraphStore:
                 pending.append(episode_id)
                 continue
             graph = self._graph(graph_id)
-            with graph.lock:
+            with graph.use():
                 row = graph.conn.execute(
                     "SELECT processed FROM episodes WHERE uuid = ?", (episode_id,)
                 ).fetchone()
@@ -570,7 +611,7 @@ class LocalGraphStore:
 
     def list_nodes(self, graph_id: str) -> list[GraphNode]:
         graph = self._graph(graph_id)
-        with graph.lock:
+        with graph.use():
             rows = graph.conn.execute(
                 f"SELECT {self._NODE_COLS} FROM nodes ORDER BY rowid"
             ).fetchall()
@@ -578,7 +619,7 @@ class LocalGraphStore:
 
     def list_edges(self, graph_id: str) -> list[GraphEdge]:
         graph = self._graph(graph_id)
-        with graph.lock:
+        with graph.use():
             rows = graph.conn.execute(
                 f"SELECT {self._EDGE_COLS} FROM edges ORDER BY rowid"
             ).fetchall()
@@ -595,7 +636,7 @@ class LocalGraphStore:
 
     def get_node(self, node_uuid: str) -> GraphNode:
         graph = self._graph_of_node(node_uuid)
-        with graph.lock:
+        with graph.use():
             row = graph.conn.execute(
                 f"SELECT {self._NODE_COLS} FROM nodes WHERE uuid = ?", (node_uuid,)
             ).fetchone()
@@ -605,7 +646,7 @@ class LocalGraphStore:
 
     def get_node_edges(self, node_uuid: str) -> list[GraphEdge]:
         graph = self._graph_of_node(node_uuid)
-        with graph.lock:
+        with graph.use():
             rows = graph.conn.execute(
                 f"SELECT {self._EDGE_COLS} FROM edges "
                 "WHERE source_uuid = ? OR target_uuid = ? ORDER BY rowid",
@@ -635,7 +676,7 @@ class LocalGraphStore:
         query_vector = self.embedder.embed_query(query) if query.strip() else None
         expression = match_query(query)
         scores: dict[int, float] = {}
-        with graph.lock:
+        with graph.use():
             if expression:
                 lexical = graph.conn.execute(
                     f"SELECT rowid FROM {fts} WHERE {fts} MATCH ? ORDER BY bm25({fts}) LIMIT ?",
@@ -643,7 +684,7 @@ class LocalGraphStore:
                 ).fetchall()
                 for rank, (rowid,) in enumerate(lexical):
                     scores[rowid] = scores.get(rowid, 0.0) + 1.0 / (RRF_K + rank + 1)
-            if query_vector is not None and graph.dim is not None:
+            if query_vector is not None and graph.current_dim() is not None:
                 semantic = graph.conn.execute(
                     f"SELECT rowid FROM {vec} WHERE embedding MATCH ? AND k = ? ORDER BY distance",
                     (sqlite_vec.serialize_float32(query_vector), pool),
@@ -668,6 +709,7 @@ class LocalGraphStore:
         with self._graphs_lock:
             graphs = list(self._graphs.values())
             self._graphs.clear()
+            self.closed = True
         for graph in graphs:
             graph.close()
         with self._registry_lock:
@@ -683,11 +725,24 @@ def make_extractor() -> Extractor:
     raise ValueError(f"unknown GRAPH_EXTRACTOR: {kind!r}")
 
 
+_SHARED: dict[str, LocalGraphStore] = {}
+_SHARED_LOCK = threading.Lock()
+
+
 def build_local_graph_store() -> LocalGraphStore:
+    """One shared store per data directory.
+
+    Services each call ``get_graph_store()``; sharing one instance keeps one
+    connection and lock per graph, so writers, readers and ``delete_graph``
+    coordinate instead of racing on separate handles.
+    """
+
     from ..config import Config
 
-    return LocalGraphStore(
-        Config.GRAPH_DATA_DIR,
-        embedder=make_embedder(),
-        extractor=make_extractor(),
-    )
+    key = os.path.abspath(Config.GRAPH_DATA_DIR)
+    with _SHARED_LOCK:
+        store = _SHARED.get(key)
+        if store is None or store.closed:
+            store = LocalGraphStore(key, embedder=make_embedder(), extractor=make_extractor())
+            _SHARED[key] = store
+        return store

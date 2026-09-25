@@ -93,13 +93,13 @@ def _store(tmp_path, lexicon=None):
     [("twitter", a) for a in TWITTER_ACTIONS] + [("reddit", a) for a in REDDIT_ACTIONS],
 )
 def test_every_action_type_maps_to_a_fact(platform, action):
-    fact = activity_to_fact(_activity(action, platform=platform), 0, ["凌雲飛行"])
+    fact = activity_to_fact(_activity(action, platform=platform), 0, ["凌雲飛行"], simulation_id="sim_1")
     if action == "DO_NOTHING":
         assert fact is None
         return
-    assert fact.key == fact_key(platform, 3, 1, 0)
+    assert fact.key == fact_key(platform, 3, 1, 0, "sim_1") == f"sim_1:{platform}:3:1:0"
     assert fact.relation == action
-    assert fact.source.key == "agent:1" and fact.source.name == "Alice"
+    assert fact.source.key == "agent:sim_1:1" and fact.source.name == "Alice"
     assert fact.target.label == EXPECTED_KIND[action]
     assert fact.attributes == {
         "platform": platform,
@@ -115,11 +115,11 @@ def test_every_action_type_maps_to_a_fact(platform, action):
 
 
 def test_posts_carry_text_and_link_mentions():
-    fact = activity_to_fact(_activity("QUOTE_POST"), 0, ["凌雲飛行", "林建東"])
-    assert fact.target.key == "post:twitter:5" and fact.target.summary == "票價太貴"
-    quote = next(n for n in fact.extra_nodes if n.key == "post:twitter:13")
+    fact = activity_to_fact(_activity("QUOTE_POST"), 0, ["凌雲飛行", "林建東"], simulation_id="s")
+    assert fact.target.key == "post:s:twitter:5" and fact.target.summary == "票價太貴"
+    quote = next(n for n in fact.extra_nodes if n.key == "post:s:twitter:13")
     assert quote.summary == "同意，凌雲飛行應該降價"
-    assert ("post:twitter:13", "QUOTES", "post:twitter:5") in fact.extra_edges
+    assert ("post:s:twitter:13", "QUOTES", "post:s:twitter:5") in fact.extra_edges
     assert fact.mentions == ("凌雲飛行",)
 
 
@@ -220,3 +220,69 @@ def test_zep_store_keeps_text_episode_path():
     from fake_zep_client import FakeZepClient
 
     assert not isinstance(ZepGraphStore(FakeZepClient()), StructuredFactStore)
+
+
+def test_a_second_simulation_on_the_same_graph_is_not_dropped(tmp_path):
+    store = _store(tmp_path)
+    store.create_graph("g", graph_id="g1")
+    first = activity_to_fact(_activity("CREATE_POST"), 0, simulation_id="sim_a")
+    second = activity_to_fact(_activity("CREATE_POST"), 0, simulation_id="sim_b")
+    store.add_structured_facts("g1", [first])
+    store.add_structured_facts("g1", [second])
+    posts = [n for n in store.list_nodes("g1") if n.attributes.get("kind") == "Post"]
+    assert len(posts) == 2
+    assert len([e for e in store.list_edges("g1") if e.name == "CREATE_POST"]) == 2
+    store.close()
+
+
+def test_follow_and_mute_target_agents_by_id():
+    follow = _activity("FOLLOW")
+    follow.action_args["followee_id"] = 7
+    mute = _activity("MUTE")
+    mute.action_args = {"mutee_id": 7}
+    assert activity_to_fact(follow, 0, simulation_id="s").target.key == "agent:s:7"
+    assert activity_to_fact(mute, 0, simulation_id="s").target.key == "agent:s:7"
+    unknown = _activity("MUTE")
+    unknown.action_args = {}
+    assert activity_to_fact(unknown, 0, simulation_id="s").target.key.startswith("user:s:unknown:")
+
+
+def test_replay_restores_vectors_lost_to_an_embedding_failure(tmp_path):
+    class Flaky(HashEmbedder):
+        fail = True
+
+        def embed_documents(self, texts):
+            if Flaky.fail:
+                Flaky.fail = False
+                raise ConnectionError("down")
+            return super().embed_documents(texts)
+
+    store = LocalGraphStore(str(tmp_path), embedder=Flaky(), extractor=StubExtractor({}))
+    store.create_graph("g", graph_id="g1")
+    fact = activity_to_fact(_activity("CREATE_POST"), 0, simulation_id="s")
+    with pytest.raises(ConnectionError):
+        store.add_structured_facts("g1", [fact])
+    store.add_structured_facts("g1", [fact])
+    graph = store._graph("g1")
+    edges = graph.conn.execute("SELECT rowid FROM edges").fetchall()
+    for (rowid,) in edges:
+        assert graph.conn.execute("SELECT 1 FROM vec_edges WHERE rowid = ?", (rowid,)).fetchone()
+    store.close()
+
+
+def test_mentions_resolve_entity_aliases(tmp_path):
+    from app.graph.extractor import ExtractedEntity, Extraction
+
+    class Scripted:
+        def extract(self, text, ontology, known_entities=None):
+            return Extraction([ExtractedEntity("凌雲飛行智能公司", "Company", "x", {"aliases": ["凌雲科技"]})])
+
+    store = LocalGraphStore(str(tmp_path), embedder=HashEmbedder(), extractor=Scripted())
+    store.create_graph("g", graph_id="g1")
+    store.add_text_episodes("g1", [TextEpisode("x")], durable=True)
+    post = _activity("CREATE_POST")
+    post.action_args = {"content": "凌雲科技又上新聞", "post_id": 9}
+    store.add_structured_facts("g1", [activity_to_fact(post, 0, ["凌雲科技"], simulation_id="s")])
+    company = next(n for n in store.list_nodes("g1") if n.name == "凌雲飛行智能公司")
+    assert any(e.name == "MENTIONS" and e.target_node_uuid == company.uuid for e in store.list_edges("g1"))
+    store.close()

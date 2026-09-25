@@ -405,13 +405,29 @@ class LocalGraphStore:
             rows = conn.execute("SELECT name, labels FROM nodes ORDER BY rowid").fetchall()
         known = []
         for name, labels in rows:
-            types = [label for label in json.loads(labels) if label not in ("Entity", "Node")]
+            labels = json.loads(labels)
+            if "Entity" not in labels:
+                continue  # simulation posts, comments and agents (#8)
+            types = [label for label in labels if label not in ("Entity", "Node")]
             known.append((name, types[0] if types else "Entity"))
         return known
 
     @staticmethod
     def _link(conn: sqlite3.Connection, episode_id: str, kind: str, target: str) -> None:
         conn.execute("INSERT OR IGNORE INTO episode_links VALUES (?, ?, ?)", (episode_id, kind, target))
+
+    @classmethod
+    def _node_uuid_by_name_or_alias(cls, conn: sqlite3.Connection, name: str) -> str | None:
+        found = cls._node_uuid_by_name(conn, name)
+        if found:
+            return found
+        needle = json.dumps(name, ensure_ascii=False)
+        for uuid_, attributes in conn.execute(
+            "SELECT uuid, attributes FROM nodes WHERE attributes LIKE ?", (f"%{needle}%",)
+        ):
+            if name in (json.loads(attributes).get("aliases") or []):
+                return uuid_
+        return None
 
     @staticmethod
     def _node_uuid_by_name(conn: sqlite3.Connection, name: str) -> str | None:
@@ -636,7 +652,7 @@ class LocalGraphStore:
                         edge_texts,
                     )
                 for name in fact.mentions:
-                    entity = self._node_uuid_by_name(conn, name)
+                    entity = self._node_uuid_by_name_or_alias(conn, name)
                     if entity is None or entity == keyed[fact.target.key]:
                         continue
                     self._upsert_fact_edge(
@@ -672,6 +688,7 @@ class LocalGraphStore:
     ) -> str:
         row = conn.execute("SELECT node_uuid FROM node_keys WHERE key = ?", (node.key,)).fetchone()
         if row:
+            self._requeue_missing_node_vector(conn, row[0], node_texts)
             return row[0]
         existing = conn.execute(
             "SELECT uuid FROM nodes WHERE name_key = ?", (normalize_name(node.name),)
@@ -706,8 +723,29 @@ class LocalGraphStore:
         conn.execute("INSERT INTO node_keys VALUES (?, ?)", (node.key, node_uuid))
         return node_uuid
 
+    def _requeue_missing_node_vector(
+        self, conn: sqlite3.Connection, node_uuid: str, node_texts: dict[int, str]
+    ) -> None:
+        """A replay re-embeds nodes whose vector write failed earlier."""
+
+        row = conn.execute(
+            "SELECT rowid, name, labels, summary FROM nodes WHERE uuid = ?", (node_uuid,)
+        ).fetchone()
+        if row and not self._has_vector(conn, "vec_nodes", row[0]):
+            node_texts[row[0]] = self._node_text(row[1], json.loads(row[2]), row[3])
+
     @staticmethod
+    def _has_vector(conn: sqlite3.Connection, table: str, rowid: int) -> bool:
+        exists = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE name = ?", (table,)
+        ).fetchone()
+        if not exists:
+            return False
+        return conn.execute(f"SELECT 1 FROM {table} WHERE rowid = ?", (rowid,)).fetchone() is not None
+
+    @classmethod
     def _upsert_fact_edge(
+        cls,
         conn: sqlite3.Connection,
         dedupe_key: str,
         relation: str,
@@ -718,8 +756,12 @@ class LocalGraphStore:
         created_at: str,
         edge_texts: dict[int, str],
     ) -> str:
-        row = conn.execute("SELECT uuid FROM edges WHERE dedupe_key = ?", (dedupe_key,)).fetchone()
+        row = conn.execute(
+            "SELECT uuid, rowid, name, fact FROM edges WHERE dedupe_key = ?", (dedupe_key,)
+        ).fetchone()
         if row:
+            if not cls._has_vector(conn, "vec_edges", row[1]):
+                edge_texts[row[1]] = f"{row[2]} {row[3]}"  # replay restores the vector
             return row[0]
         edge_uuid = uuidlib.uuid4().hex
         cursor = conn.execute(

@@ -727,6 +727,8 @@ def fetch_new_actions_from_db(
                 simplified_args['new_post_id'] = action_args['new_post_id']
             if 'follow_id' in action_args:
                 simplified_args['follow_id'] = action_args['follow_id']
+            if 'mutee_id' in action_args:
+                simplified_args['mutee_id'] = action_args['mutee_id']
             if 'query' in action_args:
                 simplified_args['query'] = action_args['query']
             if 'like_id' in action_args:
@@ -828,6 +830,8 @@ def _enrich_action_context(
                 row = cursor.fetchone()
                 if row:
                     followee_id = row[0]
+                    # Structured graph writeback keys the followed agent by id.
+                    action_args['followee_id'] = followee_id
                     target_name = _get_user_name(cursor, followee_id, agent_names)
                     if target_name:
                         action_args['target_user_name'] = target_name
@@ -835,7 +839,11 @@ def _enrich_action_context(
         # 屏蔽用户：补充被屏蔽用户的名称
         elif action_type == 'MUTE':
             # 从 action_args 中获取 user_id 或 target_id
-            target_id = action_args.get('user_id') or action_args.get('target_id')
+            target_id = (
+                action_args.get('mutee_id')
+                or action_args.get('user_id')
+                or action_args.get('target_id')
+            )
             if target_id:
                 target_name = _get_user_name(cursor, target_id, agent_names)
                 if target_name:

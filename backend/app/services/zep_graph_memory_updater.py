@@ -573,15 +573,18 @@ class ZepGraphMemoryUpdater:
 
         if deadline is not None and time.time() >= deadline:
             raise _DrainDeadlineExceeded(0)
-        facts = [
-            fact
-            for fact in (
-                activity_to_fact(activity, activity.action_seq, self._known_entity_names())
-                for activity in activities
-            )
-            if fact is not None
-        ]
         try:
+            names = self._known_entity_names()
+            facts = [
+                fact
+                for fact in (
+                    activity_to_fact(
+                        activity, activity.action_seq, names, simulation_id=self.simulation_id
+                    )
+                    for activity in activities
+                )
+                if fact is not None
+            ]
             if facts:
                 self.store.add_structured_facts(self.graph_id, facts)
             self._total_sent += 1

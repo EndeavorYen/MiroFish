@@ -218,3 +218,29 @@ def test_aliases_accumulate_across_episodes(tmp_path):
     node = store.list_nodes("g1")[0]
     assert node.attributes["aliases"] == ["凌雲科技", "凌雲飛行"]
     store.close()
+
+
+def test_hard_stop_characters_still_end_spans():
+    for text, name in {
+        "市府將於衛生局召開會議。": "衛生局",
+        "此案並經衛生局核准。": "衛生局",
+    }.items():
+        options = [c.options() for c in find_candidates(text) if name in "".join(c.options())]
+        assert options and options[0][0] == name, (text, options)
+
+
+def test_person_candidates_never_pair_with_organisation_names():
+    from app.graph.local_extractor import _Typed
+
+    class AlwaysSame(FakeSystemOne):
+        def noul(self, state, instructions):
+            self.calls["noul"] += 1
+            return NoulAnswer(noul=0.99)
+
+    fake = AlwaysSame()
+    canonical = LocalExtractor(fake)._merge(
+        [_Typed("王明", "Person", 0.9, "person"), _Typed("王明大學", "University", 0.9, "org")],
+        [],
+        [],
+    )
+    assert canonical["王明"] == "王明" and fake.calls["noul"] == 0

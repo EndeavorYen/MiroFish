@@ -49,6 +49,7 @@ class _Typed:
     name: str
     entity_type: str
     confidence: float
+    source: str = ""  # candidate source: "person" | "org" | "quoted" | ""
 
 
 def _common_substrings(a: str, b: str, min_len: int = 2) -> set[str]:
@@ -186,7 +187,8 @@ class LocalExtractor:
                 criteria,
             )
             if answer.choice != NONE_KEY:
-                typed[name] = _Typed(name, answer.choice, answer.confidence)
+                source = candidate.source if name in candidate.options() else ""
+                typed[name] = _Typed(name, answer.choice, answer.confidence, source)
         return list(typed.values())
 
     # --------------------------------------------------------------- aliases
@@ -213,7 +215,9 @@ class LocalExtractor:
         related_known = [
             name
             for name, _ in known
-            if any(g in _strip_suffix(name) for g in new_grams)
+            # The cosine path must still see every known name (北大/北京大學
+            # share no bigram).
+            if self.merge_cosine is not None or any(g in _strip_suffix(name) for g in new_grams)
         ]
         pool = list(dict.fromkeys(related_known + [t.name for t in typed]))
         known_names = {name for name, _ in known}
@@ -232,12 +236,26 @@ class LocalExtractor:
         if self.merge_cosine is not None and self.embedder is not None and pool:
             vectors = dict(zip(pool, self.embedder.embed_documents(pool)))
 
+        source_of = {t.name: t.source for t in typed}
+
+        def kind(name: str) -> str | None:
+            """person / org from how the name was found, or its suffix."""
+
+            if source_of.get(name) == "person":
+                return "person"
+            if source_of.get(name) == "org" or _strip_suffix(name) != name:
+                return "org"
+            return None
+
         def compatible(a: str, b: str) -> bool:
+            ka, kb = kind(a), kind(b)
+            if ka and kb and ka != kb:
+                return False  # 王明 vs 王明大學, whatever the ontology types
             ta, tb = type_of.get(a), type_of.get(b)
             if ta == tb:
                 return True
-            # One generic side may meet a specific type; Person never meets
-            # Organization (王明 vs 王明基金會).
+            if {ta, tb} == FALLBACK_TYPES:
+                return False
             return (ta in FALLBACK_TYPES) != (tb in FALLBACK_TYPES)
 
         def mentions(name: str) -> str:

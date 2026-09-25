@@ -467,8 +467,13 @@ class LocalGraphStore:
             attributes = json.loads(row[4])
             for k, v in entity.attributes.items():
                 if isinstance(v, list) and isinstance(attributes.get(k), list):
-                    # Union list attributes such as aliases across episodes.
-                    attributes[k] = list(dict.fromkeys([*attributes[k], *v]))
+                    # Union list attributes such as aliases across episodes
+                    # (values may be unhashable; keep at most 50).
+                    merged = list(attributes[k])
+                    for item in v:
+                        if item not in merged:
+                            merged.append(item)
+                    attributes[k] = merged[:50]
                 else:
                     attributes.setdefault(k, v)
             conn.execute(

@@ -46,6 +46,11 @@ STOP_WORDS = (
     "包括", "以及", "隨著", "呼籲", "要求", "質疑", "認為", "強調", "希望", "報導",
     "委託", "批評", "本土", "本地", "首批",
 )
+# One-character stop words that also occur inside names (國際和平基金會,
+# 同濟大學, 台灣經濟研究院). They end a span only when jieba does not glue them
+# to the character on their right; every other one-character stop word
+# always ends a span.
+SOFT_STOP_CHARS = set("和同經為使當以與及如")
 TITLE_WORDS = (
     "主任委員", "副局長", "局長", "副市長", "市長", "執行長", "董事長", "總經理", "總裁",
     "發言人", "教授", "研究員", "議員", "委員", "理事長", "主席", "會長", "院長", "所長",
@@ -172,14 +177,14 @@ def _left_edge(
     end: int,
     *,
     cross_orgs: bool,
-    single_tokens: set[int] = frozenset(),
+    glued_right: frozenset[int] = frozenset(),
 ) -> int:
     """Walk left to punctuation or a stop word; unless ``cross_orgs``, also
     stop where another organisation name ends (科技局|聯合交通...).
 
-    A one-character stop word (和, 經, 同 ...) only stops the walk when jieba
-    splits it off as its own token; inside 國際和平基金會 or 同濟大學 it is
-    part of the name.
+    A soft one-character stop word (和, 經, 同 ...) is kept when jieba glues
+    it to the character on its right (國際|和平, 同濟, 經濟); 於, 將, 並 and
+    the other one-character stop words always stop the walk.
     """
 
     begin = suffix_start
@@ -188,7 +193,8 @@ def _left_edge(
         if prefix[-1] in _PUNCT or not _is_cjk(prefix[-1]):
             break
         if any(
-            prefix.endswith(word) and (len(word) > 1 or begin - 1 in single_tokens)
+            prefix.endswith(word)
+            and (len(word) > 1 or word not in SOFT_STOP_CHARS or begin - 1 not in glued_right)
             for word in STOP_WORDS
         ):
             break
@@ -202,11 +208,14 @@ def _left_edge(
 
 def _organisations(text: str, tokens: list[tuple[str, str, int, int]]) -> list[Candidate]:
     token_starts = {t[2] for t in tokens}
-    single_tokens = {t[2] for t in tokens if t[3] - t[2] == 1}
+    # Positions whose jieba token continues to the next character.
+    glued_right = frozenset(
+        position for _, _, t_start, t_end in tokens for position in range(t_start, t_end - 1)
+    )
     by_end: dict[int, Candidate] = {}
     for start, end, suffix in _suffix_matches(text):
-        begin = _left_edge(text, start, end, cross_orgs=False, single_tokens=single_tokens)
-        wide = _left_edge(text, start, end, cross_orgs=True, single_tokens=single_tokens)
+        begin = _left_edge(text, start, end, cross_orgs=False, glued_right=glued_right)
+        wide = _left_edge(text, start, end, cross_orgs=True, glued_right=glued_right)
         if end - begin <= len(suffix) and end - wide <= len(suffix):
             continue
         starts = [begin] + [s for s in range(begin + 1, start) if s in token_starts]

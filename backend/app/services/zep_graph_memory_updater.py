@@ -11,10 +11,11 @@ from datetime import datetime
 from queue import Queue, Empty
 
 from ..config import Config
-from ..graph.store import EpisodeHandle, TextEpisode, get_graph_store
+from ..graph.store import EpisodeHandle, StructuredFactStore, TextEpisode, get_graph_store
 from ..utils.logger import get_logger
 from ..utils.locale import get_locale, set_locale
 from ..utils.zep import ZEP_INGESTION_WAIT_TIMEOUT_SECONDS
+from .simulation_facts import activity_to_fact
 
 logger = get_logger('mirofish.zep_graph_memory_updater')
 
@@ -29,6 +30,9 @@ class AgentActivity:
     action_args: Dict[str, Any]
     round_num: int
     timestamp: str
+    # Position among this agent's actions in the same round and platform,
+    # in action-log order; part of the structured-fact idempotency key.
+    action_seq: int = 0
     
     def to_episode_text(self) -> str:
         """
@@ -255,6 +259,11 @@ class ZepGraphMemoryUpdater:
         self.api_key = api_key or Config.ZEP_API_KEY
         # get_graph_store() owns backend selection and the ZEP_API_KEY check.
         self.store = get_graph_store(api_key=self.api_key)
+        # Stores that accept structured facts (local) get actions written as
+        # nodes and edges with no LLM; Zep keeps the text-episode path.
+        self._structured = isinstance(self.store, StructuredFactStore)
+        self._action_seq: Dict[tuple, int] = {}
+        self._entity_names: Optional[List[str]] = None
         
         # 活动队列
         self._activity_queue: Queue = Queue()
@@ -370,6 +379,9 @@ class ZepGraphMemoryUpdater:
         with self._acceptance_lock:
             if not self._running:
                 raise RuntimeError("Zep graph updater is not running")
+            seq_key = (activity.platform.lower(), activity.round_num, activity.agent_id)
+            activity.action_seq = self._action_seq.get(seq_key, 0)
+            self._action_seq[seq_key] = activity.action_seq + 1
             self._activity_queue.put(activity)
             self._total_activities += 1
         logger.debug(f"添加活动到Zep队列: {activity.agent_name} - {activity.action_type}")
@@ -479,6 +491,8 @@ class ZepGraphMemoryUpdater:
         """
         if not activities:
             return 0
+        if self._structured:
+            return self._send_structured_facts(activities, platform, deadline=deadline)
 
         processed_count = 0
         for payload_activities, combined_text in self._build_episode_payloads(activities):
@@ -535,6 +549,58 @@ class ZepGraphMemoryUpdater:
                 # way this payload is accounted for before moving on.
                 processed_count += len(payload_activities)
         return processed_count
+
+    def _known_entity_names(self) -> List[str]:
+        """Entity names (and aliases) from the built graph, loaded once."""
+
+        if self._entity_names is None:
+            names: List[str] = []
+            for node in self.store.list_nodes(self.graph_id):
+                if any(label not in ("Entity", "Node") for label in node.labels):
+                    names.append(node.name)
+                    names.extend(node.attributes.get("aliases") or [])
+            self._entity_names = names
+        return self._entity_names
+
+    def _send_structured_facts(
+        self,
+        activities: List[AgentActivity],
+        platform: str,
+        *,
+        deadline: float | None = None,
+    ) -> int:
+        """Write actions as structured facts (no LLM, idempotent keys)."""
+
+        if deadline is not None and time.time() >= deadline:
+            raise _DrainDeadlineExceeded(0)
+        try:
+            names = self._known_entity_names()
+            facts = [
+                fact
+                for fact in (
+                    activity_to_fact(
+                        activity, activity.action_seq, names, simulation_id=self.simulation_id
+                    )
+                    for activity in activities
+                )
+                if fact is not None
+            ]
+            if facts:
+                self.store.add_structured_facts(self.graph_id, facts)
+            self._total_sent += 1
+            self._total_items_sent += len(activities)
+            logger.info(
+                f"写入 {len(facts)} 条结构化事实到本机图谱 {self.graph_id}（{platform}）"
+            )
+        except Exception as e:
+            logger.error(f"写入结构化事实失败: {e}")
+            self._failed_count += 1
+            self._failed_batches.append({
+                "platform": platform,
+                "activities": activities,
+                "error": str(e),
+            })
+        return len(activities)
 
     @staticmethod
     def _to_rfc3339(value: str) -> str:

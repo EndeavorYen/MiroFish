@@ -115,3 +115,10 @@ def test_planned_rounds_follow_the_sim_config(tmp_path):
     )
     assert ab.planned_rounds(tmp_path, 24) == 12
     assert ab.planned_rounds(tmp_path, 8) == 8
+
+
+def test_action_counts_skip_do_nothing(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        ab.gp, "action_counts", lambda sim: {"twitter": {"LIKE_POST": 2, "DO_NOTHING": 5}, "reddit": {"do_nothing": 1}}
+    )
+    assert dict(ab.action_counts(tmp_path)) == {"twitter:LIKE_POST": 2}

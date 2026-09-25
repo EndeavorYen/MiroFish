@@ -135,11 +135,19 @@ def planned_rounds(run: Path, max_rounds: int) -> int:
     return max(1, min(int(total), max_rounds))
 
 
+NON_ACTIONS = {"DO_NOTHING"}
+
+
 def action_counts(run: Path) -> Counter:
+    """Action types per platform, without DO_NOTHING: the System One policy
+    logs it, OASIS LLM agents never do, so counting it would compare logging,
+    not behaviour."""
+
     counts: Counter = Counter()
     for platform, per_type in gp.action_counts(run / "sim").items():
         for action, n in per_type.items():
-            counts[f"{platform}:{action}"] += n
+            if action.upper() not in NON_ACTIONS:
+                counts[f"{platform}:{action}"] += n
     return counts
 
 

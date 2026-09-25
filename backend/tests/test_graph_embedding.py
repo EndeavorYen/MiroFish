@@ -47,3 +47,37 @@ def test_make_embedder_uses_e5_prefixes_by_default(monkeypatch):
     assert (embedder.query_prefix, embedder.passage_prefix) == ("query: ", "passage: ")
     monkeypatch.setattr(Config, "GRAPH_EMBEDDER", "hash")
     assert isinstance(make_embedder(), HashEmbedder)
+
+
+def test_http_embedder_retries_dropped_connections_but_not_read_timeouts(monkeypatch):
+    import httpx
+
+    import app.graph.embedding as embedding
+
+    monkeypatch.setattr(embedding.time, "sleep", lambda s: None)
+    embedder = HttpEmbedder(base_url="http://embed/v1", model="m")
+    calls = {"n": 0}
+
+    def flaky(request):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise httpx.ConnectError("reset", request=request)
+        return httpx.Response(200, json={"data": [{"index": 0, "embedding": [3.0, 4.0]}]})
+
+    embedder._client = httpx.Client(transport=httpx.MockTransport(flaky))
+    assert embedder.embed_query("x") == [0.6, 0.8]
+    assert calls["n"] == 3
+
+    def stalled(request):
+        calls["n"] += 1
+        raise httpx.ReadTimeout("stalled", request=request)
+
+    calls["n"] = 0
+    embedder._client = httpx.Client(transport=httpx.MockTransport(stalled))
+    try:
+        embedder.embed_query("x")
+    except httpx.ReadTimeout:
+        pass
+    else:
+        raise AssertionError("expected ReadTimeout")
+    assert calls["n"] == 1

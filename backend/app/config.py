@@ -69,6 +69,9 @@ class Config:
     def structured_mode(value: str) -> bool:
         """``template`` and ``structured`` both mean the System One path."""
         return (value or "").strip().lower() in ("template", "structured")
+    # agent = ReportAgent (default until the #13 gate); metrics = deterministic
+    # metrics report + short summary (#12).
+    REPORT_MODE = os.environ.get("REPORT_MODE", "agent").strip().lower()
     
     # 文件上传配置
     MAX_CONTENT_LENGTH = 50 * 1024 * 1024  # 50MB

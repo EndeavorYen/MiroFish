@@ -12,9 +12,9 @@ import hashlib
 import json
 import math
 import time
-import urllib.error
-import urllib.request
 from typing import Protocol, Sequence
+
+import httpx
 
 from .text_index import char_ngrams
 
@@ -55,6 +55,17 @@ class HashEmbedder:
         return self._embed(text)
 
 
+_ATTEMPTS = 4  # about 1.75 s of backoff in total
+_RETRYABLE = (
+    httpx.ConnectError,
+    httpx.ConnectTimeout,
+    httpx.PoolTimeout,
+    httpx.ReadError,
+    httpx.WriteError,
+    httpx.RemoteProtocolError,
+)
+
+
 class HttpEmbedder:
     def __init__(
         self,
@@ -78,29 +89,30 @@ class HttpEmbedder:
         # Small encoders (e5-small: 512 tokens) reject longer inputs; CJK is
         # roughly one token per character, so cut well below the limit.
         self.max_input_chars = max_input_chars
+        # One shared keep-alive client (thread-safe): a new TCP connection per
+        # request made Windows loopback reset connections under load.
+        self._client = httpx.Client(trust_env=False)
 
     def _post(self, inputs: list[str]) -> list[list[float]]:
         headers = {"Content-Type": "application/json"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
         body = json.dumps({"model": self.model, "input": inputs}).encode("utf-8")
-        # Embedding is idempotent: retry dropped or stalled loopback
-        # connections a bounded number of times.
-        retryable = (ConnectionResetError, ConnectionAbortedError, TimeoutError)
-        for attempt in range(3):
-            request = urllib.request.Request(self.url, data=body, headers=headers, method="POST")
+        # Embedding is idempotent: retry dropped connections with backoff. A
+        # read timeout (the server got the request but is stalled) is not
+        # retried, so a stuck server costs one timeout, not several.
+        for attempt in range(_ATTEMPTS):
             try:
-                with urllib.request.urlopen(request, timeout=self.timeout) as response:
-                    data = json.loads(response.read().decode("utf-8"))
+                response = self._client.post(
+                    self.url, content=body, headers=headers, timeout=self.timeout
+                )
                 break
-            except urllib.error.HTTPError:
-                raise
-            except (OSError, urllib.error.URLError) as error:
-                reason = getattr(error, "reason", error)
-                if attempt == 2 or not isinstance(reason, retryable):
+            except _RETRYABLE:
+                if attempt == _ATTEMPTS - 1:
                     raise
-                time.sleep(0.25 * (attempt + 1))
-        rows = sorted(data["data"], key=lambda item: item["index"])
+                time.sleep(0.25 * (2 ** attempt))
+        response.raise_for_status()
+        rows = sorted(response.json()["data"], key=lambda item: item["index"])
         return [_normalize([float(v) for v in row["embedding"]]) for row in rows]
 
     def embed_documents(self, texts: Sequence[str]) -> list[list[float]]:

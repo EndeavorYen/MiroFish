@@ -283,3 +283,31 @@ def test_known_non_person_names_with_surname_characters_can_still_merge():
         [_Typed("高鐵公司", "Company", 0.9, "org")], [("高鐵", "Company")], []
     )
     assert fake.calls["noul"] == 1 and canonical["高鐵公司"] == "高鐵"
+
+
+def test_longer_readings_offer_inner_word_boundaries():
+    for text, name in {
+        "所以台灣財經研究院表示。": "台灣財經研究院",
+        "因為台灣財經研究院表示。": "台灣財經研究院",
+        "所以台灣緩和醫療協會表示。": "台灣緩和醫療協會",
+    }.items():
+        options = {o for c in find_candidates(text) for o in c.options()}
+        assert name in options, (text, options)
+    for text in ("經過衛生局審查。", "當時衛生局表示。", "如果衛生局同意。"):
+        first = [c.options()[0] for c in find_candidates(text) if "衛生局" in "".join(c.options())]
+        assert first == ["衛生局"], (text, first)
+
+
+def test_specific_person_types_keep_the_person_guard():
+    from app.graph.local_extractor import _Typed
+
+    class AlwaysSame(FakeSystemOne):
+        def noul(self, state, instructions):
+            self.calls["noul"] += 1
+            return NoulAnswer(noul=0.99)
+
+    fake = AlwaysSame()
+    canonical = LocalExtractor(fake)._merge(
+        [_Typed("王明大學", "Organization", 0.9, "org")], [("王明", "Student")], []
+    )
+    assert canonical["王明大學"] == "王明大學" and fake.calls["noul"] == 0

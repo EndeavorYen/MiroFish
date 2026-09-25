@@ -45,6 +45,10 @@ STOP_WORDS = (
     "根據", "代表", "表示", "指出", "發表", "召開", "宣佈", "宣布", "提交", "針對", "關於",
     "包括", "以及", "隨著", "呼籲", "要求", "質疑", "認為", "強調", "希望", "報導",
     "委託", "批評", "本土", "本地", "首批",
+    # Function words that jieba glues around a soft stop character.
+    "經過", "當時", "如果", "以前", "以後", "使得", "與其", "為此", "同時", "如何",
+    "因為", "作為", "所以", "例如", "已經", "業經", "可以", "以為", "如同", "雖然",
+    "但是", "而且", "因此", "然而", "以便", "為了", "當然", "經由",
 )
 # One-character stop words that also occur inside names (國際和平基金會,
 # 同濟大學, 台灣財經研究院, 緩和醫療). They end a span only when jieba splits
@@ -235,21 +239,32 @@ def _organisations(text: str, tokens: list[tuple[str, str, int, int]]) -> list[C
         wide = _left_edge(text, start, end, cross_orgs=True, token_span=token_span, loose=True)
         if end - min(begin, loose, wide) <= len(suffix):
             continue
-        starts = [begin] + [s for s in range(begin + 1, start) if s in token_starts]
+        conservative = [begin] + [s for s in range(begin + 1, start) if s in token_starts]
         # Longer readings come after the conservative ones: a soft stop word
         # glued on its left (台灣財經研究院), then a name that spans another
-        # organisation (東海大學|法學院).
+        # organisation (東海大學|法學院). Each also offers the word boundaries
+        # between its start and the conservative start (所以|台灣財經研究院).
+        longer: list[int] = []
         for extra in (loose, wide):
             if extra < begin:
-                starts.append(extra)
-        variants = []
-        for s in starts:
-            name = text[s:end]
-            if len(name) > len(suffix) and _is_cjk(name) and name not in variants:
-                variants.append(name)
+                longer.append(extra)
+                longer.extend(s for s in range(extra + 1, begin) if s in token_starts)
+
+        def names(starts: list[int]) -> list[str]:
+            found = []
+            for s in starts:
+                name = text[s:end]
+                if len(name) > len(suffix) and _is_cjk(name) and name not in found:
+                    found.append(name)
+            return found
+
+        longer_names = names(longer)[: MAX_VARIANTS // 2]
+        conservative_names = [
+            n for n in names(conservative) if n not in longer_names
+        ][: MAX_VARIANTS - len(longer_names)]
+        variants = conservative_names + longer_names
         if not variants:
             continue
-        variants = variants[:MAX_VARIANTS]
         current = by_end.get(end)
         if current is None or len(variants[0]) > len(current.text):
             by_end[end] = Candidate(variants[0], end - len(variants[0]), end, "org", tuple(variants))

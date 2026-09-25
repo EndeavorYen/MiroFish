@@ -64,6 +64,23 @@ def _common_substrings(a: str, b: str, min_len: int = 2) -> set[str]:
     return found
 
 
+_PERSON_TYPE_RE = re.compile(
+    r"person|people|official|executive|academic|professor|student|scholar|"
+    r"researcher|expert|leader|journalist|reporter|politician|resident|citizen|"
+    r"worker|driver|teacher|doctor|lawyer|influencer|blogger|individual|user|"
+    r"spokes|member|representative|activist|parent|passenger",
+    re.IGNORECASE,
+)
+
+
+def _person_like_type(entity_type: str | None) -> bool:
+    """Unknown type, Person, or a type name that reads as a kind of person
+    (the ontology generator emits Student, Professor ... with Person as the
+    fallback)."""
+
+    return entity_type is None or bool(_PERSON_TYPE_RE.search(entity_type))
+
+
 def _strip_suffix(name: str) -> str:
     """Drop a trailing organisation suffix (部門, 委員會 ...) before comparing."""
 
@@ -250,7 +267,7 @@ class LocalExtractor:
             # starts with a common surname reads as a person, unless the graph
             # already typed it as something other than Person (高雄, 金門).
             if (
-                type_of.get(name) in (None, "Person")
+                _person_like_type(type_of.get(name))
                 and 2 <= len(name) <= 4
                 and name[0] in SURNAMES
                 and re.fullmatch(r"[\u4e00-\u9fff]+", name)

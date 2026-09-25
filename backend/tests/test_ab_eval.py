@@ -54,3 +54,64 @@ def test_llm_errors_counts_server_errors(tmp_path):
     )
     assert ab.llm_errors(tmp_path) == 2
     assert ab.llm_errors(tmp_path / "missing") == 0
+
+
+def _run(decode, actions, curve, vram=8000, errors=0, posts=3):
+    return {
+        "decode_per_round": decode,
+        "round_latency_mean_s": 1.0,
+        "llm_errors": errors,
+        "vram_peak_mib": vram,
+        "actions": actions,
+        "content": {"posts": posts, "distinct_2": 0.5 if posts else 0.0, "entity_mention_rate": 0.5 if posts else None},
+        "stance_curve": curve,
+    }
+
+
+def test_evaluate_groups_switch_and_exclusions():
+    curve = [0.2, 0.4, 0.6, 0.8]
+    per_run = {
+        "A": {
+            1: _run(150, {"like": 10, "post": 5}, curve),
+            2: _run(160, {"like": 9, "post": 6}, [0.25, 0.4, 0.55, 0.8]),
+            3: _run(10, {"post": 1}, [0.9, 0.1, 0.9, 0.1], errors=4),  # lost turns
+        },
+        "B": {1: _run(5, {"like": 10, "post": 5}, curve), 2: _run(0, {"like": 9, "post": 6}, curve, posts=0)},
+    }
+    gates, recommendation, summary, excluded = ab.evaluate_groups(per_run)
+    assert excluded == ["A_seed3"]
+    assert summary["A"]["clean_runs"] == 2
+    assert summary["B"]["entity_mention_rate"] == 0.5  # the run without posts is skipped
+    assert gates["decode_ratio"]["passed"] and gates["vram"]["passed"]
+    assert recommendation == "switch"
+
+
+def test_evaluate_groups_unmeasured_vram_and_zero_decode_do_not_pass():
+    curve = [0.2, 0.4, 0.6, 0.8]
+    per_run = {
+        "A": {1: _run(0, {"like": 1}, curve), 2: _run(0, {"like": 1}, curve)},
+        "B": {1: _run(0, {"like": 1}, curve, vram=None)},
+    }
+    gates, recommendation, _, _ = ab.evaluate_groups(per_run)
+    assert not gates["decode_ratio"]["passed"]
+    assert gates["vram"]["peak_mib"] is None and not gates["vram"]["passed"]
+    assert recommendation == "keep_llm"
+
+
+def test_reused_runs_must_match_and_be_clean(tmp_path):
+    good = {"exit_code": 0, "decision_backend": "llm", "seed": 1, "max_rounds": 24}
+    ab.check_reused(tmp_path, good, "llm", 1, 24)
+    for bad in ({**good, "exit_code": 1}, {**good, "max_rounds": 12}, {**good, "seed": 2}):
+        with pytest.raises(SystemExit):
+            ab.check_reused(tmp_path, bad, "llm", 1, 24)
+
+
+def test_planned_rounds_follow_the_sim_config(tmp_path):
+    import json
+
+    (tmp_path / "sim").mkdir()
+    (tmp_path / "sim" / "simulation_config.json").write_text(
+        json.dumps({"time_config": {"total_simulation_hours": 6, "minutes_per_round": 30}}), encoding="utf-8"
+    )
+    assert ab.planned_rounds(tmp_path, 24) == 12
+    assert ab.planned_rounds(tmp_path, 8) == 8

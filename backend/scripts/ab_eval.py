@@ -90,7 +90,9 @@ def pearson(x: list[float], y: list[float]) -> float | None:
 def run_simulation(work: Path, out: Path, backend: str, seed: int, rounds: int, content: str | None) -> dict:
     summary = out / "summary.json"
     if summary.exists():
-        return json.loads(summary.read_text(encoding="utf-8"))
+        data = json.loads(summary.read_text(encoding="utf-8"))
+        check_reused(out, data, backend, seed, rounds)
+        return data
     command = [
         sys.executable, str(BACKEND_DIR / "scripts" / "golden_pipeline.py"), "simulate",
         "--work", str(work), "--out", str(out), "--decision-backend", backend,
@@ -113,6 +115,24 @@ def llm_errors(run: Path) -> int:
         return 0
     text = path.read_text(encoding="utf-8", errors="replace")
     return sum(1 for line in text.splitlines() if re.search(r"Error code: [45]\d\d", line))
+
+
+def check_reused(out: Path, data: dict, backend: str, seed: int, rounds: int) -> None:
+    """A reused run must be a clean run of the same settings."""
+
+    expected = {"exit_code": 0, "decision_backend": backend, "seed": seed, "max_rounds": rounds}
+    wrong = {k: data.get(k) for k, v in expected.items() if data.get(k) != v}
+    if wrong:
+        raise SystemExit(f"{out} does not match this evaluation ({wrong}); move it aside to rerun it")
+
+
+def planned_rounds(run: Path, max_rounds: int) -> int:
+    """Rounds the runner schedules: min(simulated hours / round length, max_rounds)."""
+
+    config = json.loads((run / "sim" / "simulation_config.json").read_text(encoding="utf-8"))
+    time_config = config.get("time_config", {})
+    total = (time_config.get("total_simulation_hours", 72) * 60) // time_config.get("minutes_per_round", 30)
+    return max(1, min(int(total), max_rounds))
 
 
 def action_counts(run: Path) -> Counter:
@@ -169,6 +189,99 @@ def mean_curve(curves: list[list[float | None]]) -> list[float | None]:
     return out
 
 
+# ------------------------------------------------------------------ gates
+
+
+def _mean_of(rows: list[dict[str, Any]], key: str) -> float | None:
+    values = [r[key] for r in rows if r.get(key) is not None]
+    return statistics.mean(values) if values else None
+
+
+def _content_mean(rows: list[dict[str, Any]], key: str) -> float | None:
+    """Mean over runs that produced posts (a run with none has no rate)."""
+
+    values = [r["content"][key] for r in rows if r["content"].get("posts") and r["content"].get(key) is not None]
+    return statistics.mean(values) if values else None
+
+
+def evaluate_groups(
+    per_run: dict[str, dict[int, dict[str, Any]]],
+) -> tuple[dict[str, Any], str, dict[str, Any], list[str]]:
+    """G4 gates over the clean runs; runs with model-server errors lost agent
+    turns and are excluded (and listed)."""
+
+    excluded = sorted(
+        f"{name}_seed{seed}" for name, rows in per_run.items() for seed, row in rows.items() if row.get("llm_errors")
+    )
+    a_runs = [r for r in per_run.get("A", {}).values() if not r.get("llm_errors")]
+    b_runs = [r for r in per_run.get("B", {}).values() if not r.get("llm_errors")]
+
+    js_aa = [js_divergence(x["actions"], y["actions"]) for x, y in itertools.combinations(a_runs, 2)]
+    js_ba = [js_divergence(b["actions"], a["actions"]) for b in b_runs for a in a_runs]
+    a_curve = mean_curve([r["stance_curve"] for r in a_runs])
+    b_curve = mean_curve([r["stance_curve"] for r in b_runs])
+    corr_aa = [pearson(x["stance_curve"], y["stance_curve"]) for x, y in itertools.combinations(a_runs, 2)]
+    corr_aa = [c for c in corr_aa if c is not None]
+    corr_ab = pearson(a_curve, b_curve) if a_runs and b_runs else None
+
+    a_decode = _mean_of(a_runs, "decode_per_round")
+    b_decode = _mean_of(b_runs, "decode_per_round")
+    js_noise = statistics.mean(js_aa) if js_aa else None
+    js_b = statistics.mean(js_ba) if js_ba else None
+    # The gate is about the local path fitting a 10 GB card; A may run on a
+    # server with larger per-slot contexts (OASIS LLM agents need ~32K+).
+    b_vram = [r["vram_peak_mib"] for r in b_runs]
+    vram_peak = max(b_vram) if b_vram and None not in b_vram else None  # unmeasured is not a pass
+    a_vram = [r["vram_peak_mib"] for r in a_runs if r["vram_peak_mib"] is not None]
+    gates = {
+        "decode_ratio": {
+            "value": (b_decode / a_decode) if a_decode and b_decode is not None else None,
+            "threshold": 0.10,
+            "passed": bool(a_decode) and b_decode is not None and b_decode <= 0.10 * a_decode,
+        },
+        "action_js": {
+            "b_vs_a": js_b,
+            "a_seed_noise": js_noise,
+            "threshold": "≤ 2 × A noise",
+            "passed": js_b is not None and js_noise is not None and js_b <= 2 * js_noise,
+        },
+        "stance_correlation": {
+            "value": corr_ab,
+            "a_seed_pairs_mean": statistics.mean(corr_aa) if corr_aa else None,
+            "threshold": 0.5,
+            "passed": corr_ab is not None and corr_ab >= 0.5,
+        },
+        "vram": {
+            "peak_mib": vram_peak,
+            "a_peak_mib": max(a_vram) if a_vram else None,
+            "budget_mib": VRAM_BUDGET_MIB,
+            "passed": vram_peak is not None and vram_peak <= VRAM_BUDGET_MIB,
+        },
+    }
+    if all(g["passed"] for g in gates.values()):
+        recommendation = "switch"
+    elif gates["decode_ratio"]["passed"] and gates["vram"]["passed"] and (
+        gates["action_js"]["passed"] or gates["stance_correlation"]["passed"]
+    ):
+        recommendation = "conditional"
+    else:
+        recommendation = "keep_llm"
+
+    summary = {
+        name: {
+            "clean_runs": len(rows),
+            "decode_per_round": _mean_of(rows, "decode_per_round"),
+            "round_latency_mean_s": _mean_of(rows, "round_latency_mean_s"),
+            "distinct_2": _content_mean(rows, "distinct_2"),
+            "entity_mention_rate": _content_mean(rows, "entity_mention_rate"),
+        }
+        for name, rows in (("A", a_runs), ("B", b_runs))
+    }
+    summary["stance_curve_A"] = a_curve
+    summary["stance_curve_B"] = b_curve
+    return gates, recommendation, summary, excluded
+
+
 # ------------------------------------------------------------------- main
 
 
@@ -216,80 +329,27 @@ def main(argv: list[str] | None = None) -> int:
         names = gp.entity_names(work, prepared)
         for seed, info in runs[name].items():
             summary = info["summary"]
-            rounds = max(summary.get("rounds_logged", {}).values() or [0]) or args.rounds
+            active = max(summary.get("rounds_logged", {}).values() or [0])
+            scheduled = planned_rounds(info["dir"], args.rounds)
             texts = [t for ts in posts_by_round(info["dir"]).values() for t in ts]
             latencies = [
                 v.get("mean") for v in summary.get("round_latency_s", {}).values() if v.get("mean") is not None
             ]
             per_run[name][seed] = {
                 "decode_tokens": summary["simulation_decode_tokens"],
-                "decode_per_round": summary["simulation_decode_tokens"] / args.rounds,
-                "active_rounds": rounds,
+                "decode_per_round": summary["simulation_decode_tokens"] / scheduled,
+                "scheduled_rounds": scheduled,
+                "active_rounds": active,
                 "round_latency_mean_s": round(statistics.mean(latencies), 2) if latencies else None,
                 "elapsed_s": summary["elapsed_s"],
                 "llm_errors": llm_errors(info["dir"]),
                 "vram_peak_mib": summary["vram_mib"]["peak"],
                 "actions": action_counts(info["dir"]),
                 "content": gp.content_stats(texts, names),
-                "stance_curve": stance_curve(client, info["dir"], args.rounds, cache),
+                "stance_curve": stance_curve(client, info["dir"], scheduled, cache),
             }
 
-    a_runs = list(per_run["A"].values())
-    b_runs = list(per_run["B"].values())
-    js_aa = [js_divergence(x["actions"], y["actions"]) for x, y in itertools.combinations(a_runs, 2)]
-    js_ba = [js_divergence(b["actions"], a["actions"]) for b in b_runs for a in a_runs]
-    a_curve = mean_curve([r["stance_curve"] for r in a_runs])
-    b_curve = mean_curve([r["stance_curve"] for r in b_runs])
-    corr_aa = [pearson(x["stance_curve"], y["stance_curve"]) for x, y in itertools.combinations(a_runs, 2)]
-    corr_aa = [c for c in corr_aa if c is not None]
-    corr_ab = pearson(a_curve, b_curve)
-
-    def mean_of(rows, key):
-        values = [r[key] for r in rows if r[key] is not None]
-        return statistics.mean(values) if values else None
-
-    a_decode = mean_of(a_runs, "decode_per_round")
-    b_decode = mean_of(b_runs, "decode_per_round")
-    js_noise = statistics.mean(js_aa) if js_aa else None
-    js_b = statistics.mean(js_ba) if js_ba else None
-    # The gate is about the local path fitting a 10 GB card; A may run on a
-    # server with larger per-slot contexts (OASIS LLM agents need ~32K).
-    vram_peak = max(r["vram_peak_mib"] or 0 for r in b_runs)
-    vram_peak_a = max(r["vram_peak_mib"] or 0 for r in a_runs)
-    gates = {
-        "decode_ratio": {
-            "value": (b_decode / a_decode) if a_decode else None,
-            "threshold": 0.10,
-            "passed": a_decode is not None and b_decode <= 0.10 * a_decode,
-        },
-        "action_js": {
-            "b_vs_a": js_b,
-            "a_seed_noise": js_noise,
-            "threshold": "≤ 2 × A noise",
-            "passed": js_b is not None and js_noise is not None and js_b <= 2 * js_noise,
-        },
-        "stance_correlation": {
-            "value": corr_ab,
-            "a_seed_pairs_mean": statistics.mean(corr_aa) if corr_aa else None,
-            "threshold": 0.5,
-            "passed": corr_ab is not None and corr_ab >= 0.5,
-        },
-        "vram": {
-            "peak_mib": vram_peak,
-            "a_peak_mib": vram_peak_a,
-            "budget_mib": VRAM_BUDGET_MIB,
-            "passed": vram_peak <= VRAM_BUDGET_MIB,
-        },
-    }
-    passed = [k for k, v in gates.items() if v["passed"]]
-    if len(passed) == len(gates):
-        recommendation = "switch"
-    elif gates["decode_ratio"]["passed"] and gates["vram"]["passed"] and (
-        gates["action_js"]["passed"] or gates["stance_correlation"]["passed"]
-    ):
-        recommendation = "conditional"
-    else:
-        recommendation = "keep_llm"
+    gates, recommendation, summary, excluded = evaluate_groups(per_run)
 
     def strip(rows):
         return {
@@ -301,27 +361,9 @@ def main(argv: list[str] | None = None) -> int:
         "seeds": args.seeds,
         "rounds": args.rounds,
         "groups": {name: strip(rows) for name, rows in per_run.items()},
-        "summary": {
-            "A": {
-                "decode_per_round": a_decode,
-                "round_latency_mean_s": mean_of(a_runs, "round_latency_mean_s"),
-                "distinct_2": statistics.mean(r["content"]["distinct_2"] for r in a_runs),
-                "entity_mention_rate": statistics.mean(r["content"]["entity_mention_rate"] or 0 for r in a_runs),
-            },
-            "B": {
-                "decode_per_round": b_decode,
-                "round_latency_mean_s": mean_of(b_runs, "round_latency_mean_s"),
-                "distinct_2": statistics.mean(r["content"]["distinct_2"] for r in b_runs),
-                "entity_mention_rate": statistics.mean(r["content"]["entity_mention_rate"] or 0 for r in b_runs),
-            },
-            "stance_curve_A": a_curve,
-            "stance_curve_B": b_curve,
-            "extraction_recall": args.extraction_recall,
-        },
+        "summary": {**summary, "extraction_recall": args.extraction_recall},
         "gates": gates,
-        "runs_with_llm_errors": sorted(
-            f"{name}_seed{seed}" for name, rows in per_run.items() for seed, row in rows.items() if row["llm_errors"]
-        ),
+        "runs_with_llm_errors": excluded,
         "recommendation": recommendation,
     }
     (out / "ab_report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -351,6 +393,7 @@ def render(report: dict[str, Any]) -> str:
         "",
         "| 指標 | A | B |",
         "| --- | --- | --- |",
+        f"| 閘門採用的 run 數（排除伺服器錯誤） | {s['A'].get('clean_runs', '—')} | {s['B'].get('clean_runs', '—')} |",
         f"| 每回合 decode tokens | {_fmt(s['A']['decode_per_round'], 1)} | {_fmt(s['B']['decode_per_round'], 1)} |",
         f"| 有動作回合平均延遲 (s) | {_fmt(s['A']['round_latency_mean_s'], 1)} | {_fmt(s['B']['round_latency_mean_s'], 1)} |",
         f"| distinct-2 | {_fmt(s['A']['distinct_2'])} | {_fmt(s['B']['distinct_2'])} |",
@@ -364,14 +407,14 @@ def render(report: dict[str, Any]) -> str:
         f"| B／A 每回合 decode | {_fmt(g['decode_ratio']['value'])} | ≤ 0.10 | {'✅' if g['decode_ratio']['passed'] else '❌'} |",
         f"| 動作分布 JS（B vs A） | {_fmt(g['action_js']['b_vs_a'])}（A 組間 {_fmt(g['action_js']['a_seed_noise'])}） | ≤ 2 × A 組間 | {'✅' if g['action_js']['passed'] else '❌'} |",
         f"| 立場曲線相關係數（B vs A） | {_fmt(g['stance_correlation']['value'])}（A 組間平均 {_fmt(g['stance_correlation']['a_seed_pairs_mean'])}） | ≥ 0.5 | {'✅' if g['stance_correlation']['passed'] else '❌'} |",
-        f"| VRAM 峰值（B） | {g['vram']['peak_mib']} MiB（A {g['vram'].get('a_peak_mib', '—')} MiB） | ≤ {g['vram']['budget_mib']} MiB | {'✅' if g['vram']['passed'] else '❌'} |",
+        f"| VRAM 峰值（B） | {_fmt(g['vram']['peak_mib'])} MiB（A {_fmt(g['vram'].get('a_peak_mib'))} MiB） | ≤ {g['vram']['budget_mib']} MiB | {'✅' if g['vram']['passed'] else '❌'} |",
         "",
         f"## 建議：{labels[report['recommendation']]}",
         "",
     ]
     if report.get("runs_with_llm_errors"):
         lines += [
-            f"⚠️ 下列 run 有模型伺服器錯誤，數字不可比：{', '.join(report['runs_with_llm_errors'])}",
+            f"⚠️ 下列 run 有模型伺服器錯誤（丟失 agent 回合），已排除在閘門之外：{', '.join(report['runs_with_llm_errors'])}",
             "",
         ]
     return "\n".join(lines) + "\n"

@@ -1,0 +1,146 @@
+{
+  "source": "news_seed.txt",
+  "label_source": "Held-out set for #19: written and hand-annotated by the implementer (Claude Opus 5.5) and committed before any #19 extractor change; each extractor mode is run once on it, no tuning afterwards.",
+  "entities": [
+    {
+      "name": "南岸市立綜合醫院",
+      "type": "Hospital",
+      "aliases": []
+    },
+    {
+      "name": "南岸市護理師職業工會",
+      "type": "ProfessionalBody",
+      "aliases": [
+        "護理師職業工會"
+      ]
+    },
+    {
+      "name": "許雅雯",
+      "type": "GroupLeader",
+      "aliases": []
+    },
+    {
+      "name": "方仲謙",
+      "type": "Executive",
+      "aliases": []
+    },
+    {
+      "name": "南岸市政府衛生局",
+      "type": "GovernmentAgency",
+      "aliases": [
+        "衛生局"
+      ]
+    },
+    {
+      "name": "南岸醫護管理專科學校",
+      "type": "School",
+      "aliases": []
+    },
+    {
+      "name": "曾國華",
+      "type": "GovernmentOfficial",
+      "aliases": []
+    },
+    {
+      "name": "南岸市病友權益協會",
+      "type": "AdvocacyGroup",
+      "aliases": []
+    },
+    {
+      "name": "葛淑芬",
+      "type": "GroupLeader",
+      "aliases": []
+    },
+    {
+      "name": "衛生福利部",
+      "type": "GovernmentAgency",
+      "aliases": []
+    },
+    {
+      "name": "衛生福利部護理及健康照護司",
+      "type": "GovernmentAgency",
+      "aliases": [
+        "護理及健康照護司"
+      ]
+    },
+    {
+      "name": "譚立群",
+      "type": "GovernmentOfficial",
+      "aliases": []
+    },
+    {
+      "name": "南岸大學公共衛生研究所",
+      "type": "School",
+      "aliases": []
+    },
+    {
+      "name": "羅志遠",
+      "type": "Academic",
+      "aliases": []
+    },
+    {
+      "name": "南岸新聞網",
+      "type": "MediaOutlet",
+      "aliases": []
+    },
+    {
+      "name": "南岸市醫師公會",
+      "type": "ProfessionalBody",
+      "aliases": [
+        "醫師公會"
+      ]
+    },
+    {
+      "name": "閻德明",
+      "type": "GroupLeader",
+      "aliases": []
+    }
+  ],
+  "relations": [
+    {
+      "source": "許雅雯",
+      "target": "南岸市護理師職業工會",
+      "type": "LEADS"
+    },
+    {
+      "source": "方仲謙",
+      "target": "南岸市立綜合醫院",
+      "type": "LEADS"
+    },
+    {
+      "source": "曾國華",
+      "target": "南岸市政府衛生局",
+      "type": "LEADS"
+    },
+    {
+      "source": "葛淑芬",
+      "target": "南岸市病友權益協會",
+      "type": "LEADS"
+    },
+    {
+      "source": "譚立群",
+      "target": "衛生福利部護理及健康照護司",
+      "type": "WORKS_FOR"
+    },
+    {
+      "source": "羅志遠",
+      "target": "南岸大學公共衛生研究所",
+      "type": "WORKS_FOR"
+    },
+    {
+      "source": "閻德明",
+      "target": "南岸市醫師公會",
+      "type": "LEADS"
+    },
+    {
+      "source": "南岸市立綜合醫院",
+      "target": "南岸醫護管理專科學校",
+      "type": "PARTNERS_WITH"
+    },
+    {
+      "source": "南岸市政府衛生局",
+      "target": "南岸市立綜合醫院",
+      "type": "FUNDS"
+    }
+  ]
+}

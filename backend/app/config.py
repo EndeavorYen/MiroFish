@@ -40,6 +40,9 @@ class Config:
     GRAPH_EMBEDDER = os.environ.get("GRAPH_EMBEDDER", "http").strip().lower()
     # local = zero-decode LocalExtractor (#7); stub = empty lexicon (tests).
     GRAPH_EXTRACTOR = os.environ.get("GRAPH_EXTRACTOR", "local").strip().lower()
+    # candidates (zero decode, default) | gliner | decode (adds one small-model
+    # name list per chunk to the rule candidates; its decode tokens are recorded
+    # under the caller's usage stage: graph_build for the document graph)
     LOCAL_NER = os.environ.get("LOCAL_NER", "candidates").strip().lower()
     LOCAL_NER_GLINER_MODEL = os.environ.get("LOCAL_NER_GLINER_MODEL", "urchade/gliner_multi-v2.1")
     EXTRACT_SUMMARY_LLM = os.environ.get("EXTRACT_SUMMARY_LLM", "0").strip() == "1"

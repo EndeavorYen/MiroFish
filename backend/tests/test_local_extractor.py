@@ -340,3 +340,137 @@ def test_person_like_type_uses_the_head_word():
         assert _person_like_type(t), t
     for t in ("StudentUnion", "ExecutiveYuan", "ParentCompany", "PresidentialOffice", "AcademicInstitution", "Organization"):
         assert not _person_like_type(t), t
+
+
+class TypingOracle:
+    """Types the names in ``types``; everything else is none."""
+
+    def __init__(self, types):
+        self.types = types
+        self.typed = []
+
+    def choice(self, state, instructions, criteria):
+        if "邊界正確" in instructions:
+            pick = next((k for k, v in criteria.items() if v in self.types), "none")
+        elif "候選名稱" in state:
+            name = re.search(r"候選名稱：(.+)", state).group(1).strip()
+            self.typed.append(name)
+            pick = self.types.get(name, "none")
+        else:
+            pick = "none"
+        probs = {k: (0.9 if k == pick else 0.1 / max(len(criteria) - 1, 1)) for k in criteria}
+        return ChoiceAnswer(choice=pick, probabilities=probs, confidence=probs[pick])
+
+    def noul(self, state, instructions):
+        return NoulAnswer(noul=0.05)
+
+
+def test_parse_decoded_names_keeps_verbatim_names_only():
+    from app.graph.local_extractor import parse_decoded_names
+
+    text = "東海晨光引述陳大文與東海市交通局的說法。"
+    raw = "1. 東海晨光\n- 陳大文、東海市交通局\n東海晨光\n不存在的機構\n「交通局」\n甲"
+    assert parse_decoded_names(raw, text) == ["東海晨光", "陳大文", "東海市交通局", "交通局"]
+    assert parse_decoded_names("", text) == []
+
+
+def test_decode_mode_adds_names_the_rules_miss():
+    text = "東海晨光昨日報導，陳大文表示支持。"
+    oracle = TypingOracle({"東海晨光": "Organization", "陳大文": "Person"})
+    prompts = []
+
+    def decode(prompt, max_tokens):
+        prompts.append((prompt, max_tokens))
+        return "東海晨光\n陳大文\n捏造公司"
+
+    rules = LocalExtractor(TypingOracle(oracle.types), embedder=HashEmbedder()).extract(text, ONTOLOGY)
+    assert "東海晨光" not in {e.name for e in rules.entities}
+
+    extraction = LocalExtractor(
+        oracle, embedder=HashEmbedder(), ner="decode", decode_fn=decode
+    ).extract(text, ONTOLOGY)
+    assert {e.name for e in extraction.entities} == {"東海晨光", "陳大文"}
+    assert len(prompts) == 1 and text in prompts[0][0]
+    assert "捏造公司" not in oracle.typed  # not in the text, never typed
+    assert oracle.typed.count("陳大文") == 1  # already a rule candidate
+
+
+def test_decode_failure_keeps_the_rule_candidates():
+    def broken(prompt, max_tokens):
+        raise TimeoutError("down")
+
+    extraction = LocalExtractor(
+        TypingOracle({"陳大文": "Person"}), embedder=HashEmbedder(), ner="decode", decode_fn=broken
+    ).extract("陳大文表示支持。", ONTOLOGY)
+    assert [e.name for e in extraction.entities] == ["陳大文"]
+
+
+def test_decode_mode_needs_a_decode_fn():
+    with pytest.raises(ValueError):
+        LocalExtractor(TypingOracle({}), ner="decode")
+
+
+def test_parse_decoded_names_drops_reasoning_and_truncated_tail():
+    from app.graph.local_extractor import parse_decoded_names
+
+    text = "陳大文與東海市交通局出席。"
+    assert parse_decoded_names("<think>陳大文是誰</think>東海市交通局", text) == ["東海市交通局"]
+    assert parse_decoded_names("陳大文\n<think>交通局", text) == ["陳大文"]  # unclosed
+    assert parse_decoded_names("陳大文\n東海市交通", text, truncated=True) == ["陳大文"]
+    assert parse_decoded_names("人名：陳大文", text) == ["陳大文"]
+
+
+def test_decoded_echoes_are_bounded():
+    from app.graph import local_extractor as lx
+
+    text = "東海市交通局局長陳大文表示支持。"
+    oracle = TypingOracle({"東海市交通局": "GovernmentAgency", "陳大文": "GovernmentOfficial"})
+    echo = "\n".join(text[i : i + 2] for i in range(len(text) - 1))  # every bigram
+    LocalExtractor(oracle, embedder=HashEmbedder(), ner="decode", decode_fn=lambda p, m: echo).extract(
+        text, ONTOLOGY
+    )
+    assert oracle.typed.count("東海市交通局") == 1  # rule candidate, not re-typed
+    decoded = [n for n in oracle.typed if n not in ("東海市交通局", "陳大文")]
+    assert len(decoded) <= lx.MAX_DECODED_NAMES
+
+
+def test_llm_decode_fn_records_decode_under_graph_build(tmp_path):
+    from types import SimpleNamespace
+
+    from app.graph.local_extractor import llm_decode_fn
+    from app.utils.llm_client import LLMClient
+    from app.utils.llm_usage import usage_stage
+
+    def create(**kwargs):
+        assert kwargs["max_tokens"] == 400
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="陳大文\n東海"), finish_reason="length")],
+            usage=SimpleNamespace(prompt_tokens=50, completion_tokens=400),
+            model="m",
+        )
+
+    client = LLMClient(api_key="local", base_url="http://127.0.0.1:9/v1", model="m")
+    client.client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    with usage_stage("graph_build", metrics_dir=str(tmp_path)):
+        result = llm_decode_fn(client)("prompt", 400)
+    assert result.truncated and result.text == "陳大文\n東海"
+    rows = [json.loads(line) for line in (tmp_path / "llm_usage.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert rows[0]["stage"] == "graph_build" and rows[0]["completion_tokens"] == 400
+
+
+def test_make_extractor_wires_decode_only_for_decode(monkeypatch):
+    from app.config import Config
+    from app.graph import local_extractor, local_store
+
+    monkeypatch.setattr(Config, "GRAPH_EXTRACTOR", "local")
+    monkeypatch.setattr(Config, "GRAPH_EMBEDDER", "hash")
+    monkeypatch.setattr("app.system_one.client.get_system_one_client", lambda: TypingOracle({}))
+    built = []
+    monkeypatch.setattr(local_extractor, "llm_decode_fn", lambda: built.append(1) or (lambda p, m: ""))
+    monkeypatch.setattr(Config, "LOCAL_NER", "candidates")
+    assert local_store.make_extractor().decode_fn is None and not built
+    monkeypatch.setattr(Config, "LOCAL_NER", "decode")
+    assert local_store.make_extractor().ner == "decode" and built == [1]
+    monkeypatch.setattr(Config, "LOCAL_NER", "bogus")
+    with pytest.raises(ValueError):
+        local_store.make_extractor()

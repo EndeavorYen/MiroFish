@@ -1,0 +1,150 @@
+{
+  "source": "news_seed.txt",
+  "label_source": "Held-out set for #19: written and hand-annotated by the implementer (Claude Opus 5.5) and committed before any #19 extractor change; each extractor mode is run once on it, no tuning afterwards.",
+  "entities": [
+    {
+      "name": "海峰綠能股份有限公司",
+      "type": "Company",
+      "aliases": [
+        "海峰綠能"
+      ]
+    },
+    {
+      "name": "東濱一號離岸風場",
+      "type": "Project",
+      "aliases": [
+        "東濱一號"
+      ]
+    },
+    {
+      "name": "經濟部能源署",
+      "type": "GovernmentAgency",
+      "aliases": [
+        "能源署"
+      ]
+    },
+    {
+      "name": "東濱區漁會",
+      "type": "FisheryGroup",
+      "aliases": []
+    },
+    {
+      "name": "鄧金水",
+      "type": "GroupLeader",
+      "aliases": []
+    },
+    {
+      "name": "歐陽振宇",
+      "type": "Executive",
+      "aliases": []
+    },
+    {
+      "name": "環境部環境影響評估審查委員會",
+      "type": "GovernmentAgency",
+      "aliases": [
+        "環境影響評估審查委員會"
+      ]
+    },
+    {
+      "name": "卜嘉慧",
+      "type": "GovernmentOfficial",
+      "aliases": []
+    },
+    {
+      "name": "東濱海岸守護聯盟",
+      "type": "EnvironmentalGroup",
+      "aliases": []
+    },
+    {
+      "name": "丘晴",
+      "type": "GroupLeader",
+      "aliases": []
+    },
+    {
+      "name": "國立海洋科技大學海洋生物研究所",
+      "type": "School",
+      "aliases": []
+    },
+    {
+      "name": "甘明哲",
+      "type": "Academic",
+      "aliases": []
+    },
+    {
+      "name": "東濱縣政府農業處",
+      "type": "GovernmentAgency",
+      "aliases": [
+        "農業處"
+      ]
+    },
+    {
+      "name": "池世光",
+      "type": "GovernmentOfficial",
+      "aliases": []
+    },
+    {
+      "name": "東濱之聲廣播電台",
+      "type": "MediaOutlet",
+      "aliases": [
+        "東濱之聲"
+      ]
+    },
+    {
+      "name": "鍾秀蓮",
+      "type": "Journalist",
+      "aliases": []
+    }
+  ],
+  "relations": [
+    {
+      "source": "海峰綠能股份有限公司",
+      "target": "東濱一號離岸風場",
+      "type": "DEVELOPS"
+    },
+    {
+      "source": "鄧金水",
+      "target": "東濱區漁會",
+      "type": "LEADS"
+    },
+    {
+      "source": "歐陽振宇",
+      "target": "海峰綠能股份有限公司",
+      "type": "LEADS"
+    },
+    {
+      "source": "卜嘉慧",
+      "target": "經濟部能源署",
+      "type": "WORKS_FOR"
+    },
+    {
+      "source": "丘晴",
+      "target": "東濱海岸守護聯盟",
+      "type": "WORKS_FOR"
+    },
+    {
+      "source": "甘明哲",
+      "target": "國立海洋科技大學海洋生物研究所",
+      "type": "WORKS_FOR"
+    },
+    {
+      "source": "池世光",
+      "target": "東濱縣政府農業處",
+      "type": "LEADS"
+    },
+    {
+      "source": "鍾秀蓮",
+      "target": "東濱之聲廣播電台",
+      "type": "WORKS_FOR"
+    },
+    {
+      "source": "東濱區漁會",
+      "target": "東濱一號離岸風場",
+      "type": "PROTESTS"
+    },
+    {
+      "source": "環境部環境影響評估審查委員會",
+      "target": "東濱一號離岸風場",
+      "type": "REVIEWS"
+    }
+  ]
+}

@@ -1001,16 +1001,19 @@ def make_extractor() -> Extractor:
         return StubExtractor()
     if kind == "local":
         from ..system_one.client import get_system_one_client
-        from .local_extractor import LocalExtractor, llm_summary_fn
+        from .local_extractor import LocalExtractor, llm_decode_fn, llm_summary_fn
 
-        if Config.LOCAL_NER not in ("candidates", "gliner"):
-            raise ValueError(f"LOCAL_NER must be candidates or gliner, got {Config.LOCAL_NER!r}")
+        if Config.LOCAL_NER not in ("candidates", "gliner", "decode"):
+            raise ValueError(
+                f"LOCAL_NER must be candidates, gliner or decode, got {Config.LOCAL_NER!r}"
+            )
         return LocalExtractor(
             get_system_one_client(),
             embedder=make_embedder(),
             ner=Config.LOCAL_NER,
             gliner_model=Config.LOCAL_NER_GLINER_MODEL,
             summary_fn=llm_summary_fn() if Config.EXTRACT_SUMMARY_LLM else None,
+            decode_fn=llm_decode_fn() if Config.LOCAL_NER == "decode" else None,
         )
     raise ValueError(f"unknown GRAPH_EXTRACTOR: {kind!r}")
 

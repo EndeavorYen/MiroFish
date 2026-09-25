@@ -1,0 +1,131 @@
+{
+  "entity_types": [
+    {
+      "name": "GovernmentAgency",
+      "description": "政府機關、議會、局處或中央部會",
+      "attributes": []
+    },
+    {
+      "name": "GovernmentOfficial",
+      "description": "政府官員、議員或首長",
+      "attributes": []
+    },
+    {
+      "name": "School",
+      "description": "中小學、大學或其系所",
+      "attributes": []
+    },
+    {
+      "name": "ParentGroup",
+      "description": "家長會或家長團體",
+      "attributes": []
+    },
+    {
+      "name": "TeacherGroup",
+      "description": "教師會或教師團體",
+      "attributes": []
+    },
+    {
+      "name": "GroupLeader",
+      "description": "團體負責人、會長、理事長或總幹事",
+      "attributes": []
+    },
+    {
+      "name": "Academic",
+      "description": "學者或教授",
+      "attributes": []
+    },
+    {
+      "name": "MediaOutlet",
+      "description": "新聞媒體",
+      "attributes": []
+    },
+    {
+      "name": "Person",
+      "description": "不屬於上述具體類型的自然人",
+      "attributes": []
+    },
+    {
+      "name": "Organization",
+      "description": "不屬於上述具體類型的組織",
+      "attributes": []
+    }
+  ],
+  "edge_types": [
+    {
+      "name": "WORKS_FOR",
+      "description": "任職於",
+      "source_targets": [
+        {
+          "source": "GovernmentOfficial",
+          "target": "GovernmentAgency"
+        },
+        {
+          "source": "Academic",
+          "target": "School"
+        },
+        {
+          "source": "Person",
+          "target": "Organization"
+        }
+      ],
+      "attributes": []
+    },
+    {
+      "name": "LEADS",
+      "description": "擔任首長、處長、會長、理事長或總幹事",
+      "source_targets": [
+        {
+          "source": "GovernmentOfficial",
+          "target": "GovernmentAgency"
+        },
+        {
+          "source": "GroupLeader",
+          "target": "ParentGroup"
+        },
+        {
+          "source": "GroupLeader",
+          "target": "TeacherGroup"
+        }
+      ],
+      "attributes": []
+    },
+    {
+      "name": "MERGES",
+      "description": "計畫合併或裁併",
+      "source_targets": [
+        {
+          "source": "GovernmentAgency",
+          "target": "School"
+        }
+      ],
+      "attributes": []
+    },
+    {
+      "name": "PETITIONS",
+      "description": "陳情、請願",
+      "source_targets": [
+        {
+          "source": "ParentGroup",
+          "target": "GovernmentAgency"
+        },
+        {
+          "source": "GroupLeader",
+          "target": "GovernmentAgency"
+        }
+      ],
+      "attributes": []
+    },
+    {
+      "name": "NEGOTIATES_WITH",
+      "description": "協商",
+      "source_targets": [
+        {
+          "source": "GovernmentAgency",
+          "target": "GovernmentAgency"
+        }
+      ],
+      "attributes": []
+    }
+  ]
+}

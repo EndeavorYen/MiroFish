@@ -10,6 +10,8 @@ Usage:
     uv run python scripts/eval_local_extraction.py --ner candidates
     uv run --with gliner --with torch --with jieba3 \
         python scripts/eval_local_extraction.py --ner gliner
+    uv run python scripts/eval_local_extraction.py --ner decode \
+        --fixture tests/fixtures/holdout3_extraction
 """
 
 from __future__ import annotations
@@ -29,7 +31,7 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 from app.graph.embedding import HashEmbedder, HttpEmbedder  # noqa: E402
-from app.graph.local_extractor import LocalExtractor  # noqa: E402
+from app.graph.local_extractor import LocalExtractor, llm_decode_fn  # noqa: E402
 from app.graph.local_store import LocalGraphStore, normalize_name  # noqa: E402
 from app.graph.store import TextEpisode  # noqa: E402
 from app.services.text_processor import TextProcessor  # noqa: E402
@@ -145,7 +147,7 @@ def evaluate(store: LocalGraphStore, graph_id: str, gold: dict) -> dict:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--ner", choices=["candidates", "gliner"], default="candidates")
+    parser.add_argument("--ner", choices=["candidates", "gliner", "decode"], default="candidates")
     parser.add_argument("--base-url", default="http://127.0.0.1:8000/v1")
     parser.add_argument("--model", default="qwen3.5-4b")
     parser.add_argument("--embedder", choices=["http", "hash"], default="http")
@@ -180,7 +182,23 @@ def main(argv: list[str] | None = None) -> int:
             base_url=args.base_url, model=args.model, temperatures=load_temperatures()
         )
     )
-    extractor = LocalExtractor(client, embedder=embedder, ner=args.ner)
+    decode_fn = None
+    decode_stats = {"calls": 0, "failed": 0, "truncated": 0}
+    if args.ner == "decode":
+        from app.utils.llm_client import LLMClient
+
+        inner = llm_decode_fn(LLMClient(api_key="local", base_url=args.base_url, model=args.model))
+
+        def decode_fn(prompt, max_tokens):
+            decode_stats["calls"] += 1
+            try:
+                result = inner(prompt, max_tokens)
+            except Exception:
+                decode_stats["failed"] += 1
+                raise
+            decode_stats["truncated"] += int(result.truncated)
+            return result
+    extractor = LocalExtractor(client, embedder=embedder, ner=args.ner, decode_fn=decode_fn)
     if args.ner == "gliner":
         extractor._load_gliner()  # load before measuring VRAM / time
 
@@ -207,6 +225,7 @@ def main(argv: list[str] | None = None) -> int:
         "chunks": len(chunks),
         "seconds": round(elapsed, 1),
         "system_one_questions": client.questions,
+        "decode_calls": decode_stats if args.ner == "decode" else None,
         "llm_usage": {
             "rows": len(rows),
             "stages": sorted({r["stage"] for r in rows}),

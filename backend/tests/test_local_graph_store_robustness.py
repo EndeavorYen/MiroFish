@@ -109,3 +109,22 @@ def test_concurrent_writers_and_readers(tmp_path):
     assert {n.name for n in store.list_nodes("g1")} == {"Alice", "Bob"}
     assert len(store.list_edges("g1")) == 8
     store.close()
+
+
+def test_stale_node_vector_is_not_written_over_newer_text(tmp_path):
+    import sqlite_vec
+
+    store = LocalGraphStore(str(tmp_path), embedder=HashEmbedder(), extractor=StubExtractor(LEXICON))
+    store.create_graph("g", graph_id="g1")
+    store.add_text_episodes("g1", [TextEpisode("Alice.")], durable=True)
+    graph = store._graph("g1")
+    rowid = graph.conn.execute("SELECT rowid FROM nodes WHERE name = 'Alice'").fetchone()[0]
+    before = graph.conn.execute("SELECT embedding FROM vec_nodes WHERE rowid = ?", (rowid,)).fetchone()
+
+    stale = {"vec_nodes": {rowid: ("Alice Person some older summary", [1.0] + [0.0] * 255)}}
+    with graph.use():
+        store._store_vectors(graph, stale)
+    after = graph.conn.execute("SELECT embedding FROM vec_nodes WHERE rowid = ?", (rowid,)).fetchone()
+    assert after == before
+    assert after[0] != sqlite_vec.serialize_float32([1.0] + [0.0] * 255)
+    store.close()

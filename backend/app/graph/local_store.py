@@ -137,10 +137,16 @@ def _transaction(conn: sqlite3.Connection) -> Iterator[None]:
     conn.execute("BEGIN IMMEDIATE")
     try:
         yield
+        conn.execute("COMMIT")
     except BaseException:
-        conn.execute("ROLLBACK")
+        # SQLite may already have rolled back; never let that hide the
+        # original error or leave the connection inside a transaction.
+        if conn.in_transaction:
+            try:
+                conn.execute("ROLLBACK")
+            except sqlite3.Error:
+                pass
         raise
-    conn.execute("COMMIT")
 
 
 class _Graph:
@@ -398,12 +404,23 @@ class LocalGraphStore:
         ).fetchone()
         return row[0] if row else None
 
+    @staticmethod
+    def _node_text(name: str, labels: list[str], summary: str) -> str:
+        return f"{name} {' '.join(labels[1:])} {summary}".strip()
+
+    def _current_node_text(self, conn: sqlite3.Connection, rowid: int) -> str | None:
+        row = conn.execute(
+            "SELECT name, labels, summary FROM nodes WHERE rowid = ?", (rowid,)
+        ).fetchone()
+        return None if row is None else self._node_text(row[0], json.loads(row[1]), row[2])
+
     def _upsert_node(
         self, conn: sqlite3.Connection, entity: ExtractedEntity, created_at: str
     ) -> tuple[str, int, str, bool]:
         key = normalize_name(entity.name)
         row = conn.execute(
-            "SELECT rowid, uuid, labels, summary, attributes FROM nodes WHERE name_key = ?", (key,)
+            "SELECT rowid, uuid, labels, summary, attributes, name FROM nodes WHERE name_key = ?",
+            (key,),
         ).fetchone()
         type_labels = [entity.entity_type] if entity.entity_type else []
         if row is None:
@@ -448,7 +465,7 @@ class LocalGraphStore:
                 ),
             )
             is_new = False
-        text = f"{entity.name} {' '.join(labels[1:])} {summary}".strip()
+        text = self._node_text(entity.name if row is None else row[5], labels, summary)
         conn.execute("DELETE FROM nodes_fts WHERE rowid = ?", (rowid,))
         conn.execute("INSERT INTO nodes_fts (rowid, body) VALUES (?, ?)", (rowid, index_text(text)))
         return node_uuid, rowid, text, is_new
@@ -509,20 +526,25 @@ class LocalGraphStore:
 
     def _embed(
         self, node_texts: dict[int, str], edge_texts: dict[int, str]
-    ) -> dict[str, dict[int, list[float]]]:
-        result: dict[str, dict[int, list[float]]] = {}
+    ) -> dict[str, dict[int, tuple[str, list[float]]]]:
+        result: dict[str, dict[int, tuple[str, list[float]]]] = {}
         for table, texts in (("vec_nodes", node_texts), ("vec_edges", edge_texts)):
             if texts:
                 rowids = list(texts)
                 vectors = self.embedder.embed_documents([texts[r] for r in rowids])
-                result[table] = dict(zip(rowids, vectors))
+                result[table] = {r: (texts[r], v) for r, v in zip(rowids, vectors)}
         return result
 
-    @staticmethod
-    def _store_vectors(graph: _Graph, vectors: dict[str, dict[int, list[float]]]) -> None:
+    def _store_vectors(
+        self, graph: _Graph, vectors: dict[str, dict[int, tuple[str, list[float]]]]
+    ) -> None:
         for table, by_rowid in vectors.items():
-            graph.ensure_vec_tables(len(next(iter(by_rowid.values()))))
-            for rowid, vector in by_rowid.items():
+            graph.ensure_vec_tables(len(next(iter(by_rowid.values()))[1]))
+            for rowid, (text, vector) in by_rowid.items():
+                if table == "vec_nodes" and self._current_node_text(graph.conn, rowid) != text:
+                    # A concurrent episode merged newer text into this node;
+                    # its own vector write covers the current text.
+                    continue
                 graph.conn.execute(f"DELETE FROM {table} WHERE rowid = ?", (rowid,))
                 graph.conn.execute(
                     f"INSERT INTO {table} (rowid, embedding) VALUES (?, ?)",

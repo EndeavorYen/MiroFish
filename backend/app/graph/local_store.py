@@ -50,6 +50,7 @@ from .text_index import index_text, match_query
 
 RRF_K = 60
 MAX_SUMMARY_CHARS = 1200
+MAX_ALIASES = 50
 _GRAPH_ID_RE = re.compile(r"^[A-Za-z0-9_\-]{1,128}$")
 
 _GRAPH_SCHEMA = """
@@ -440,6 +441,8 @@ class LocalGraphStore:
             labels = ["Entity", *[t for t in type_labels if t != "Entity"]]
             summary = entity.summary[:MAX_SUMMARY_CHARS]
             attributes = dict(entity.attributes)
+            if isinstance(attributes.get("aliases"), list):
+                attributes["aliases"] = attributes["aliases"][:MAX_ALIASES]
             cursor = conn.execute(
                 "INSERT INTO nodes (uuid, name, name_key, labels, summary, attributes, created_at) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -468,12 +471,12 @@ class LocalGraphStore:
             for k, v in entity.attributes.items():
                 if isinstance(v, list) and isinstance(attributes.get(k), list):
                     # Union list attributes such as aliases across episodes
-                    # (values may be unhashable; keep at most 50).
+                    # (values may be unhashable).
                     merged = list(attributes[k])
                     for item in v:
                         if item not in merged:
                             merged.append(item)
-                    attributes[k] = merged[:50]
+                    attributes[k] = merged[:MAX_ALIASES] if k == "aliases" else merged
                 else:
                     attributes.setdefault(k, v)
             conn.execute(

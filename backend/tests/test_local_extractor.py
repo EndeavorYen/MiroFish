@@ -166,6 +166,10 @@ def test_single_character_stop_words_inside_names_do_not_cut_them():
         "台灣經濟研究院指出成長放緩。": "台灣經濟研究院",
         "同濟大學教授表示。": "同濟大學",
         "立法院財經委員會召開會議。": "立法院財經委員會",
+        "台灣財經研究院發布報告。": "台灣財經研究院",
+        "台灣緩和醫療協會呼籲修法。": "台灣緩和醫療協會",
+        "中華民國共同基金協會表示。": "中華民國共同基金協會",
+        "行為科學研究所公布結果。": "行為科學研究所",
     }
     for text, name in cases.items():
         assert name in {o for c in find_candidates(text) for o in c.options()}, text
@@ -244,3 +248,18 @@ def test_person_candidates_never_pair_with_organisation_names():
         [],
     )
     assert canonical["王明"] == "王明" and fake.calls["noul"] == 0
+
+
+def test_known_person_names_never_pair_with_organisation_names():
+    from app.graph.local_extractor import _Typed
+
+    class AlwaysSame(FakeSystemOne):
+        def noul(self, state, instructions):
+            self.calls["noul"] += 1
+            return NoulAnswer(noul=0.99)
+
+    fake = AlwaysSame()
+    canonical = LocalExtractor(fake)._merge(
+        [_Typed("王明大學", "University", 0.9, "org")], [("王明", "Person")], []
+    )
+    assert canonical["王明大學"] == "王明大學" and fake.calls["noul"] == 0

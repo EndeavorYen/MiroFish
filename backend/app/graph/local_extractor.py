@@ -32,7 +32,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from .candidates import ORG_SUFFIXES, find_candidates
+from .candidates import ORG_SUFFIXES, SURNAMES, find_candidates
 from .embedding import Embedder
 from .extractor import ExtractedEntity, ExtractedRelation, Extraction, split_sentences
 
@@ -217,7 +217,8 @@ class LocalExtractor:
             for name, _ in known
             # The cosine path must still see every known name (北大/北京大學
             # share no bigram).
-            if self.merge_cosine is not None or any(g in _strip_suffix(name) for g in new_grams)
+            if (self.merge_cosine is not None and self.embedder is not None)
+            or any(g in _strip_suffix(name) for g in new_grams)
         ]
         pool = list(dict.fromkeys(related_known + [t.name for t in typed]))
         known_names = {name for name, _ in known}
@@ -245,6 +246,10 @@ class LocalExtractor:
                 return "person"
             if source_of.get(name) == "org" or _strip_suffix(name) != name:
                 return "org"
+            # Known graph names carry no source: a 2-4 character name that
+            # starts with a common surname reads as a person.
+            if 2 <= len(name) <= 4 and name[0] in SURNAMES and re.fullmatch(r"[\u4e00-\u9fff]+", name):
+                return "person"
             return None
 
         def compatible(a: str, b: str) -> bool:
@@ -254,8 +259,6 @@ class LocalExtractor:
             ta, tb = type_of.get(a), type_of.get(b)
             if ta == tb:
                 return True
-            if {ta, tb} == FALLBACK_TYPES:
-                return False
             return (ta in FALLBACK_TYPES) != (tb in FALLBACK_TYPES)
 
         def mentions(name: str) -> str:

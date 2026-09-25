@@ -47,10 +47,11 @@ STOP_WORDS = (
     "委託", "批評", "本土", "本地", "首批",
 )
 # One-character stop words that also occur inside names (國際和平基金會,
-# 同濟大學, 台灣經濟研究院). They end a span only when jieba does not glue them
-# to the character on their right; every other one-character stop word
-# always ends a span.
+# 同濟大學, 台灣財經研究院, 緩和醫療). They end a span only when jieba splits
+# them off, or glues them only to a hard stop character (並經). Every other
+# one-character stop word always ends a span.
 SOFT_STOP_CHARS = set("和同經為使當以與及如")
+HARD_STOP_CHARS = {w for w in STOP_WORDS if len(w) == 1} - SOFT_STOP_CHARS
 TITLE_WORDS = (
     "主任委員", "副局長", "局長", "副市長", "市長", "執行長", "董事長", "總經理", "總裁",
     "發言人", "教授", "研究員", "議員", "委員", "理事長", "主席", "會長", "院長", "所長",
@@ -177,15 +178,25 @@ def _left_edge(
     end: int,
     *,
     cross_orgs: bool,
-    glued_right: frozenset[int] = frozenset(),
+    token_span: dict[int, tuple[int, int]] | None = None,
 ) -> int:
     """Walk left to punctuation or a stop word; unless ``cross_orgs``, also
     stop where another organisation name ends (科技局|聯合交通...).
 
     A soft one-character stop word (和, 經, 同 ...) is kept when jieba glues
-    it to the character on its right (國際|和平, 同濟, 經濟); 於, 將, 並 and
-    the other one-character stop words always stop the walk.
+    it into a word with a neighbour that is not a hard stop (和平, 財經,
+    緩和); 於, 將, 並 and the other one-character stop words always stop.
     """
+
+    spans = token_span or {}
+
+    def soft_kept(position: int) -> bool:
+        t_start, t_end = spans.get(position, (position, position + 1))
+        neighbours = [
+            text[i] for i in range(t_start, t_end) if i != position
+        ]
+        return bool(neighbours) and not any(ch in HARD_STOP_CHARS for ch in neighbours)
+
 
     begin = suffix_start
     while begin > 0 and end - begin < MAX_ORG_CHARS:
@@ -194,7 +205,7 @@ def _left_edge(
             break
         if any(
             prefix.endswith(word)
-            and (len(word) > 1 or word not in SOFT_STOP_CHARS or begin - 1 not in glued_right)
+            and (len(word) > 1 or word not in SOFT_STOP_CHARS or not soft_kept(begin - 1))
             for word in STOP_WORDS
         ):
             break
@@ -208,14 +219,15 @@ def _left_edge(
 
 def _organisations(text: str, tokens: list[tuple[str, str, int, int]]) -> list[Candidate]:
     token_starts = {t[2] for t in tokens}
-    # Positions whose jieba token continues to the next character.
-    glued_right = frozenset(
-        position for _, _, t_start, t_end in tokens for position in range(t_start, t_end - 1)
-    )
+    token_span = {
+        position: (t_start, t_end)
+        for _, _, t_start, t_end in tokens
+        for position in range(t_start, t_end)
+    }
     by_end: dict[int, Candidate] = {}
     for start, end, suffix in _suffix_matches(text):
-        begin = _left_edge(text, start, end, cross_orgs=False, glued_right=glued_right)
-        wide = _left_edge(text, start, end, cross_orgs=True, glued_right=glued_right)
+        begin = _left_edge(text, start, end, cross_orgs=False, token_span=token_span)
+        wide = _left_edge(text, start, end, cross_orgs=True, token_span=token_span)
         if end - begin <= len(suffix) and end - wide <= len(suffix):
             continue
         starts = [begin] + [s for s in range(begin + 1, start) if s in token_starts]

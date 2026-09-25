@@ -162,3 +162,19 @@ def test_local_backend_request_is_prefill_only_and_records_usage(tmp_path, monke
     # Readout runs no decode step; it is recorded as zero decode tokens.
     assert json.loads(lines[0])["completion_tokens"] == 0
     assert json.loads(lines[0])["prompt_tokens"] == 10
+
+
+def test_parallel_questions_keep_the_callers_usage_stage(tmp_path):
+    from app.system_one.models import NoulQuestion
+    from app.utils.llm_usage import usage_stage
+
+    fake = FakeCompletions({})
+    backend = LocalReadoutBackend(base_url="http://fake/v1", model="m", post=fake)
+    request = SystemOneRequest(
+        state="s",
+        questions={f"q{i}": NoulQuestion(instructions=f"question {i}?") for i in range(4)},
+    )
+    with usage_stage("profile", str(tmp_path)):
+        SystemOneClient(backend).ask(request)
+    rows = [json.loads(line) for line in (tmp_path / "llm_usage.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert len(rows) == 4 and {r["stage"] for r in rows} == {"profile"}

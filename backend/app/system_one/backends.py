@@ -19,6 +19,7 @@ Both are pre-mask values, which is what the in-set softmax expects.
 
 from __future__ import annotations
 
+import contextvars
 import json
 import time
 import urllib.error
@@ -179,8 +180,12 @@ class LocalReadoutBackend:
         if rest:
             workers = max(1, min(self.max_workers, len(rest)))
             with ThreadPoolExecutor(max_workers=workers) as pool:
+                # Copy the context so each worker records usage under the
+                # caller's usage_stage (contextvars do not cross threads).
                 futures = {
-                    name: pool.submit(self._ask_one, request.state, question)
+                    name: pool.submit(
+                        contextvars.copy_context().run, self._ask_one, request.state, question
+                    )
                     for name, question in rest
                 }
                 for name, future in futures.items():

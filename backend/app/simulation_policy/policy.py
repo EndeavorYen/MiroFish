@@ -10,7 +10,11 @@ Per active agent and round, with no decode:
 6. return the OASIS action and append the decision to ``decisions.jsonl``.
 
 Every random draw comes from an RNG seeded by (seed, platform, round, agent),
-sampled from the distribution (never argmax), so a run replays exactly.
+sampled from the distribution (never argmax): the same observations and
+readouts give the same decisions. A live parallel run is not bit-for-bit
+replayable, because OASIS draws feeds from the global ``random`` module
+shared by both platforms and the model server's batching is not
+deterministic.
 """
 
 from __future__ import annotations

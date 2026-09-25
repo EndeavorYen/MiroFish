@@ -1282,7 +1282,7 @@ async def run_twitter_simulation(
                     active_agents,
                     policy,
                     "twitter",
-                    round_num,
+                    round_num + 1,  # same numbering as actions.jsonl
                     topics=config.get("event_config", {}).get("hot_topics", []),
                 )
             else:
@@ -1495,7 +1495,7 @@ async def run_reddit_simulation(
                     active_agents,
                     policy,
                     "reddit",
-                    round_num,
+                    round_num + 1,  # same numbering as actions.jsonl
                     topics=config.get("event_config", {}).get("hot_topics", []),
                 )
             else:

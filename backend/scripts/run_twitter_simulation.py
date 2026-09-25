@@ -685,7 +685,7 @@ class TwitterSimulationRunner:
                         active_agents,
                         self.policy,
                         "twitter",
-                        round_num,
+                        round_num + 1,  # same numbering as actions.jsonl
                         topics=event_config.get("hot_topics", []),
                     )
                 else:

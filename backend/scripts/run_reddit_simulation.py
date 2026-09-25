@@ -675,7 +675,7 @@ class RedditSimulationRunner:
                         active_agents,
                         self.policy,
                         "reddit",
-                        round_num,
+                        round_num + 1,  # same numbering as actions.jsonl
                         topics=event_config.get("hot_topics", []),
                     )
                 else:

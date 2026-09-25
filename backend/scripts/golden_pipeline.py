@@ -46,6 +46,30 @@ LOCAL_DEFAULTS = {
 }
 
 
+def force_local_config(work: Path) -> None:
+    """Re-assert local settings after ``app.config`` loaded any .env file.
+
+    ``app/config.py`` calls ``load_dotenv(override=True)``, so a repo .env
+    could otherwise switch this process back to Zep or a cloud LLM.
+    """
+
+    sys.path.insert(0, str(BACKEND_DIR))
+    from app.config import Config
+
+    env = local_env(work)
+    os.environ.update(env)
+    Config.GRAPH_BACKEND = "local"
+    Config.GRAPH_DATA_DIR = env["GRAPH_DATA_DIR"]
+    Config.GRAPH_EMBEDDER = env["GRAPH_EMBEDDER"]
+    Config.EMBED_BASE_URL = env["EMBED_BASE_URL"]
+    Config.EMBED_MODEL_NAME = env["EMBED_MODEL_NAME"]
+    Config.LLM_API_KEY = env["LLM_API_KEY"]
+    Config.LLM_BASE_URL = env["LLM_BASE_URL"]
+    Config.LLM_MODEL_NAME = env["LLM_MODEL_NAME"]
+    Config.SYSTEM_ONE_BASE_URL = env["SYSTEM_ONE_BASE_URL"]
+    Config.SYSTEM_ONE_MODEL = env["SYSTEM_ONE_MODEL"]
+
+
 def local_env(work: Path, extra: dict[str, str] | None = None) -> dict[str, str]:
     env = dict(os.environ)
     for key, value in LOCAL_DEFAULTS.items():
@@ -115,7 +139,7 @@ def cmd_prepare(args: argparse.Namespace) -> int:
     work = Path(args.work).resolve()
     work.mkdir(parents=True, exist_ok=True)
     os.environ.update(local_env(work, {"ONTOLOGY_MODE": args.prep_mode, "PROFILE_MODE": args.prep_mode, "SIM_CONFIG_MODE": args.prep_mode}))
-    sys.path.insert(0, str(BACKEND_DIR))
+    force_local_config(work)
 
     from app.graph.store import TextEpisode  # noqa: F401
     from app.services.graph_builder import GraphBuilderService
@@ -185,6 +209,8 @@ def round_latencies(sim_dir: Path) -> dict[str, list[float]]:
             continue
         starts: dict[int, datetime] = {}
         durations = []
+        # Round 0 is the initial posts; rounds with no active agent are
+        # skipped by the runner. Neither is a decision round.
         for line in path.read_text(encoding="utf-8").splitlines():
             try:
                 row = json.loads(line)
@@ -196,7 +222,7 @@ def round_latencies(sim_dir: Path) -> dict[str, list[float]]:
             stamp = datetime.fromisoformat(row["timestamp"])
             if event == "round_start":
                 starts[row["round"]] = stamp
-            elif row["round"] in starts:
+            elif row["round"] in starts and row["round"] > 0 and row.get("actions_count", 1) > 0:
                 durations.append((stamp - starts[row["round"]]).total_seconds())
         result[platform] = durations
     return result
@@ -224,7 +250,7 @@ def action_counts(sim_dir: Path) -> dict[str, dict[str, int]]:
 def replay_graph_writeback(run: Path, prepared: dict[str, Any]) -> dict[str, Any]:
     """Feed the run's actions to the memory updater on the local graph."""
 
-    sys.path.insert(0, str(BACKEND_DIR))
+    force_local_config(run)
     from app.services.zep_graph_memory_updater import ZepGraphMemoryUpdater
     from app.utils.llm_usage import usage_stage
 
@@ -232,7 +258,7 @@ def replay_graph_writeback(run: Path, prepared: dict[str, Any]) -> dict[str, Any
     updater = ZepGraphMemoryUpdater(prepared["graph_id"], simulation_id=prepared["simulation_id"])
     updater._running = True
     fed = 0
-    with usage_stage("simulation"):
+    with usage_stage("simulation", metrics_dir=str(run / "metrics")):
         for platform in ("twitter", "reddit"):
             path = run / "sim" / platform / "actions.jsonl"
             if not path.exists():

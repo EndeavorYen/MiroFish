@@ -358,3 +358,47 @@ def test_oasis_bridge_degrades_a_failed_decision_to_do_nothing(tmp_path):
     assert actions[agent].action_type == ActionType.DO_NOTHING
     row = json.loads((tmp_path / "d.jsonl").read_text(encoding="utf-8"))
     assert row["action"] == "DO_NOTHING" and row["error"].startswith("TimeoutError")
+
+
+def test_build_policy_shares_stores_and_validates_settings(tmp_path, monkeypatch):
+    from app.simulation_policy.oasis_bridge import build_policy
+
+    twitter = build_policy("twitter", str(tmp_path), seed=1, client=FakeSystemOne(), content_provider=TemplateContentProvider())
+    reddit = build_policy("reddit", str(tmp_path), seed=2, client=FakeSystemOne(), content_provider=TemplateContentProvider())
+    assert twitter.state_store is reddit.state_store
+    assert twitter.log is reddit.log
+    with pytest.raises(ValueError):
+        build_policy("twitter", str(tmp_path), seed=1, client=FakeSystemOne(), alpha=1.5, content_provider=TemplateContentProvider())
+    monkeypatch.setenv("SIM_DECISION_CONCURRENCY", "zero")
+    with pytest.raises(ValueError):
+        build_policy("twitter", str(tmp_path), seed=1, client=FakeSystemOne(), content_provider=TemplateContentProvider())
+
+
+def test_bridge_refreshes_recommendations_before_observing(tmp_path):
+    from app.simulation_policy.oasis_bridge import system_one_actions
+
+    calls = []
+
+    class FakePlatform:
+        async def update_rec_table(self):
+            calls.append("rec")
+
+    class FakeActionApi:
+        async def refresh(self):
+            calls.append("refresh")
+            return {"success": True, "posts": list(reversed(_feed()))}
+
+    class FakeAgent:
+        def __init__(self):
+            self.social_agent_id = 1
+            self.user_info = None
+            self.env = type("E", (), {"action": FakeActionApi()})()
+
+    agent = FakeAgent()
+    env = type("Env", (), {
+        "platform": FakePlatform(),
+        "agent_graph": type("G", (), {"get_agents": lambda self: [(1, agent)]})(),
+    })()
+    policy = _policy(platform="twitter", seed=1, tmp_path=tmp_path)
+    asyncio.run(system_one_actions(env, [(1, agent)], policy, "twitter", 1))
+    assert calls[:2] == ["rec", "refresh"]

@@ -1648,7 +1648,9 @@ async def main():
     rng_reddit = random.Random(seed + 1) if seed is not None else None
 
     policy_twitter = policy_reddit = None
-    if decision_backend(args.decision_backend) == "system_one":
+    # Interviews read the resolved backend from the environment.
+    os.environ["SIM_DECISION_BACKEND"] = decision_backend(args.decision_backend)
+    if os.environ["SIM_DECISION_BACKEND"] == "system_one":
         if seed is not None:
             # OASIS refresh/recsys draw from the global random module.
             random.seed(seed)

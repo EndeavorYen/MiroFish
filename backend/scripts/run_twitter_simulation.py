@@ -428,6 +428,8 @@ class TwitterSimulationRunner:
         self.rng = random.Random(self.seed) if self.seed is not None else random
         from app.simulation_policy.oasis_bridge import decision_backend as _decision_backend
         self.decision_backend = _decision_backend(decision_backend)
+        # Interviews read the resolved backend from the environment.
+        os.environ["SIM_DECISION_BACKEND"] = self.decision_backend
         self.policy = None
         self.wait_for_commands = wait_for_commands
         self.env = None

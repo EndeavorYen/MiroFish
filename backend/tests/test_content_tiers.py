@@ -216,3 +216,33 @@ def test_interview_replies_through_the_existing_ipc_flow(tmp_path, monkeypatch):
     assert response["result"]["response"] == "我覺得票價應該降低。"
     assert "你在模拟中的行为" in seen_prompts[0] and seen_prompts[0].endswith("你怎麼看票價？")
     db.close()
+
+
+def test_concurrent_agents_share_one_call_per_bucket():
+    import threading
+    import time
+
+    calls = []
+
+    def slow(prompt, max_tokens):
+        calls.append(prompt)
+        time.sleep(0.2)
+        return "<think>草稿</think>共享內容：凌雲飛行智能公司", 20
+
+    provider = _provider(llm_fn=slow, budget_per_round=1000)
+    threads = [threading.Thread(target=provider.generate, args=(_intent(agent=a),)) for a in range(6)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert len(calls) == 1
+    assert provider._round.tiers["shared"] == 6
+    assert all("<think>" not in t and "草稿" not in t for t in provider._round.texts)
+
+
+def test_null_influence_weight_does_not_break_provider(tmp_path):
+    from app.simulation_policy.tiers import build_tiered_provider
+
+    config = {"agent_configs": [{"agent_id": 1, "entity_name": "A", "influence_weight": None}]}
+    provider = build_tiered_provider("twitter", str(tmp_path), config, llm_fn=lambda p, m: ("x", 1))
+    assert provider.followers == {1: 0}

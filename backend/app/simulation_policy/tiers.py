@@ -24,6 +24,7 @@ import json
 import logging
 import os
 import random
+import re
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -39,6 +40,14 @@ LlmFn = Callable[[str, int], tuple[str, int]]  # (prompt, max_tokens) -> (text, 
 
 SHARED_MAX_TOKENS = 80
 FULL_MAX_TOKENS = 120
+_THINK_RE = re.compile(r"<think>.*?(</think>|$)", re.S)
+
+
+def clean_generation(text: str) -> str:
+    """Drop reasoning blocks (closed or cut off) and collapse whitespace."""
+
+    text = _THINK_RE.sub("", text or "")
+    return " ".join(text.split()).strip("「」\"")
 
 
 def stance_band(stance: float) -> str:
@@ -118,16 +127,17 @@ class TieredContentProvider:
         self._round: RoundStats | None = None
         self._remaining = self.budget_per_round
         self._shared_cache: dict[tuple, str] = {}
+        # One model call per bucket: later agents wait for the first one.
+        self._inflight: dict[tuple, threading.Event] = {}
         self.history: list[dict[str, Any]] = []
+        ranked = sorted(self.followers, key=lambda a: (-self.followers[a], a))
+        count = max(1, int(round(len(ranked) * top_k_percent / 100))) if ranked else 0
+        self._influential = set(ranked[:count]) if top_k_percent > 0 else set()
 
     # ------------------------------------------------------------ helpers
 
     def influential(self, agent_id: int) -> bool:
-        if not self.followers or self.top_k_percent <= 0:
-            return False
-        ranked = sorted(self.followers, key=lambda a: (-self.followers[a], a))
-        count = max(1, int(round(len(ranked) * self.top_k_percent / 100)))
-        return agent_id in ranked[:count]
+        return agent_id in self._influential
 
     def _entity_for(self, intent: ContentIntent) -> str:
         for name in self.entities:
@@ -211,27 +221,42 @@ class TieredContentProvider:
     # --------------------------------------------------------------- main
 
     def generate(self, intent: ContentIntent) -> str:
-        with self._lock:
-            self._rollover(intent.round_num)
-            stats = self._round
-            band = stance_band(intent.stance)
-            bucket = (intent.round_num, intent.kind, band, intent.target_ref)
-            tier = "template"
-            if self.llm_fn is not None:
-                if self.influential(intent.persona_ref) and self._remaining >= FULL_MAX_TOKENS:
-                    tier = "full"
-                elif bucket in self._shared_cache or self._remaining >= SHARED_MAX_TOKENS:
-                    tier = "shared"
-            if tier == "shared" and bucket in self._shared_cache:
-                base = self._shared_cache[bucket]
-                stats.cache_hits += 1
-                text = self._vary(base, _rng("shared", intent.persona_ref, *bucket), intent)
-                stats.tiers["shared"] += 1
-                stats.texts.append(text)
-                return text
-            # Reserve the budget before releasing the lock for the model call.
-            reserve = FULL_MAX_TOKENS if tier == "full" else SHARED_MAX_TOKENS if tier == "shared" else 0
-            self._remaining -= reserve
+        band = stance_band(intent.stance)
+        bucket = (intent.round_num, intent.kind, band, intent.target_ref)
+        waited: threading.Event | None = None
+        while True:
+            with self._lock:
+                waiter = self._inflight.get(bucket)
+                if waiter is not None and waiter is not waited and bucket not in self._shared_cache:
+                    pass  # another agent is generating this bucket; wait below
+                else:
+                    self._rollover(intent.round_num)
+                    stats = self._round
+                    tier = "template"
+                    if self.llm_fn is not None:
+                        if self.influential(intent.persona_ref) and self._remaining >= FULL_MAX_TOKENS:
+                            tier = "full"
+                        elif bucket in self._shared_cache or self._remaining >= SHARED_MAX_TOKENS:
+                            tier = "shared"
+                    if tier == "shared" and bucket in self._shared_cache:
+                        base = self._shared_cache[bucket]
+                        stats.cache_hits += 1
+                        text = self._vary(base, _rng("shared", intent.persona_ref, *bucket), intent)
+                        stats.tiers["shared"] += 1
+                        stats.texts.append(text)
+                        return text
+                    # Reserve the budget and claim the bucket before the model
+                    # call, all under the lock.
+                    reserve = FULL_MAX_TOKENS if tier == "full" else SHARED_MAX_TOKENS if tier == "shared" else 0
+                    self._remaining -= reserve
+                    owner = None
+                    if tier == "shared":
+                        owner = threading.Event()
+                        self._inflight[bucket] = owner
+                    break
+            # A stalled owner is waited on once (60 s), then ignored.
+            waiter.wait(timeout=60)
+            waited = waiter
 
         if tier == "template":
             text = self.template_text(intent)
@@ -240,7 +265,7 @@ class TieredContentProvider:
             prompt = self._full_prompt(intent) if tier == "full" else self._shared_prompt(intent)
             try:
                 raw, spent = self.llm_fn(prompt, reserve)
-                raw = " ".join((raw or "").split()).strip("「」\"")
+                raw = clean_generation(raw)
             except Exception as error:  # noqa: BLE001 - degrade, never fail a round
                 logger.warning("content generation failed, using template: %s", error)
                 raw, spent = "", 0
@@ -257,6 +282,9 @@ class TieredContentProvider:
             self._remaining += reserve - spent
             if tier == "shared" and text and bucket not in self._shared_cache:
                 self._shared_cache[bucket] = raw
+            if owner is not None and self._inflight.get(bucket) is owner:
+                del self._inflight[bucket]
+                owner.set()
             if tier in ("shared", "full"):
                 stats.decode_tokens[tier] += spent
             stats.tiers[tier] += 1
@@ -275,7 +303,11 @@ def openai_llm_fn(stage_note: str = "content") -> LlmFn:
     from ..config import Config
     from ..utils.openai_chat_compat import create_chat_completion, extract_chat_completion_text
 
-    client = OpenAI(api_key=Config.LLM_API_KEY, base_url=Config.LLM_BASE_URL)
+    # A stalled server must not stall a round: short timeout, no retries
+    # (a failed call falls back to a template).
+    client = OpenAI(
+        api_key=Config.LLM_API_KEY, base_url=Config.LLM_BASE_URL, timeout=30, max_retries=0
+    )
 
     def call(prompt: str, max_tokens: int) -> tuple[str, int]:
         response = create_chat_completion(
@@ -309,7 +341,10 @@ def build_tiered_provider(
     for agent in config.get("agent_configs", []):
         agent_id = agent.get("agent_id")
         if agent_id is not None:
-            followers[int(agent_id)] = int(agent.get("follower_count") or agent.get("influence_weight", 0) * 1000 or 0)
+            weight = agent.get("follower_count")
+            if weight is None:
+                weight = float(agent.get("influence_weight") or 0) * 1000
+            followers[int(agent_id)] = int(weight or 0)
     entities = [a.get("entity_name") for a in config.get("agent_configs", []) if a.get("entity_name")]
     if mode == "tiered" and llm_fn is None:
         llm_fn = openai_llm_fn()

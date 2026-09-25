@@ -33,10 +33,32 @@ from pathlib import Path
 from typing import Any
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
-REPO_DOTENV = BACKEND_DIR.parent / ".env"
 # Environment before app.config loads any .env; local settings are derived
-# from this snapshot, never from values a .env injected later.
+# from this snapshot, never from values a .env injected later. Valid only
+# when this module is imported before ``app`` (command-line use).
 _INITIAL_ENV = dict(os.environ)
+FORCED_LOCAL = {
+    "GRAPH_BACKEND": "local",
+    "GRAPH_EXTRACTOR": "local",
+    "EXTRACT_SUMMARY_LLM": "0",
+    "SYSTEM_ONE_BACKEND": "local",
+}
+DROPPED_KEYS = ("SYSTEM_ONE_API_KEY", "EMBED_API_KEY", "ZEP_API_KEY")
+
+
+def dotenv_files() -> list[Path]:
+    """Every .env that app.config or the simulation scripts could load.
+
+    python-dotenv's ``load_dotenv()`` searches upward from backend/app, and
+    the simulation scripts load backend/.env explicitly.
+    """
+
+    found = []
+    for directory in [BACKEND_DIR / "app", *(BACKEND_DIR / "app").parents]:
+        candidate = directory / ".env"
+        if candidate.exists():
+            found.append(candidate)
+    return found
 FIXTURE = BACKEND_DIR / "tests" / "fixtures" / "golden_scenario"
 LOCAL_DEFAULTS = {
     "LLM_API_KEY": "local",
@@ -89,7 +111,9 @@ def local_env(work: Path, extra: dict[str, str] | None = None) -> dict[str, str]
     env = dict(os.environ)
     for key, value in LOCAL_DEFAULTS.items():
         env[key] = _INITIAL_ENV.get(key, value)
-    env["GRAPH_BACKEND"] = "local"
+    env.update(FORCED_LOCAL)
+    for key in DROPPED_KEYS:
+        env.pop(key, None)
     env["GRAPH_DATA_DIR"] = str(work / "graphs")
     env["MIROFISH_METRICS_DIR"] = str(work / "metrics")
     env["PYTHONIOENCODING"] = "utf-8"
@@ -377,10 +401,14 @@ def main(argv: list[str] | None = None) -> int:
     sim.add_argument("--content-mode", default=None)
     sim.add_argument("--graph-writeback", action="store_true")
     args = parser.parse_args(argv)
-    if REPO_DOTENV.exists() and not args.allow_dotenv:
-        # app.config loads it with override=True in every process, including
-        # the simulation subprocess; refuse rather than risk cloud endpoints.
-        parser.error(f"{REPO_DOTENV} exists; move it aside or pass --allow-dotenv")
+    dotenvs = dotenv_files()
+    if dotenvs and not args.allow_dotenv:
+        # app.config loads .env with override=True in every process,
+        # including the simulation subprocess; refuse rather than risk cloud
+        # endpoints.
+        parser.error(
+            f"{', '.join(map(str, dotenvs))} exists; move it aside or pass --allow-dotenv"
+        )
     return cmd_prepare(args) if args.command == "prepare" else cmd_simulate(args)
 
 

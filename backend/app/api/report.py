@@ -252,6 +252,10 @@ def generate_report():
                         message=t('api.initReportAgent')
                     )
 
+                    if Config.REPORT_MODE not in ("metrics", "agent"):
+                        logger.warning(
+                            "unknown REPORT_MODE %r; using the ReportAgent", Config.REPORT_MODE
+                        )
                     if Config.REPORT_MODE == "metrics":
                         # Deterministic metrics + one short summary (#12).
                         from ..services.metrics_report import generate_metrics_report

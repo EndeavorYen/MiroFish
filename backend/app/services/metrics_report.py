@@ -21,7 +21,9 @@ the same metrics (sorted keys, rounded floats, no timestamps).
 from __future__ import annotations
 
 import json
+import logging
 import os
+import re
 import sqlite3
 import statistics
 from collections import Counter, defaultdict
@@ -30,6 +32,9 @@ from typing import Any, Callable
 PLATFORMS = ("twitter", "reddit")
 SUMMARY_MAX_TOKENS = 800
 TOP_POSTS = 5
+
+
+logger = logging.getLogger(__name__)
 
 
 def _round(value: float) -> float:
@@ -99,6 +104,8 @@ def emotion_curves(sim_dir: str, agent_types: dict[int, str]) -> dict[str, Any] 
         rows = conn.execute(
             "SELECT round, platform, agent_id, state FROM emotion ORDER BY round, platform, agent_id"
         ).fetchall()
+    except sqlite3.OperationalError:
+        return None  # store created but never written (no emotion table)
     finally:
         conn.close()
     overall: dict[str, dict[int, list[dict[str, float]]]] = defaultdict(lambda: defaultdict(list))
@@ -190,7 +197,7 @@ def stance_groups(sim_dir: str, config: dict[str, Any], agent_types: dict[int, s
     by_type: dict[str, list[float]] = defaultdict(list)
     for row in _jsonl(os.path.join(sim_dir, "decisions.jsonl")):
         intent = row.get("intent")
-        if isinstance(intent, dict) and "stance" in intent:
+        if isinstance(intent, dict) and isinstance(intent.get("stance"), (int, float)):
             by_type[agent_types.get(row.get("agent_id"), "Unknown")].append(float(intent["stance"]))
     labels: dict[str, Counter] = defaultdict(Counter)
     for agent in config.get("agent_configs", []):
@@ -354,6 +361,7 @@ def write_metrics_report(
             try:
                 summary = summary_fn(summary_prompt(metrics, requirement), SUMMARY_MAX_TOKENS)
             except Exception as error:  # noqa: BLE001 - the metrics report stands alone
+                logger.warning("metrics report summary failed", exc_info=True)
                 summary = f"（摘要產生失敗：{type(error).__name__}）"
     markdown = render_markdown(metrics, summary)
     with open(os.path.join(report_dir, "report_metrics.md"), "w", encoding="utf-8") as f:
@@ -373,7 +381,14 @@ def generate_metrics_report(
 
     from datetime import datetime
 
-    from .report_agent import Report, ReportManager, ReportStatus
+    from .report_agent import (
+        Report,
+        ReportLogger,
+        ReportManager,
+        ReportOutline,
+        ReportSection,
+        ReportStatus,
+    )
     from .simulation_manager import SimulationManager
 
     sim_dir = SimulationManager()._get_simulation_dir(simulation_id)
@@ -386,6 +401,11 @@ def generate_metrics_report(
         status=ReportStatus.GENERATING,
         created_at=created,
     )
+    started = datetime.now()
+    # The report page follows agent_log.jsonl: report_start, the outline,
+    # one section_complete per section, then report_complete.
+    report_logger = ReportLogger(report_id)
+    report_logger.log_start(simulation_id, graph_id, requirement)
     try:
         _, markdown = write_metrics_report(
             sim_dir,
@@ -394,11 +414,37 @@ def generate_metrics_report(
             summary_fn=summary_fn if summary_fn is not None else default_summary_fn(),
             metrics_dir=os.path.join(sim_dir, "metrics"),
         )
+        outline = markdown_outline(markdown, ReportOutline, ReportSection)
+        report.outline = outline
+        report_logger.log_planning_complete(outline.to_dict())
+        for index, section in enumerate(outline.sections, start=1):
+            report_logger.log_section_start(section.title, index)
+            report_logger.log_section_full_complete(
+                section.title, index, f"## {section.title}\n\n{section.content}".strip()
+            )
         report.markdown_content = markdown
         report.status = ReportStatus.COMPLETED
+        report_logger.log_report_complete(
+            len(outline.sections), (datetime.now() - started).total_seconds()
+        )
     except Exception as error:  # noqa: BLE001 - surface as a failed report
         report.status = ReportStatus.FAILED
         report.error = str(error)
+        report_logger.log_error(str(error), "failed")
     report.completed_at = datetime.now().isoformat()
     ReportManager.save_report(report)
     return report
+
+
+def markdown_outline(markdown: str, outline_cls, section_cls):
+    """Split a rendered metrics report into a ReportOutline (# title, ## sections)."""
+
+    title_match = re.search(r"^# (.+)$", markdown, flags=re.M)
+    title = title_match.group(1).strip() if title_match else "模擬指標報告"
+    parts = re.split(r"^## (.+)$", markdown, flags=re.M)
+    sections = [
+        section_cls(title=parts[i].strip(), content=parts[i + 1].strip())
+        for i in range(1, len(parts) - 1, 2)
+    ]
+    summary = next((s.content.split("\n\n")[0] for s in sections if s.content), "")
+    return outline_cls(title=title, summary=summary, sections=sections)

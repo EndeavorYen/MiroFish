@@ -141,6 +141,9 @@ def test_generate_metrics_report_saves_a_completed_report(sim_dir, tmp_path, mon
     from app.services.simulation_manager import SimulationManager
 
     monkeypatch.setattr(SimulationManager, "_get_simulation_dir", lambda self, sid: str(sim_dir))
+    from app.config import Config
+
+    monkeypatch.setattr(Config, "UPLOAD_FOLDER", str(tmp_path))
     monkeypatch.setattr(ReportManager, "REPORTS_DIR", str(tmp_path / "reports"))
     report = metrics_report.generate_metrics_report(
         "sim_test", "g", "req", "report_1", summary_fn=lambda p, m: "摘要"
@@ -149,3 +152,29 @@ def test_generate_metrics_report_saves_a_completed_report(sim_dir, tmp_path, mon
     saved = ReportManager.get_report("report_1")
     assert saved.markdown_content.startswith("# 模擬指標報告")
     assert (tmp_path / "reports" / "report_1" / "report_metrics.json").exists()
+
+    # The report page completes from agent_log.jsonl.
+    log_path = tmp_path / "reports" / "report_1" / "agent_log.jsonl"
+    logs = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
+    actions = [row["action"] for row in logs]
+    assert actions[0] == "report_start" and actions[-1] == "report_complete"
+    outline = next(row for row in logs if row["action"] == "planning_complete")["details"]["outline"]
+    sections = [row for row in logs if row["action"] == "section_complete"]
+    assert len(sections) == len(outline["sections"]) >= 3
+    assert outline["sections"][0]["title"] == "摘要"
+    assert sections[0]["section_index"] == 1
+    assert sections[0]["details"]["content"].startswith("## 摘要")
+
+
+def test_missing_emotion_table_and_bad_stance_are_ignored(sim_dir):
+    import sqlite3
+
+    from app.services.metrics_report import compute_metrics
+
+    db = sim_dir / "agent_state.db"
+    db.unlink()
+    sqlite3.connect(db).close()  # created but never written
+    with open(sim_dir / "decisions.jsonl", "a", encoding="utf-8") as f:
+        f.write(json.dumps({"agent_id": 1, "intent": {"stance": "high"}}) + "\n")
+    metrics = compute_metrics(str(sim_dir))
+    assert metrics["emotion"] is None

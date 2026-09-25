@@ -55,6 +55,17 @@ class HashEmbedder:
         return self._embed(text)
 
 
+_ATTEMPTS = 4  # about 1.75 s of backoff in total
+_RETRYABLE = (
+    httpx.ConnectError,
+    httpx.ConnectTimeout,
+    httpx.PoolTimeout,
+    httpx.ReadError,
+    httpx.WriteError,
+    httpx.RemoteProtocolError,
+)
+
+
 class HttpEmbedder:
     def __init__(
         self,
@@ -87,18 +98,19 @@ class HttpEmbedder:
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
         body = json.dumps({"model": self.model, "input": inputs}).encode("utf-8")
-        # Embedding is idempotent: retry connection-level errors with backoff.
-        for attempt in range(6):
+        # Embedding is idempotent: retry dropped connections with backoff. A
+        # read timeout (the server got the request but is stalled) is not
+        # retried, so a stuck server costs one timeout, not several.
+        for attempt in range(_ATTEMPTS):
             try:
                 response = self._client.post(
                     self.url, content=body, headers=headers, timeout=self.timeout
                 )
                 break
-            except (httpx.ConnectError, httpx.ReadError, httpx.WriteError,
-                    httpx.RemoteProtocolError, httpx.TimeoutException):
-                if attempt == 5:
+            except _RETRYABLE:
+                if attempt == _ATTEMPTS - 1:
                     raise
-                time.sleep(min(4.0, 0.25 * (2 ** attempt)))
+                time.sleep(0.25 * (2 ** attempt))
         response.raise_for_status()
         rows = sorted(response.json()["data"], key=lambda item: item["index"])
         return [_normalize([float(v) for v in row["embedding"]]) for row in rows]

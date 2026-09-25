@@ -11,8 +11,7 @@ from datetime import datetime
 from queue import Queue, Empty
 
 from ..config import Config
-from ..graph.store import TextEpisode, get_graph_store
-from ..graph.zep_store import BatchSubmission
+from ..graph.store import EpisodeHandle, TextEpisode, get_graph_store
 from ..utils.logger import get_logger
 from ..utils.locale import get_locale, set_locale
 from ..utils.zep import ZEP_INGESTION_WAIT_TIMEOUT_SECONDS
@@ -254,12 +253,8 @@ class ZepGraphMemoryUpdater:
         self.graph_id = graph_id
         self.simulation_id = simulation_id or "unknown"
         self.api_key = api_key or Config.ZEP_API_KEY
-        
-        if not self.api_key:
-            raise ValueError("ZEP_API_KEY未配置")
-        
+        # get_graph_store() owns backend selection and the ZEP_API_KEY check.
         self.store = get_graph_store(api_key=self.api_key)
-        self.client = self.store.client
         
         # 活动队列
         self._activity_queue: Queue = Queue()
@@ -597,13 +592,10 @@ class ZepGraphMemoryUpdater:
 
         if deadline is None:
             deadline = time.time() + ZEP_INGESTION_WAIT_TIMEOUT_SECONDS
-        handle = BatchSubmission(
-            batch_id=None,
-            operation_id=None,
-            episode_uuids=list(pending),
-            item_count=len(pending),
+        self.store.wait_until_processed(
+            EpisodeHandle(list(pending)),
+            deadline=deadline,
         )
-        self.store.wait_until_processed(handle, deadline=deadline)
         self._pending_episode_uuids = []
     
     def get_stats(self) -> Dict[str, Any]:

@@ -29,6 +29,7 @@ from .store import (
     GraphEdge,
     GraphNode,
     GraphNotFoundError,
+    IngestionHandle,
     ProgressCallback,
     SearchResult,
     TextEpisode,
@@ -52,6 +53,31 @@ class BatchSubmission:
     @property
     def episode_ids(self) -> list[str]:
         return list(self.episode_uuids)
+
+
+def build_operation_id(graph_id: str, chunks: list[str]) -> str:
+    """Deterministic identity used to reconcile an ambiguous batch create."""
+
+    payload_hash = hashlib.sha256("\0".join(chunks).encode("utf-8")).hexdigest()
+    return hashlib.sha256(
+        f"{graph_id}:{payload_hash}".encode("utf-8")
+    ).hexdigest()
+
+
+def validate_batch_chunks(chunks: list[str], *, batch_size: int = 350) -> None:
+    """Validate every Batch API limit before the first Cloud mutation."""
+
+    if not chunks:
+        raise ValueError("At least one text chunk is required")
+    if not 1 <= batch_size <= 350:
+        raise ValueError("batch_size must be between 1 and 350")
+    if len(chunks) > 50_000:
+        raise ValueError("A Zep batch cannot contain more than 50,000 items")
+    oversized = [index for index, chunk in enumerate(chunks) if len(chunk) > 10_000]
+    if oversized:
+        raise ValueError(
+            f"Zep batch item exceeds 10,000 characters at chunk {oversized[0]}"
+        )
 
 
 def _episode_list(value: Any) -> list[str]:
@@ -141,10 +167,7 @@ class ZepGraphStore:
 
     @staticmethod
     def build_operation_id(graph_id: str, chunks: list[str]) -> str:
-        payload_hash = hashlib.sha256("\0".join(chunks).encode("utf-8")).hexdigest()
-        return hashlib.sha256(
-            f"{graph_id}:{payload_hash}".encode("utf-8")
-        ).hexdigest()
+        return build_operation_id(graph_id, chunks)
 
     def _find_batch_by_operation_id(
         self,
@@ -426,19 +449,7 @@ class ZepGraphStore:
 
     @staticmethod
     def validate_batch_chunks(chunks: list[str], *, batch_size: int = 350) -> None:
-        """Validate every Batch API limit before the first Cloud mutation."""
-
-        if not chunks:
-            raise ValueError("At least one text chunk is required")
-        if not 1 <= batch_size <= 350:
-            raise ValueError("batch_size must be between 1 and 350")
-        if len(chunks) > 50_000:
-            raise ValueError("A Zep batch cannot contain more than 50,000 items")
-        oversized = [index for index, chunk in enumerate(chunks) if len(chunk) > 10_000]
-        if oversized:
-            raise ValueError(
-                f"Zep batch item exceeds 10,000 characters at chunk {oversized[0]}"
-            )
+        validate_batch_chunks(chunks, batch_size=batch_size)
 
     def _list_batch_items(self, batch_id: str) -> list[Any]:
         items: list[Any] = []
@@ -694,12 +705,12 @@ class ZepGraphStore:
 
     def wait_until_processed(
         self,
-        handle: BatchSubmission,
+        handle: IngestionHandle,
         *,
         deadline: float | None = None,
         on_progress: ProgressCallback | None = None,
     ) -> list[str]:
-        if handle.batch_id:
+        if getattr(handle, "batch_id", None):
             timeout = None
             if deadline is not None:
                 timeout = deadline - time.time()

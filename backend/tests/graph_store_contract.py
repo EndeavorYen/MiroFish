@@ -10,7 +10,7 @@ import time
 
 import pytest
 
-from app.graph.store import GraphNotFoundError, TextEpisode
+from app.graph.store import EpisodeHandle, GraphNotFoundError, TextEpisode
 
 
 def test_graph_lifecycle_roundtrip(graph_store):
@@ -34,3 +34,16 @@ def test_episode_ingestion_is_waitable(graph_store):
     assert len(handle.episode_ids) == 1
     processed = graph_store.wait_until_processed(handle, deadline=time.time() + 5)
     assert processed == handle.episode_ids
+
+
+def test_wait_accepts_known_episode_ids(graph_store):
+    graph_store.create_graph("g", graph_id="g1")
+    handle = graph_store.add_text_episodes(
+        "g1",
+        [TextEpisode("Alice met Bob")],
+        durable=False,
+    )
+    known = EpisodeHandle(handle.episode_ids)
+    assert graph_store.wait_until_processed(known, deadline=time.time() + 5) == (
+        handle.episode_ids
+    )

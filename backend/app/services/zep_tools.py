@@ -15,7 +15,6 @@ from dataclasses import dataclass, field
 
 from ..config import Config
 from ..graph.store import GraphNotFoundError, get_graph_store
-from ..graph.zep_store import ZepGraphStore
 from ..utils.logger import get_logger
 from ..utils.llm_client import LLMClient
 from ..utils.locale import get_locale, t
@@ -428,20 +427,11 @@ class ZepToolsService:
     
     def __init__(self, api_key: Optional[str] = None, llm_client: Optional[LLMClient] = None):
         self.api_key = api_key or Config.ZEP_API_KEY
-        if not self.api_key:
-            raise ValueError("ZEP_API_KEY 未配置")
-        
+        # get_graph_store() owns backend selection and the ZEP_API_KEY check.
         self.store = get_graph_store(api_key=self.api_key)
         # LLM客户端用于InsightForge生成子问题
         self._llm_client = llm_client
         logger.info(t("console.zepToolsInitialized"))
-
-    def _store(self) -> ZepGraphStore:
-        store = getattr(self, "store", None)
-        if store is None:
-            store = ZepGraphStore(self.client)
-            self.store = store
-        return store
     
     @property
     def llm(self) -> LLMClient:
@@ -488,7 +478,7 @@ class ZepToolsService:
         zep_limit = normalize_zep_search_limit(limit)
 
         try:
-            search_results = self._store().search(
+            search_results = self.store.search(
                 graph_id,
                 zep_query,
                 scope,
@@ -658,7 +648,7 @@ class ZepToolsService:
         """
         logger.info(t("console.fetchingAllNodes", graphId=graph_id))
 
-        nodes = self._store().list_nodes(graph_id)
+        nodes = self.store.list_nodes(graph_id)
 
         result = []
         for node in nodes:
@@ -687,7 +677,7 @@ class ZepToolsService:
         """
         logger.info(t("console.fetchingAllEdges", graphId=graph_id))
 
-        edges = self._store().list_edges(graph_id)
+        edges = self.store.list_edges(graph_id)
 
         result = []
         for edge in edges:
@@ -724,7 +714,7 @@ class ZepToolsService:
         logger.info(t("console.fetchingNodeDetail", uuid=node_uuid[:8]))
         
         try:
-            node = self._store().get_node(node_uuid)
+            node = self.store.get_node(node_uuid)
             
             if not node:
                 return None

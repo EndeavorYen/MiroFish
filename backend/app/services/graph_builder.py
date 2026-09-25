@@ -3,14 +3,20 @@
 接口2：使用Zep API构建Standalone Graph
 """
 
-import time  # ingestion timeout tests patch graph_builder.time
+import time
 import threading
 from typing import Dict, Any, List, Optional, Callable
 from dataclasses import dataclass
 
 from ..config import Config
-from ..graph.store import get_graph_store
-from ..graph.zep_store import BatchSubmission, ZepGraphStore
+from ..graph.store import EpisodeHandle, IngestionHandle, TextEpisode, get_graph_store
+# Zep batch identity helpers stay importable here for the persisted-batch
+# resume path in app/api/graph.py.
+from ..graph.zep_store import (
+    BatchSubmission,
+    build_operation_id as _build_operation_id,
+    validate_batch_chunks as _validate_batch_chunks,
+)
 from ..models.task import TaskManager, TaskStatus
 from .text_processor import TextProcessor
 from ..utils.locale import t, get_locale, set_locale
@@ -41,18 +47,9 @@ class GraphBuilderService:
     
     def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key or Config.ZEP_API_KEY
-        if not self.api_key:
-            raise ValueError("ZEP_API_KEY 未配置")
-        
+        # get_graph_store() owns backend selection and the ZEP_API_KEY check.
         self.store = get_graph_store(api_key=self.api_key)
         self.task_manager = TaskManager()
-
-    def _store(self) -> ZepGraphStore:
-        store = getattr(self, "store", None)
-        if store is None:
-            store = ZepGraphStore(self.client)
-            self.store = store
-        return store
     
     def build_graph_async(
         self,
@@ -206,7 +203,7 @@ class GraphBuilderService:
     ) -> str:
         """Create a graph with a caller-durable ID and reconcile lost replies."""
 
-        return self._store().create_graph(
+        return self.store.create_graph(
             name,
             graph_id=graph_id,
             graph_id_callback=graph_id_callback,
@@ -214,11 +211,11 @@ class GraphBuilderService:
 
     @staticmethod
     def build_operation_id(graph_id: str, chunks: List[str]) -> str:
-        return ZepGraphStore.build_operation_id(graph_id, chunks)
+        return _build_operation_id(graph_id, chunks)
 
     def set_ontology(self, graph_id: str, ontology: Dict[str, Any]):
         """设置图谱本体（公开方法）"""
-        self._store().set_ontology(graph_id, ontology)
+        self.store.set_ontology(graph_id, ontology)
 
     def add_text_batches(
         self,
@@ -227,37 +224,43 @@ class GraphBuilderService:
         batch_size: int = 350,
         progress_callback: Optional[Callable] = None,
         batch_created_callback: Optional[Callable[[str | None, str], None]] = None,
-    ) -> BatchSubmission:
-        """Submit document chunks through Zep's current Batch API."""
+    ) -> IngestionHandle:
+        """Submit document chunks as durable text episodes."""
 
-        return self._store().add_text_batches(
+        return self.store.add_text_episodes(
             graph_id,
-            chunks,
+            [TextEpisode(text=chunk) for chunk in chunks],
+            durable=True,
             batch_size=batch_size,
-            progress_callback=progress_callback,
-            batch_created_callback=batch_created_callback,
+            on_submitted=batch_created_callback,
+            on_progress=progress_callback,
         )
 
     @staticmethod
     def validate_batch_chunks(chunks: List[str], *, batch_size: int = 350) -> None:
         """Validate every Batch API limit before the first Cloud mutation."""
 
-        ZepGraphStore.validate_batch_chunks(chunks, batch_size=batch_size)
+        _validate_batch_chunks(chunks, batch_size=batch_size)
 
     def get_batch_summary(self, batch_id: str) -> Any:
-        """Read a persisted batch identity for restart reconciliation."""
+        """Read a persisted Zep batch identity for restart reconciliation."""
 
-        return self._store().get_batch_summary(batch_id)
+        return self.store.get_batch_summary(batch_id)
 
     def _wait_for_batch(
         self,
-        submission: BatchSubmission,
+        submission: IngestionHandle,
         progress_callback: Optional[Callable] = None,
         timeout: int | None = None,
     ) -> List[str]:
-        """Wait for a Batch API terminal state and validate every item."""
+        """Wait until every submitted episode is processed."""
 
-        return self._store()._wait_for_batch(submission, progress_callback, timeout)
+        deadline = None if timeout is None else time.time() + timeout
+        return self.store.wait_until_processed(
+            submission,
+            deadline=deadline,
+            on_progress=progress_callback,
+        )
 
     def _wait_for_episodes(
         self,
@@ -266,16 +269,17 @@ class GraphBuilderService:
         timeout: int | None = None,
     ):
         """等待所有 episode 处理完成（通过查询每个 episode 的 processed 状态）"""
-        store = self._store()
-        if timeout is None:
-            store._wait_for_episodes(episode_uuids, progress_callback)
-        else:
-            store._wait_for_episodes(episode_uuids, progress_callback, timeout)
+        deadline = None if timeout is None else time.time() + timeout
+        self.store.wait_until_processed(
+            EpisodeHandle(list(episode_uuids)),
+            deadline=deadline,
+            on_progress=progress_callback,
+        )
 
     def _get_graph_info(self, graph_id: str) -> GraphInfo:
         """获取图谱信息"""
-        nodes = self._store().list_nodes(graph_id)
-        edges = self._store().list_edges(graph_id)
+        nodes = self.store.list_nodes(graph_id)
+        edges = self.store.list_edges(graph_id)
 
         entity_types = set()
         for node in nodes:
@@ -293,7 +297,7 @@ class GraphBuilderService:
 
     def get_graph_data(self, graph_id: str) -> Dict[str, Any]:
         """获取完整图谱数据（包含详细信息）"""
-        store = self._store()
+        store = self.store
         nodes = store.list_nodes(graph_id)
         edges = store.list_edges(graph_id)
 
@@ -356,5 +360,5 @@ class GraphBuilderService:
 
     def delete_graph(self, graph_id: str):
         """删除图谱"""
-        self._store().delete_graph(graph_id)
+        self.store.delete_graph(graph_id)
  

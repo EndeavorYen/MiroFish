@@ -56,6 +56,13 @@ class IngestionHandle(Protocol):
     def episode_ids(self) -> list[str]: ...
 
 
+@dataclass(frozen=True)
+class EpisodeHandle:
+    """Backend-neutral handle for episodes whose ids are already known."""
+
+    episode_ids: list[str]
+
+
 ProgressCallback = Callable[[str, float], None]
 
 

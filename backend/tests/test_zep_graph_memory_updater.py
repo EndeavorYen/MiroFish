@@ -188,7 +188,7 @@ def test_pending_episode_wait_has_a_deadline(monkeypatch):
         lambda **_kwargs: SimpleNamespace(uuid_="episode-1"),
     )
     updater._pending_episode_uuids = ["episode-1"]
-    updater.client.graph.episode.get = lambda **_kwargs: SimpleNamespace(
+    updater.store.client.graph.episode.get = lambda **_kwargs: SimpleNamespace(
         processed=False
     )
     timestamps = iter([0.0, 2.0])

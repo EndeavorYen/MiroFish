@@ -8,7 +8,6 @@ from dataclasses import dataclass, field
 
 from ..config import Config
 from ..graph.store import GraphNotFoundError, get_graph_store
-from ..graph.zep_store import ZepGraphStore
 from ..utils.logger import get_logger
 from ..utils.zep import call_zep_read_with_retry
 
@@ -79,17 +78,8 @@ class ZepEntityReader:
     
     def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key or Config.ZEP_API_KEY
-        if not self.api_key:
-            raise ValueError("ZEP_API_KEY 未配置")
-        
+        # get_graph_store() owns backend selection and the ZEP_API_KEY check.
         self.store = get_graph_store(api_key=self.api_key)
-
-    def _store(self) -> ZepGraphStore:
-        store = getattr(self, "store", None)
-        if store is None:
-            store = ZepGraphStore(self.client)
-            self.store = store
-        return store
     
     def _call_with_retry(
         self, 
@@ -129,7 +119,7 @@ class ZepEntityReader:
         """
         logger.info(f"获取图谱 {graph_id} 的所有节点...")
 
-        nodes = self._store().list_nodes(graph_id)
+        nodes = self.store.list_nodes(graph_id)
 
         nodes_data = []
         for node in nodes:
@@ -156,7 +146,7 @@ class ZepEntityReader:
         """
         logger.info(f"获取图谱 {graph_id} 的所有边...")
 
-        edges = self._store().list_edges(graph_id)
+        edges = self.store.list_edges(graph_id)
 
         edges_data = []
         for edge in edges:
@@ -202,7 +192,7 @@ class ZepEntityReader:
                 ]
 
             # 使用重试机制调用Zep API
-            edges = self._store().get_node_edges(node_uuid)
+            edges = self.store.get_node_edges(node_uuid)
             
             edges_data = []
             for edge in edges:
@@ -357,7 +347,7 @@ class ZepEntityReader:
         """
         try:
             # 使用重试机制获取节点
-            node = self._store().get_node(entity_uuid)
+            node = self.store.get_node(entity_uuid)
             
             if not node:
                 return None

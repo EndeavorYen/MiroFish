@@ -45,7 +45,11 @@ STOP_WORDS = (
     "根據", "代表", "表示", "指出", "發表", "召開", "宣佈", "宣布", "提交", "針對", "關於",
     "包括", "以及", "隨著", "呼籲", "要求", "質疑", "認為", "強調", "希望", "報導",
     "委託", "批評", "本土", "本地", "首批",
-    # Function words that jieba glues around a soft stop character.
+)
+# Function words that jieba glues around a soft stop character. Their
+# characters also occur inside names (工業經濟, 大同時代), so they stop a span
+# only when jieba produced exactly that word as a token.
+FUNCTION_WORDS = (
     "經過", "當時", "如果", "以前", "以後", "使得", "與其", "為此", "同時", "如何",
     "因為", "作為", "所以", "例如", "已經", "業經", "可以", "以為", "如同", "雖然",
     "但是", "而且", "因此", "然而", "以便", "為了", "當然", "經由",
@@ -215,6 +219,11 @@ def _left_edge(
             prefix.endswith(word)
             and (len(word) > 1 or word not in SOFT_STOP_CHARS or not soft_kept(begin - 1))
             for word in STOP_WORDS
+        ):
+            break
+        if any(
+            prefix.endswith(word) and spans.get(begin - 1) == (begin - len(word), begin)
+            for word in FUNCTION_WORDS
         ):
             break
         if not cross_orgs and begin != suffix_start and any(

@@ -311,3 +311,23 @@ def test_specific_person_types_keep_the_person_guard():
         [_Typed("王明大學", "Organization", 0.9, "org")], [("王明", "Student")], []
     )
     assert canonical["王明大學"] == "王明大學" and fake.calls["noul"] == 0
+
+
+def test_function_words_inside_names_do_not_cut_them():
+    for text, name in {
+        "中國社會科學院工業經濟研究所昨日發布報告。": "工業經濟研究所",
+        "產業經濟研究院指出成長趨緩。": "產業經濟研究院",
+        "企業經營研究協會理事長說。": "企業經營研究協會",
+        "大同時代基金會今日成立。": "大同時代基金會",
+    }.items():
+        options = {o for c in find_candidates(text) for o in c.options()}
+        assert name in options, (text, options)
+
+
+def test_person_like_type_uses_the_head_word():
+    from app.graph.local_extractor import _person_like_type
+
+    for t in (None, "Person", "Student", "GovernmentOfficial", "Celebrity", "CorporateExecutive"):
+        assert _person_like_type(t), t
+    for t in ("StudentUnion", "ExecutiveYuan", "ParentCompany", "PresidentialOffice", "AcademicInstitution", "Organization"):
+        assert not _person_like_type(t), t

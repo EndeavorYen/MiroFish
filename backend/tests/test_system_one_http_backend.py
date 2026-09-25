@@ -126,6 +126,12 @@ def test_http_backend_accepts_base_url_with_path(mock_server):
     assert _Handler.received[0]["path"] == "/v1/systemone"
 
 
+def test_http_backend_accepts_openai_style_v1_base(mock_server):
+    # The shared SYSTEM_ONE_BASE_URL default ends in /v1 for the local backend.
+    HttpBackend(base_url=mock_server + "/v1/").ask(_request())
+    assert _Handler.received[0]["path"] == "/v1/systemone"
+
+
 def test_factory_selects_backend(monkeypatch):
     from app.config import Config
     from app.system_one.backends import LocalReadoutBackend

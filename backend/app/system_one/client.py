@@ -62,6 +62,11 @@ def get_system_one_client() -> SystemOneClient:
 
     backend = (Config.SYSTEM_ONE_BACKEND or "local").strip().lower()
     if backend == "local":
+        if Config.SYSTEM_ONE_PROMPT_FORMAT not in ("chatml", "plain"):
+            raise ValueError(
+                "SYSTEM_ONE_PROMPT_FORMAT must be chatml or plain, "
+                f"got {Config.SYSTEM_ONE_PROMPT_FORMAT!r}"
+            )
         return SystemOneClient(
             LocalReadoutBackend(
                 base_url=Config.SYSTEM_ONE_BASE_URL,

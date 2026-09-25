@@ -59,4 +59,6 @@ def ask_tree(
         path.append(TreeStep(node["name"], chosen, dict(answer.probabilities)))
         current_state = f"{current_state}\n{node['name']}: {chosen}"
         node = (node.get("children") or {}).get(chosen)
+    if node is not None:
+        raise ValueError(f"decision tree is deeper than max_depth={max_depth}")
     return path

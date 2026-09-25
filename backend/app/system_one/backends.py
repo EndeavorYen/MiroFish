@@ -192,7 +192,13 @@ class HttpBackend:
         timeout: float = 60.0,
     ) -> None:
         base = base_url.rstrip("/")
-        self.url = base if base.endswith("/v1/systemone") else f"{base}/v1/systemone"
+        if base.endswith("/v1/systemone"):
+            self.url = base
+        else:
+            # Accept the same "/v1" base the local backend uses.
+            if base.endswith("/v1"):
+                base = base[: -len("/v1")]
+            self.url = f"{base}/v1/systemone"
         self.api_key = api_key
         self.model = model
         self.timeout = timeout

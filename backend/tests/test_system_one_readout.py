@@ -82,6 +82,8 @@ def test_score_level_limits():
         ScoreQuestion(instructions="x", criteria=["only one"])
     with pytest.raises(ValueError):
         ScoreQuestion(instructions="x", criteria=[str(i) for i in range(11)])
+    with pytest.raises(ValueError):
+        ScoreQuestion(instructions="x", criteria=["low", "low", "high"])
 
 
 def test_noul_compares_yes_and_no_only():

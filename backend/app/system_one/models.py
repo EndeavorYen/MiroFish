@@ -53,6 +53,9 @@ class ScoreQuestion(_Question):
             raise ValueError(
                 f"score needs {MIN_SCORE_LEVELS}-{MAX_SCORE_LEVELS} levels, got {len(value)}"
             )
+        if len(set(value)) != len(value):
+            # probabilities are keyed by level text; duplicates would merge.
+            raise ValueError("score levels must be distinct")
         return value
 
 
@@ -91,6 +94,8 @@ class ScoreAnswer(_Answer):
 
 
 class NoulAnswer(_Answer):
+    """Jev noul: the probability of "yes". Jev has no separate confidence."""
+
     type: Literal["noul"] = "noul"
     noul: float
 

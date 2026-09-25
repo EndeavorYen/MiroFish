@@ -115,6 +115,14 @@ def test_ask_tree_appends_previous_answer_to_state():
     assert "action: engage" not in fake.prompts[0]
 
 
+def test_ask_tree_rejects_trees_deeper_than_max_depth():
+    import pytest
+
+    client, _ = _client()
+    with pytest.raises(ValueError):
+        ask_tree(client, "s", TREE, random.Random(3), mode="argmax", max_depth=1)
+
+
 def test_ask_tree_argmax_mode():
     client, _ = _client()
     path = ask_tree(client, "s", TREE, random.Random(3), mode="argmax")

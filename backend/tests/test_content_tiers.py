@@ -246,3 +246,48 @@ def test_null_influence_weight_does_not_break_provider(tmp_path):
     config = {"agent_configs": [{"agent_id": 1, "entity_name": "A", "influence_weight": None}]}
     provider = build_tiered_provider("twitter", str(tmp_path), config, llm_fn=lambda p, m: ("x", 1))
     assert provider.followers == {1: 0}
+
+
+def test_failed_bucket_falls_back_without_serial_retries():
+    import threading
+    import time
+
+    calls = []
+
+    def failing(prompt, max_tokens):
+        calls.append(prompt)
+        time.sleep(0.2)
+        raise TimeoutError("down")
+
+    provider = _provider(llm_fn=failing, budget_per_round=1000)
+    threads = [threading.Thread(target=provider.generate, args=(_intent(agent=a),)) for a in range(5)]
+    started = time.perf_counter()
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert len(calls) == 1
+    assert time.perf_counter() - started < 5
+    assert provider._round.tiers == {"template": 5, "shared": 0, "full": 0}
+    assert provider._remaining == 1000
+    assert not provider._inflight
+
+
+def test_template_errors_still_release_the_bucket(monkeypatch):
+    provider = _provider(llm_fn=lambda p, m: ("", 0), budget_per_round=1000)
+
+    def broken(intent):
+        raise KeyError("placeholder")
+
+    monkeypatch.setattr(provider, "template_text", broken)
+    with pytest.raises(KeyError):
+        provider.generate(_intent())
+    assert not provider._inflight and provider._remaining == 1000
+
+
+def test_clean_generation_handles_missing_opening_tag():
+    from app.simulation_policy.tiers import clean_generation
+
+    assert clean_generation("思考中…</think>真正的貼文") == "真正的貼文"
+    assert clean_generation("<think>還沒想完") == ""
+    assert clean_generation("「一般貼文」") == "一般貼文"

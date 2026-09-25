@@ -41,12 +41,15 @@ LlmFn = Callable[[str, int], tuple[str, int]]  # (prompt, max_tokens) -> (text, 
 SHARED_MAX_TOKENS = 80
 FULL_MAX_TOKENS = 120
 _THINK_RE = re.compile(r"<think>.*?(</think>|$)", re.S)
+_LEADING_THINK_END_RE = re.compile(r"^.*?</think>", re.S)
 
 
 def clean_generation(text: str) -> str:
     """Drop reasoning blocks (closed or cut off) and collapse whitespace."""
 
     text = _THINK_RE.sub("", text or "")
+    if "</think>" in text:  # reasoning whose opening tag the server dropped
+        text = _LEADING_THINK_END_RE.sub("", text, count=1)
     return " ".join(text.split()).strip("「」\"")
 
 
@@ -129,6 +132,7 @@ class TieredContentProvider:
         self._shared_cache: dict[tuple, str] = {}
         # One model call per bucket: later agents wait for the first one.
         self._inflight: dict[tuple, threading.Event] = {}
+        self._failed_buckets: set[tuple] = set()
         self.history: list[dict[str, Any]] = []
         ranked = sorted(self.followers, key=lambda a: (-self.followers[a], a))
         count = max(1, int(round(len(ranked) * top_k_percent / 100))) if ranked else 0
@@ -220,73 +224,94 @@ class TieredContentProvider:
 
     # --------------------------------------------------------------- main
 
+    def _choose_tier(self, intent: ContentIntent, bucket: tuple) -> str:
+        if self.llm_fn is None:
+            return "template"
+        if self.influential(intent.persona_ref) and self._remaining >= FULL_MAX_TOKENS:
+            return "full"
+        if bucket in self._failed_buckets:
+            return "template"  # the shared call for this bucket already failed
+        if bucket in self._shared_cache or self._remaining >= SHARED_MAX_TOKENS:
+            return "shared"
+        return "template"
+
     def generate(self, intent: ContentIntent) -> str:
         band = stance_band(intent.stance)
         bucket = (intent.round_num, intent.kind, band, intent.target_ref)
         waited: threading.Event | None = None
         while True:
             with self._lock:
-                waiter = self._inflight.get(bucket)
-                if waiter is not None and waiter is not waited and bucket not in self._shared_cache:
+                self._rollover(intent.round_num)
+                tier = self._choose_tier(intent, bucket)
+                waiter = self._inflight.get(bucket) if tier == "shared" else None
+                if waiter is not None and waiter is not waited:
                     pass  # another agent is generating this bucket; wait below
                 else:
-                    self._rollover(intent.round_num)
                     stats = self._round
-                    tier = "template"
-                    if self.llm_fn is not None:
-                        if self.influential(intent.persona_ref) and self._remaining >= FULL_MAX_TOKENS:
-                            tier = "full"
-                        elif bucket in self._shared_cache or self._remaining >= SHARED_MAX_TOKENS:
-                            tier = "shared"
                     if tier == "shared" and bucket in self._shared_cache:
-                        base = self._shared_cache[bucket]
+                        text = self._vary(
+                            self._shared_cache[bucket],
+                            _rng("shared", intent.persona_ref, *bucket),
+                            intent,
+                        )
                         stats.cache_hits += 1
-                        text = self._vary(base, _rng("shared", intent.persona_ref, *bucket), intent)
                         stats.tiers["shared"] += 1
                         stats.texts.append(text)
                         return text
-                    # Reserve the budget and claim the bucket before the model
-                    # call, all under the lock.
-                    reserve = FULL_MAX_TOKENS if tier == "full" else SHARED_MAX_TOKENS if tier == "shared" else 0
+                    if waiter is not None:
+                        tier = "template"  # the owner stalled past the wait
+                    # Reserve the budget and claim the bucket under the lock.
+                    reserve = {"full": FULL_MAX_TOKENS, "shared": SHARED_MAX_TOKENS}.get(tier, 0)
                     self._remaining -= reserve
                     owner = None
                     if tier == "shared":
                         owner = threading.Event()
                         self._inflight[bucket] = owner
                     break
-            # A stalled owner is waited on once (60 s), then ignored.
             waiter.wait(timeout=60)
             waited = waiter
 
-        if tier == "template":
-            text = self.template_text(intent)
-            spent = 0
-        else:
-            prompt = self._full_prompt(intent) if tier == "full" else self._shared_prompt(intent)
-            try:
-                raw, spent = self.llm_fn(prompt, reserve)
-                raw = clean_generation(raw)
-            except Exception as error:  # noqa: BLE001 - degrade, never fail a round
-                logger.warning("content generation failed, using template: %s", error)
-                raw, spent = "", 0
-            if not raw:
-                tier, text = "template", self.template_text(intent)
-            elif tier == "shared":
-                text = self._vary(raw, _rng("shared", intent.persona_ref, *bucket), intent)
+        spent = 0
+        raw = ""
+        text = ""
+        try:
+            if tier != "template":
+                prompt = self._full_prompt(intent) if tier == "full" else self._shared_prompt(intent)
+                try:
+                    raw, spent = self.llm_fn(prompt, reserve)
+                    raw = clean_generation(raw)
+                except Exception as error:  # noqa: BLE001 - degrade, never fail a round
+                    logger.warning("content generation failed, using template: %s", error)
+                    raw, spent = "", 0
+                if raw:
+                    text = (
+                        self._vary(raw, _rng("shared", intent.persona_ref, *bucket), intent)
+                        if tier == "shared"
+                        else raw
+                    )
+            if not text:
+                generated_tier = tier
+                tier = "template"
+                text = self.template_text(intent)
             else:
-                text = raw
+                generated_tier = tier
+        finally:
+            with self._lock:
+                self._remaining += reserve - spent
+                if owner is not None:
+                    if raw and bucket not in self._shared_cache:
+                        self._shared_cache[bucket] = raw
+                    elif not raw:
+                        self._failed_buckets.add(bucket)
+                    if self._inflight.get(bucket) is owner:
+                        del self._inflight[bucket]
+                    owner.set()  # always wake waiters, even if replaced
 
         with self._lock:
             self._rollover(intent.round_num)
             stats = self._round
-            self._remaining += reserve - spent
-            if tier == "shared" and text and bucket not in self._shared_cache:
-                self._shared_cache[bucket] = raw
-            if owner is not None and self._inflight.get(bucket) is owner:
-                del self._inflight[bucket]
-                owner.set()
-            if tier in ("shared", "full"):
-                stats.decode_tokens[tier] += spent
+            if generated_tier in ("shared", "full"):
+                stats.decode_tokens[generated_tier] += spent
             stats.tiers[tier] += 1
             stats.texts.append(text)
         return text

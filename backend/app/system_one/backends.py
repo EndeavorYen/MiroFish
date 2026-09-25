@@ -19,12 +19,14 @@ Both are pre-mask values, which is what the in-set softmax expects.
 
 from __future__ import annotations
 
+import contextvars
 import json
+import threading
 import time
-import urllib.error
-import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable, Protocol
+
+import httpx
 
 from ..utils.llm_usage import record_usage
 from .models import SystemOneRequest, SystemOneResponse, Usage
@@ -37,16 +39,33 @@ class SystemOneBackend(Protocol):
     def ask(self, request: SystemOneRequest) -> SystemOneResponse: ...
 
 
-_RETRYABLE = (ConnectionResetError, ConnectionAbortedError, TimeoutError)
+_CLIENT: httpx.Client | None = None
+_CLIENT_LOCK = threading.Lock()
+# Connection-level failures worth retrying for a side-effect-free question.
+_RETRYABLE = (
+    httpx.ConnectError,
+    httpx.ReadError,
+    httpx.WriteError,
+    httpx.RemoteProtocolError,
+    httpx.TimeoutException,
+)
 
 
-def _is_connection_reset(error: BaseException) -> bool:
-    """Dropped or stalled connection; safe to retry a side-effect-free question."""
+def _client() -> httpx.Client:
+    """One process-wide keep-alive client (httpx.Client is thread-safe).
 
-    if isinstance(error, _RETRYABLE):
-        return True
-    reason = getattr(error, "reason", None)
-    return isinstance(reason, _RETRYABLE)
+    Opening a new TCP connection per readout (thousands per simulation)
+    made Windows loopback drop connections; a shared pool avoids that.
+    """
+
+    global _CLIENT
+    with _CLIENT_LOCK:
+        if _CLIENT is None:
+            _CLIENT = httpx.Client(
+                trust_env=False,
+                limits=httpx.Limits(max_connections=64, max_keepalive_connections=32),
+            )
+        return _CLIENT
 
 
 def _http_post(
@@ -55,11 +74,10 @@ def _http_post(
     api_key: str | None,
     timeout: float,
     *,
-    reset_retries: int = 4,
+    reset_retries: int = 5,
 ) -> Any:
     """POST JSON. System One questions have no side effects, so a dropped or
-    timed-out connection (seen on Windows loopback and under a full server
-    queue) is retried a bounded number of times.
+    timed-out connection is retried with exponential backoff.
     """
 
     headers = {"Content-Type": "application/json"}
@@ -67,18 +85,24 @@ def _http_post(
         headers["Authorization"] = f"Bearer {api_key}"
     data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     for attempt in range(reset_retries + 1):
-        request = urllib.request.Request(url, data=data, headers=headers, method="POST")
         try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:
-                return json.loads(response.read().decode("utf-8"))
-        except urllib.error.HTTPError as error:
-            detail = error.read().decode("utf-8", errors="replace")[:500]
-            raise RuntimeError(f"System One HTTP {error.code} from {url}: {detail}") from error
-        except (OSError, urllib.error.URLError) as error:
-            if attempt < reset_retries and _is_connection_reset(error):
-                time.sleep(0.25 * (attempt + 1))
+            response = _client().post(url, content=data, headers=headers, timeout=timeout)
+        except _RETRYABLE:
+            if attempt < reset_retries:
+                # A broken pooled connection is dropped by httpx; back off.
+                time.sleep(min(4.0, 0.25 * (2 ** attempt)))
                 continue
             raise
+        if response.status_code >= 400:
+            raise RuntimeError(
+                f"System One HTTP {response.status_code} from {url}: {response.text[:500]}"
+            )
+        try:
+            return response.json()
+        except ValueError as error:
+            raise RuntimeError(
+                f"System One response from {url} is not JSON: {response.text[:200]}"
+            ) from error
 
 
 def parse_top_logprobs(response: dict[str, Any]) -> dict[str, float]:
@@ -179,8 +203,12 @@ class LocalReadoutBackend:
         if rest:
             workers = max(1, min(self.max_workers, len(rest)))
             with ThreadPoolExecutor(max_workers=workers) as pool:
+                # Copy the context so each worker records usage under the
+                # caller's usage_stage (contextvars do not cross threads).
                 futures = {
-                    name: pool.submit(self._ask_one, request.state, question)
+                    name: pool.submit(
+                        contextvars.copy_context().run, self._ask_one, request.state, question
+                    )
                     for name, question in rest
                 }
                 for name, future in futures.items():

@@ -302,7 +302,21 @@ class OasisProfileGenerator:
         # 构建上下文信息
         context = self._build_entity_context(entity)
         
-        if use_llm:
+        if use_llm and Config.structured_mode(Config.PROFILE_MODE):
+            # PROFILE_MODE=structured replaces the LLM path with System One
+            # fields and template bio/persona; use_llm=False stays rule-based.
+            from ..system_one.client import get_system_one_client
+            from .prep_structured import structured_profile
+
+            profile_data = structured_profile(
+                get_system_one_client(),
+                name,
+                entity_type,
+                entity.summary or "",
+                context,
+                seed=entity.uuid,
+            )
+        elif use_llm:
             # 使用LLM生成详细人设
             profile_data = self._generate_profile_with_llm(
                 entity_name=name,

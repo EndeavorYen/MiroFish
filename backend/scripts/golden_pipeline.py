@@ -223,7 +223,8 @@ def cmd_prepare(args: argparse.Namespace) -> int:
         state.simulation_id,
         simulation_requirement=requirement,
         document_text=seed_text,
-        use_llm_for_profiles=args.prep_mode == "llm",
+        # PROFILE_MODE (set from --prep-mode) chooses LLM vs System One.
+        use_llm_for_profiles=True,
     )
     timings["prepare_s"] = round(time.perf_counter() - started, 1)
     sim_dir = Path(manager._get_simulation_dir(state.simulation_id))

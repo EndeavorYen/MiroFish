@@ -8,6 +8,7 @@ import logging
 import re
 from typing import Dict, Any, List, Optional
 import os
+from ..config import Config
 from ..utils.llm_client import LLMClient
 from ..utils.llm_usage import usage_stage
 from ..utils.locale import get_language_instruction
@@ -229,6 +230,18 @@ class OntologyGenerator:
             target_metrics_dir = os.path.join(ProjectManager._get_project_dir(project_id), "metrics")
 
         with usage_stage("ontology", metrics_dir=target_metrics_dir):
+            if Config.structured_mode(Config.ONTOLOGY_MODE):
+                # System One picks a preset and optional types; no decode.
+                from ..system_one.client import get_system_one_client
+                from .prep_structured import template_ontology
+
+                result = template_ontology(
+                    get_system_one_client(),
+                    "\n\n".join(document_texts),
+                    simulation_requirement,
+                )
+                return self._validate_and_process(result)
+
             # 构建用户消息
             user_message = self._build_user_message(
                 document_texts, 

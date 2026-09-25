@@ -45,6 +45,15 @@ class Config:
     # None = pick from the model name (e5 uses "query: " / "passage: ").
     EMBED_QUERY_PREFIX = os.environ.get("EMBED_QUERY_PREFIX")
     EMBED_PASSAGE_PREFIX = os.environ.get("EMBED_PASSAGE_PREFIX")
+
+    # System One decisions (Jev-compatible). local = logit readout on the
+    # local model server; http = POST {base}/v1/systemone.
+    SYSTEM_ONE_BACKEND = os.environ.get("SYSTEM_ONE_BACKEND", "local").strip().lower()
+    SYSTEM_ONE_BASE_URL = os.environ.get("SYSTEM_ONE_BASE_URL", "http://localhost:8000/v1")
+    SYSTEM_ONE_MODEL = os.environ.get("SYSTEM_ONE_MODEL") or os.environ.get("LLM_MODEL_NAME", "qwen3.5-4b")
+    SYSTEM_ONE_API_KEY = os.environ.get("SYSTEM_ONE_API_KEY")
+    SYSTEM_ONE_TOP_K = int(os.environ.get("SYSTEM_ONE_TOP_K", "20"))
+    SYSTEM_ONE_PROMPT_FORMAT = os.environ.get("SYSTEM_ONE_PROMPT_FORMAT", "chatml").strip().lower()
     
     # 文件上传配置
     MAX_CONTENT_LENGTH = 50 * 1024 * 1024  # 50MB

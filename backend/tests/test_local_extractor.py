@@ -158,3 +158,63 @@ def test_candidate_variants_fix_common_boundary_errors():
     assert "綠源檢測研究院" in flat and "託綠源檢測研究院" not in flat
     assert "高明哲" in flat and "羅建國" in flat
     assert not any(name.startswith("託") for name in flat)
+
+
+def test_single_character_stop_words_inside_names_do_not_cut_them():
+    cases = {
+        "國際和平基金會今日發表聲明。": "國際和平基金會",
+        "台灣經濟研究院指出成長放緩。": "台灣經濟研究院",
+        "同濟大學教授表示。": "同濟大學",
+        "立法院財經委員會召開會議。": "立法院財經委員會",
+    }
+    for text, name in cases.items():
+        assert name in {o for c in find_candidates(text) for o in c.options()}, text
+
+
+def test_nested_names_do_not_co_occur_with_themselves():
+    fake = FakeSystemOne()
+    extractor = LocalExtractor(fake)
+    surfaces = {"東海市政府": ["東海市政府"], "市政府": ["市政府"]}
+    types = {"東海市政府": "GovernmentAgency", "市政府": "GovernmentAgency"}
+    relations = extractor._relations(["東海市政府今天開會。"], surfaces, types, ONTOLOGY)
+    assert relations == []
+    assert fake.calls["choice"] == 0
+
+
+def test_person_and_organization_fallbacks_are_not_merge_candidates():
+    class AlwaysSame(FakeSystemOne):
+        def noul(self, state, instructions):
+            self.calls["noul"] += 1
+            return NoulAnswer(noul=0.99)
+
+    fake = AlwaysSame()
+    from app.graph.local_extractor import _Typed
+
+    canonical = LocalExtractor(fake)._merge(
+        [_Typed("王明", "Person", 0.9), _Typed("王明基金會", "Organization", 0.9)], [], []
+    )
+    assert canonical["王明"] == "王明" and canonical["王明基金會"] == "王明基金會"
+    assert fake.calls["noul"] == 0
+
+
+def test_aliases_accumulate_across_episodes(tmp_path):
+    from app.graph.extractor import ExtractedEntity, Extraction
+    from app.graph.local_store import LocalGraphStore
+    from app.graph.store import TextEpisode
+
+    class Scripted:
+        def __init__(self):
+            self.items = iter([
+                Extraction([ExtractedEntity("凌雲飛行智能公司", "TechCompany", "a", {"aliases": ["凌雲科技"]})]),
+                Extraction([ExtractedEntity("凌雲飛行智能公司", "TechCompany", "b", {"aliases": ["凌雲飛行"]})]),
+            ])
+
+        def extract(self, text, ontology, known_entities=None):
+            return next(self.items)
+
+    store = LocalGraphStore(str(tmp_path), embedder=HashEmbedder(), extractor=Scripted())
+    store.create_graph("g", graph_id="g1")
+    store.add_text_episodes("g1", [TextEpisode("a"), TextEpisode("b")], durable=True)
+    node = store.list_nodes("g1")[0]
+    assert node.attributes["aliases"] == ["凌雲科技", "凌雲飛行"]
+    store.close()

@@ -466,7 +466,11 @@ class LocalGraphStore:
                 summary = f"{summary} {entity.summary}".strip()[:MAX_SUMMARY_CHARS]
             attributes = json.loads(row[4])
             for k, v in entity.attributes.items():
-                attributes.setdefault(k, v)
+                if isinstance(v, list) and isinstance(attributes.get(k), list):
+                    # Union list attributes such as aliases across episodes.
+                    attributes[k] = list(dict.fromkeys([*attributes[k], *v]))
+                else:
+                    attributes.setdefault(k, v)
             conn.execute(
                 "UPDATE nodes SET labels = ?, summary = ?, attributes = ? WHERE rowid = ?",
                 (

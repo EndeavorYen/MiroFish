@@ -166,16 +166,31 @@ def _suffix_matches(text: str) -> list[tuple[int, int, str]]:
     return matches
 
 
-def _left_edge(text: str, suffix_start: int, end: int, *, cross_orgs: bool) -> int:
+def _left_edge(
+    text: str,
+    suffix_start: int,
+    end: int,
+    *,
+    cross_orgs: bool,
+    single_tokens: set[int] = frozenset(),
+) -> int:
     """Walk left to punctuation or a stop word; unless ``cross_orgs``, also
-    stop where another organisation name ends (科技局|聯合交通...)."""
+    stop where another organisation name ends (科技局|聯合交通...).
+
+    A one-character stop word (和, 經, 同 ...) only stops the walk when jieba
+    splits it off as its own token; inside 國際和平基金會 or 同濟大學 it is
+    part of the name.
+    """
 
     begin = suffix_start
     while begin > 0 and end - begin < MAX_ORG_CHARS:
         prefix = text[:begin]
         if prefix[-1] in _PUNCT or not _is_cjk(prefix[-1]):
             break
-        if any(prefix.endswith(word) for word in STOP_WORDS):
+        if any(
+            prefix.endswith(word) and (len(word) > 1 or begin - 1 in single_tokens)
+            for word in STOP_WORDS
+        ):
             break
         if not cross_orgs and begin != suffix_start and any(
             prefix.endswith(s) for s in ORG_SUFFIXES
@@ -187,10 +202,11 @@ def _left_edge(text: str, suffix_start: int, end: int, *, cross_orgs: bool) -> i
 
 def _organisations(text: str, tokens: list[tuple[str, str, int, int]]) -> list[Candidate]:
     token_starts = {t[2] for t in tokens}
+    single_tokens = {t[2] for t in tokens if t[3] - t[2] == 1}
     by_end: dict[int, Candidate] = {}
     for start, end, suffix in _suffix_matches(text):
-        begin = _left_edge(text, start, end, cross_orgs=False)
-        wide = _left_edge(text, start, end, cross_orgs=True)
+        begin = _left_edge(text, start, end, cross_orgs=False, single_tokens=single_tokens)
+        wide = _left_edge(text, start, end, cross_orgs=True, single_tokens=single_tokens)
         if end - begin <= len(suffix) and end - wide <= len(suffix):
             continue
         starts = [begin] + [s for s in range(begin + 1, start) if s in token_starts]

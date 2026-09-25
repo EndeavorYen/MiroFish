@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import math
 import re
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -100,6 +101,7 @@ class LocalExtractor:
         self.merge_min_noul = merge_min_noul
         self.summary_fn = summary_fn
         self._gliner = None
+        self._gliner_lock = threading.Lock()
 
     # ----------------------------------------------------------- candidates
 
@@ -113,6 +115,10 @@ class LocalExtractor:
         return types
 
     def _load_gliner(self):
+        with self._gliner_lock:
+            return self._load_gliner_locked()
+
+    def _load_gliner_locked(self):
         if self._gliner is None:
             try:
                 from gliner import GLiNER
@@ -196,7 +202,20 @@ class LocalExtractor:
         canonical = {t.name: t.name for t in typed}
         type_of = {name: etype for name, etype in known}
         type_of.update({t.name: t.entity_type for t in typed})
-        pool = list(dict.fromkeys([name for name, _ in known] + [t.name for t in typed]))
+        # Only known names that share a character bigram with a new name can
+        # be aliases; this keeps the pool small as the graph grows.
+        new_grams = {
+            core[i : i + 2]
+            for t in typed
+            for core in [_strip_suffix(t.name)]
+            for i in range(len(core) - 1)
+        }
+        related_known = [
+            name
+            for name, _ in known
+            if any(g in _strip_suffix(name) for g in new_grams)
+        ]
+        pool = list(dict.fromkeys(related_known + [t.name for t in typed]))
         known_names = {name for name, _ in known}
 
         # A substring shared by 3+ names (東海, 東海市 ...) is not evidence.
@@ -215,7 +234,11 @@ class LocalExtractor:
 
         def compatible(a: str, b: str) -> bool:
             ta, tb = type_of.get(a), type_of.get(b)
-            return ta == tb or ta in FALLBACK_TYPES or tb in FALLBACK_TYPES
+            if ta == tb:
+                return True
+            # One generic side may meet a specific type; Person never meets
+            # Organization (王明 vs 王明基金會).
+            return (ta in FALLBACK_TYPES) != (tb in FALLBACK_TYPES)
 
         def mentions(name: str) -> str:
             return " ".join(s for s in sentences if name in s)[:300]
@@ -292,10 +315,24 @@ class LocalExtractor:
     ) -> list[ExtractedRelation]:
         relations: list[ExtractedRelation] = []
         seen: set[tuple[str, str, str]] = set()
+        forms_longest_first = sorted(
+            ((form, name) for name, forms in surfaces.items() for form in forms),
+            key=lambda item: -len(item[0]),
+        )
         for sentence in sentences:
-            present = [
-                name for name, forms in surfaces.items() if any(f in sentence for f in forms)
-            ]
+            # Claim spans longest-first so a nested name (市政府 inside
+            # 東海市政府) does not count as a second entity in the sentence.
+            claimed = [False] * len(sentence)
+            present: list[str] = []
+            for form, name in forms_longest_first:
+                for match in re.finditer(re.escape(form), sentence):
+                    span = range(match.start(), match.end())
+                    if any(claimed[i] for i in span):
+                        continue
+                    for i in span:
+                        claimed[i] = True
+                    if name not in present:
+                        present.append(name)
             for i, a in enumerate(present):
                 for b in present[i + 1 :]:
                     options = self._allowed_edges(ontology, entity_type[a], entity_type[b])

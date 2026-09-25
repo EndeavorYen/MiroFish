@@ -1,0 +1,10 @@
+{
+  "temperatures": {
+    "choice": 1.1885,
+    "noul": 1.0,
+    "score": 1.0
+  },
+  "fitted_on": "system_one_eval.jsonl",
+  "model": "qwen3.5-4b",
+  "prompt_format": "chatml"
+}

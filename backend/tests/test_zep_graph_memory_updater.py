@@ -4,6 +4,7 @@ from queue import Queue
 
 import pytest
 
+from app.graph.zep_store import ZepGraphStore
 from app.services import zep_graph_memory_updater as updater_module
 from app.services.zep_graph_memory_updater import (
     AgentActivity,
@@ -37,7 +38,11 @@ def _client(add):
 
 def _updater(monkeypatch, add, simulation_id="sim-1"):
     client = _client(add)
-    monkeypatch.setattr(updater_module, "get_zep_client", lambda _key: client)
+    monkeypatch.setattr(
+        updater_module,
+        "get_graph_store",
+        lambda **_kwargs: ZepGraphStore(client),
+    )
     updater = ZepGraphMemoryUpdater(
         "graph-1",
         api_key="test-key",

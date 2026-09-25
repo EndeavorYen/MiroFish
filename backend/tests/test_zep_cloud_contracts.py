@@ -7,6 +7,7 @@ from zep_cloud import Zep
 from zep_cloud.core.api_error import ApiError as ZepApiError
 
 from app.services import graph_builder as graph_builder_module
+from app.graph.zep_store import ZepGraphStore
 from app.services.graph_builder import BatchSubmission, GraphBuilderService
 from app.services.oasis_profile_generator import OasisProfileGenerator
 from app.services.zep_entity_reader import EntityNode, ZepEntityReader
@@ -22,7 +23,7 @@ def test_report_search_caps_the_query_sent_to_zep():
             return SimpleNamespace(edges=[], nodes=[])
 
     service = object.__new__(ZepToolsService)
-    service.client = SimpleNamespace(graph=GraphApi())
+    service.store = ZepGraphStore(SimpleNamespace(graph=GraphApi()))
 
     original_query = "q" * 401
     result = service.search_graph("graph-id", original_query)
@@ -40,7 +41,7 @@ def test_profile_context_search_caps_both_queries_sent_to_zep():
             return SimpleNamespace(edges=[], nodes=[])
 
     generator = object.__new__(OasisProfileGenerator)
-    generator.zep_client = SimpleNamespace(graph=GraphApi())
+    generator.store = ZepGraphStore(SimpleNamespace(graph=GraphApi()))
     generator.graph_id = "graph-id"
 
     entity = EntityNode(
@@ -83,7 +84,7 @@ def test_entity_context_includes_incoming_edges_from_the_full_graph():
     }
 
     reader = object.__new__(ZepEntityReader)
-    reader.client = SimpleNamespace(
+    reader.store = ZepGraphStore(SimpleNamespace(
         graph=SimpleNamespace(
             node=SimpleNamespace(
                 get=lambda **_kwargs: SimpleNamespace(
@@ -97,7 +98,7 @@ def test_entity_context_includes_incoming_edges_from_the_full_graph():
                 get_edges=lambda **_kwargs: [SimpleNamespace(**outgoing)],
             )
         )
-    )
+    ))
     reader.get_all_edges = lambda _graph_id: [incoming, outgoing, unrelated]
     reader.get_all_nodes = lambda _graph_id: [
         {"uuid": "alice", "name": "Alice", "labels": ["Person"], "summary": ""},
@@ -125,9 +126,9 @@ def test_entity_reader_does_not_turn_auth_failure_into_missing_entity():
         raise ZepApiError(status_code=401, body={"message": "unauthorized"})
 
     reader = object.__new__(ZepEntityReader)
-    reader.client = SimpleNamespace(
+    reader.store = ZepGraphStore(SimpleNamespace(
         graph=SimpleNamespace(node=SimpleNamespace(get=unauthorized))
-    )
+    ))
 
     with pytest.raises(ZepApiError) as error:
         reader.get_entity_with_context("graph-id", "node-id")
@@ -140,11 +141,11 @@ def test_entity_reader_does_not_turn_edge_failure_into_empty_data():
         raise ZepApiError(status_code=403, body={"message": "forbidden"})
 
     reader = object.__new__(ZepEntityReader)
-    reader.client = SimpleNamespace(
+    reader.store = ZepGraphStore(SimpleNamespace(
         graph=SimpleNamespace(
             node=SimpleNamespace(get_edges=forbidden),
         )
-    )
+    ))
 
     with pytest.raises(ZepApiError) as error:
         reader.get_node_edges("node-id")
@@ -157,9 +158,9 @@ def test_report_tools_do_not_turn_zep_read_failures_into_empty_data():
         raise ZepApiError(status_code=401, body={"message": "unauthorized"})
 
     service = object.__new__(ZepToolsService)
-    service.client = SimpleNamespace(
+    service.store = ZepGraphStore(SimpleNamespace(
         graph=SimpleNamespace(node=SimpleNamespace(get=unauthorized))
-    )
+    ))
 
     with pytest.raises(ZepApiError):
         service.get_node_detail("node-id")
@@ -173,13 +174,13 @@ def test_report_tools_do_not_turn_zep_read_failures_into_empty_data():
 
 def test_episode_processing_timeout_fails_instead_of_reporting_success(monkeypatch):
     builder = object.__new__(GraphBuilderService)
-    builder.client = SimpleNamespace(
+    builder.store = ZepGraphStore(SimpleNamespace(
         graph=SimpleNamespace(
             episode=SimpleNamespace(
                 get=lambda **_kwargs: SimpleNamespace(processed=False)
             )
         )
-    )
+    ))
 
     timestamps = iter([0.0, 2.0])
     monkeypatch.setattr(graph_builder_module.time, "time", lambda: next(timestamps))
@@ -209,7 +210,7 @@ def test_document_ingestion_uses_current_batch_api_and_persists_identity():
             return SimpleNamespace(status="queued")
 
     builder = object.__new__(GraphBuilderService)
-    builder.client = SimpleNamespace(batch=BatchApi())
+    builder.store = ZepGraphStore(SimpleNamespace(batch=BatchApi()))
     persisted = []
 
     submission = builder.add_text_batches(
@@ -247,7 +248,7 @@ def test_graph_create_persists_identity_before_post_and_reconciles_timeout():
             return SimpleNamespace(graph_id=graph_id)
 
     builder = object.__new__(GraphBuilderService)
-    builder.client = SimpleNamespace(graph=GraphApi())
+    builder.store = ZepGraphStore(SimpleNamespace(graph=GraphApi()))
 
     graph_id = builder.create_graph(
         "Graph",
@@ -300,7 +301,7 @@ def test_batch_create_timeout_is_reconciled_by_operation_metadata(monkeypatch):
             return SimpleNamespace(status="queued")
 
     builder = object.__new__(GraphBuilderService)
-    builder.client = SimpleNamespace(batch=BatchApi())
+    builder.store = ZepGraphStore(SimpleNamespace(batch=BatchApi()))
     monkeypatch.setattr(graph_builder_module.time, "sleep", lambda _seconds: None)
 
     submission = builder.add_text_batches("graph-id", ["chunk"])
@@ -337,7 +338,7 @@ def test_batch_add_timeout_recovers_a_fully_accepted_group_without_replay(monkey
             return SimpleNamespace(status="queued")
 
     builder = object.__new__(GraphBuilderService)
-    builder.client = SimpleNamespace(batch=BatchApi())
+    builder.store = ZepGraphStore(SimpleNamespace(batch=BatchApi()))
     monkeypatch.setattr(graph_builder_module.time, "sleep", lambda _seconds: None)
 
     submission = builder.add_text_batches(
@@ -385,7 +386,7 @@ def test_batch_wait_validates_terminal_items_and_opaque_zero_cursor():
             )
 
     builder = object.__new__(GraphBuilderService)
-    builder.client = SimpleNamespace(batch=BatchApi())
+    builder.store = ZepGraphStore(SimpleNamespace(batch=BatchApi()))
     submission = BatchSubmission("batch-1", "operation", [], 2)
 
     assert builder._wait_for_batch(submission, timeout=1) == [
@@ -398,7 +399,7 @@ def test_batch_wait_validates_terminal_items_and_opaque_zero_cursor():
 @pytest.mark.parametrize("status", ["partial", "failed", "invalid", "canceled"])
 def test_batch_non_success_terminal_states_fail(status):
     builder = object.__new__(GraphBuilderService)
-    builder.client = SimpleNamespace(
+    builder.store = ZepGraphStore(SimpleNamespace(
         batch=SimpleNamespace(
             get=lambda **_kwargs: SimpleNamespace(status=status, progress=None),
             list_items=lambda **_kwargs: SimpleNamespace(
@@ -406,7 +407,7 @@ def test_batch_non_success_terminal_states_fail(status):
                 next_cursor=None,
             ),
         )
-    )
+    ))
 
     with pytest.raises(RuntimeError, match=status):
         builder._wait_for_batch(
@@ -417,11 +418,11 @@ def test_batch_non_success_terminal_states_fail(status):
 
 def test_batch_wait_times_out_while_status_remains_nonterminal(monkeypatch):
     builder = object.__new__(GraphBuilderService)
-    builder.client = SimpleNamespace(
+    builder.store = ZepGraphStore(SimpleNamespace(
         batch=SimpleNamespace(
             get=lambda **_kwargs: SimpleNamespace(status="processing", progress=None)
         )
-    )
+    ))
     timestamps = iter([0.0, 2.0])
     monkeypatch.setattr(graph_builder_module.time, "time", lambda: next(timestamps))
     monkeypatch.setattr(graph_builder_module.time, "sleep", lambda _seconds: None)
@@ -479,7 +480,7 @@ def test_installed_sdk_serializes_the_batch_325_contract():
 
     with httpx.Client(transport=httpx.MockTransport(handler)) as transport_client:
         builder = object.__new__(GraphBuilderService)
-        builder.client = Zep(api_key="test-key", httpx_client=transport_client)
+        builder.store = ZepGraphStore(Zep(api_key="test-key", httpx_client=transport_client))
         submission = builder.add_text_batches("graph-id", ["source chunk"])
         assert builder._wait_for_batch(submission, timeout=1) == ["episode-1"]
 

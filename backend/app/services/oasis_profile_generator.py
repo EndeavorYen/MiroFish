@@ -21,9 +21,8 @@ from ..config import Config
 from ..utils.logger import get_logger
 from ..utils.locale import get_language_instruction, get_locale, set_locale, t
 from ..utils.openai_chat_compat import create_chat_completion, extract_chat_completion_text
+from ..graph.store import get_graph_store
 from ..utils.zep import (
-    call_zep_read_with_retry,
-    get_zep_client,
     is_retryable_zep_error,
     normalize_zep_search_query,
 )
@@ -263,14 +262,15 @@ class OasisProfileGenerator:
         
         # Zep客户端用于检索丰富上下文
         self.zep_api_key = zep_api_key or Config.ZEP_API_KEY
-        self.zep_client = None
+        self.store = None
         self.graph_id = graph_id
         
         if self.zep_api_key:
             try:
-                self.zep_client = get_zep_client(self.zep_api_key)
+                self.store = get_graph_store(api_key=self.zep_api_key)
             except Exception as e:
                 logger.warning(f"Zep客户端初始化失败: {e}")
+                self.store = None
     
     def generate_profile_from_entity(
         self, 
@@ -361,7 +361,7 @@ class OasisProfileGenerator:
         """
         import concurrent.futures
         
-        if not self.zep_client:
+        if not getattr(self, "store", None):
             return {"facts": [], "node_summaries": [], "context": ""}
         
         entity_name = entity.name
@@ -383,28 +383,22 @@ class OasisProfileGenerator:
         
         def search_edges():
             """搜索边（事实/关系）- 带重试机制"""
-            return call_zep_read_with_retry(
-                lambda: self.zep_client.graph.search(
-                        query=comprehensive_query,
-                        graph_id=self.graph_id,
-                        limit=30,
-                        scope="edges",
-                        reranker="rrf"
-                ),
-                operation_name=f"profile edge search ({entity.uuid})",
+            return self.store.search(
+                self.graph_id,
+                comprehensive_query,
+                "edges",
+                30,
+                ranking="fusion",
             )
         
         def search_nodes():
             """搜索节点（实体摘要）- 带重试机制"""
-            return call_zep_read_with_retry(
-                lambda: self.zep_client.graph.search(
-                        query=comprehensive_query,
-                        graph_id=self.graph_id,
-                        limit=20,
-                        scope="nodes",
-                        reranker="rrf"
-                ),
-                operation_name=f"profile node search ({entity.uuid})",
+            return self.store.search(
+                self.graph_id,
+                comprehensive_query,
+                "nodes",
+                20,
+                ranking="fusion",
             )
         
         try:

@@ -1,0 +1,70 @@
+{
+  "_comment": "Ontology presets for ONTOLOGY_MODE=template (#11). System One picks one preset from the seed text, then keeps optional types with noul. Every preset ends with Person and Organization fallbacks.",
+  "templates": {
+    "public_issue": {
+      "description": "公共議題或城市建設爭議：政府推動某項措施，企業、居民、從業者、專家與媒體各有立場",
+      "core": ["GovernmentAgency", "GovernmentOfficial", "Company", "CommunityGroup", "MediaOutlet"],
+      "optional": ["Academic", "LaborUnion", "NGO", "Resident", "ResearchInstitute", "Politician", "CorporateExecutive", "Student"]
+    },
+    "financial_market": {
+      "description": "金融市場或經濟事件：股價、利率、投資、企業財報與監管",
+      "core": ["Company", "FinancialInstitution", "Regulator", "Investor", "MediaOutlet"],
+      "optional": ["Analyst", "CorporateExecutive", "Exchange", "RetailInvestor", "Economist", "GovernmentAgency", "Consumer"]
+    },
+    "corporate_crisis": {
+      "description": "企業危機或公關事件：產品問題、裁員、醜聞、消費者與監管反應",
+      "core": ["Company", "CorporateExecutive", "Consumer", "GovernmentAgency", "MediaOutlet"],
+      "optional": ["Employee", "LaborUnion", "Supplier", "Academic", "ConsumerGroup", "Lawyer", "Investor"]
+    },
+    "policy": {
+      "description": "政策與立法：法案、選舉、政黨、公民團體與倡議",
+      "core": ["GovernmentAgency", "Legislator", "PoliticalParty", "MediaOutlet", "Citizen"],
+      "optional": ["Academic", "NGO", "BusinessAssociation", "GovernmentOfficial", "Activist", "Student", "LaborUnion"]
+    }
+  },
+  "entity_types": {
+    "GovernmentAgency": {"description": "政府機關、委員會或官方工作組", "kind": "org"},
+    "GovernmentOfficial": {"description": "代表政府發言或任職的官員", "kind": "person"},
+    "Company": {"description": "企業或公司", "kind": "org"},
+    "CommunityGroup": {"description": "社區居民、業主或在地團體", "kind": "org"},
+    "MediaOutlet": {"description": "新聞媒體或自媒體", "kind": "org"},
+    "Academic": {"description": "大學教授、學者或研究人員", "kind": "person"},
+    "LaborUnion": {"description": "工會或行業從業者組織", "kind": "org"},
+    "NGO": {"description": "非政府組織或公益團體", "kind": "org"},
+    "Resident": {"description": "受影響的一般居民", "kind": "person"},
+    "ResearchInstitute": {"description": "研究所、研究院或智庫", "kind": "org"},
+    "Politician": {"description": "民意代表或政治人物", "kind": "person"},
+    "CorporateExecutive": {"description": "企業的執行長或高階主管", "kind": "person"},
+    "Student": {"description": "學生", "kind": "person"},
+    "FinancialInstitution": {"description": "銀行、券商或基金公司", "kind": "org"},
+    "Regulator": {"description": "金融或產業監管機關", "kind": "org"},
+    "Investor": {"description": "機構或專業投資人", "kind": "person"},
+    "Analyst": {"description": "市場分析師", "kind": "person"},
+    "Exchange": {"description": "交易所", "kind": "org"},
+    "RetailInvestor": {"description": "散戶投資人", "kind": "person"},
+    "Economist": {"description": "經濟學家", "kind": "person"},
+    "Consumer": {"description": "消費者", "kind": "person"},
+    "Employee": {"description": "企業員工", "kind": "person"},
+    "Supplier": {"description": "供應商", "kind": "org"},
+    "ConsumerGroup": {"description": "消費者保護團體", "kind": "org"},
+    "Lawyer": {"description": "律師或法律專家", "kind": "person"},
+    "Legislator": {"description": "立法委員或議員", "kind": "person"},
+    "PoliticalParty": {"description": "政黨", "kind": "org"},
+    "Citizen": {"description": "一般公民", "kind": "person"},
+    "BusinessAssociation": {"description": "產業公會或商業協會", "kind": "org"},
+    "Activist": {"description": "社會運動或倡議人士", "kind": "person"},
+    "Person": {"description": "不屬於上述具體類型的自然人", "kind": "person"},
+    "Organization": {"description": "不屬於上述具體類型的組織機構", "kind": "org"}
+  },
+  "edge_types": [
+    {"name": "WORKS_FOR", "description": "任職於或隸屬於", "source": "person", "target": "org"},
+    {"name": "LEADS", "description": "擔任負責人或主席", "source": "person", "target": "org"},
+    {"name": "REPRESENTS", "description": "作為代表發聲", "source": "person", "target": "org"},
+    {"name": "SUPPORTS", "description": "支持或正面評價", "source": "any", "target": "any"},
+    {"name": "OPPOSES", "description": "反對或批評", "source": "any", "target": "any"},
+    {"name": "REGULATES", "description": "監管、審批或開罰", "source": "org", "target": "org"},
+    {"name": "REPORTS_ON", "description": "報導", "source": "org", "target": "any"},
+    {"name": "COLLABORATES_WITH", "description": "合作或聯合辦理", "source": "org", "target": "org"},
+    {"name": "PETITIONS", "description": "陳情、提交意見或呼籲", "source": "any", "target": "org"}
+  ]
+}

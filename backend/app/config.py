@@ -58,6 +58,17 @@ class Config:
     SYSTEM_ONE_API_KEY = os.environ.get("SYSTEM_ONE_API_KEY")
     SYSTEM_ONE_TOP_K = int(os.environ.get("SYSTEM_ONE_TOP_K", "20"))
     SYSTEM_ONE_PROMPT_FORMAT = os.environ.get("SYSTEM_ONE_PROMPT_FORMAT", "chatml").strip().lower()
+
+    # Preparation without decode (#11). The defaults stay on the LLM paths
+    # until the #13 A/B gate passes; "template"/"structured" use System One.
+    ONTOLOGY_MODE = os.environ.get("ONTOLOGY_MODE", "llm").strip().lower()
+    PROFILE_MODE = os.environ.get("PROFILE_MODE", "llm").strip().lower()
+    SIM_CONFIG_MODE = os.environ.get("SIM_CONFIG_MODE", "llm").strip().lower()
+
+    @staticmethod
+    def structured_mode(value: str) -> bool:
+        """``template`` and ``structured`` both mean the System One path."""
+        return (value or "").strip().lower() in ("template", "structured")
     
     # 文件上传配置
     MAX_CONTENT_LENGTH = 50 * 1024 * 1024  # 50MB

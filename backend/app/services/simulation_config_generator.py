@@ -284,6 +284,9 @@ class SimulationConfigGenerator:
                 progress_callback(step, total_steps, message)
             logger.info(f"[{step}/{total_steps}] {message}")
         
+        # Structured mode reads hot topics and initial posts from the seed.
+        self._document_text = document_text
+
         # 1. 构建基础上下文信息
         context = self._build_context(
             simulation_requirement=simulation_requirement,
@@ -536,6 +539,8 @@ class SimulationConfigGenerator:
     
     def _generate_time_config(self, context: str, num_entities: int) -> Dict[str, Any]:
         """生成时间配置"""
+        if Config.structured_mode(Config.SIM_CONFIG_MODE):
+            return self._get_default_time_config(num_entities)
         # 使用配置的上下文截断长度
         context_truncated = context[:self.TIME_CONFIG_CONTEXT_LENGTH]
         
@@ -652,6 +657,17 @@ class SimulationConfigGenerator:
         entities: List[EntityNode]
     ) -> Dict[str, Any]:
         """生成事件配置"""
+        if Config.structured_mode(Config.SIM_CONFIG_MODE):
+            from ..system_one.client import get_system_one_client
+            from .prep_structured import structured_event_config
+
+            return structured_event_config(
+                get_system_one_client(),
+                getattr(self, "_document_text", ""),
+                simulation_requirement,
+                [e.get_entity_type() or "Person" for e in entities],
+                [e.name for e in entities],
+            )
         
         # 获取可用的实体类型列表，供 LLM 参考
         entity_types_available = list(set(
@@ -820,6 +836,26 @@ class SimulationConfigGenerator:
         simulation_requirement: str
     ) -> List[AgentActivityConfig]:
         """分批生成Agent配置"""
+        if Config.structured_mode(Config.SIM_CONFIG_MODE):
+            from ..system_one.client import get_system_one_client
+            from .prep_structured import structured_agent_config
+
+            client = get_system_one_client()
+            configs = []
+            for i, entity in enumerate(entities):
+                cfg = structured_agent_config(
+                    client, entity.name, entity.get_entity_type() or "Unknown", entity.summary or ""
+                )
+                configs.append(
+                    AgentActivityConfig(
+                        agent_id=start_idx + i,
+                        entity_uuid=entity.uuid,
+                        entity_name=entity.name,
+                        entity_type=entity.get_entity_type() or "Unknown",
+                        **cfg,
+                    )
+                )
+            return configs
         
         # 构建实体信息（使用配置的摘要长度）
         entity_list = []

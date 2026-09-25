@@ -1,0 +1,33 @@
+{
+  "source": "news_seed.txt",
+  "label_source": "Held-out set for #7: written and hand-annotated by the implementer (Claude Opus 5.5) after the extractor rules were frozen; the extractor was run on it once without further tuning.",
+  "entities": [
+    {"name": "南嶺市衛生局", "type": "GovernmentAgency", "aliases": ["衛生局"]},
+    {"name": "星河食品股份有限公司", "type": "Company", "aliases": ["星河食品"]},
+    {"name": "孫立文", "type": "GovernmentOfficial", "aliases": []},
+    {"name": "高明哲", "type": "CorporateExecutive", "aliases": []},
+    {"name": "許雅琪", "type": "CorporateExecutive", "aliases": []},
+    {"name": "綠源檢測研究院", "type": "ResearchInstitute", "aliases": []},
+    {"name": "南嶺市消費者保護委員會", "type": "GovernmentAgency", "aliases": ["消保委"]},
+    {"name": "鄧慧敏", "type": "GovernmentOfficial", "aliases": []},
+    {"name": "南嶺市議會", "type": "GovernmentAgency", "aliases": []},
+    {"name": "馮志強", "type": "GovernmentOfficial", "aliases": []},
+    {"name": "南嶺大學公共衛生學院", "type": "Organization", "aliases": ["南嶺大學"]},
+    {"name": "羅建國", "type": "Academic", "aliases": []},
+    {"name": "食品業職業工會", "type": "LaborUnion", "aliases": []},
+    {"name": "何美華", "type": "Person", "aliases": []},
+    {"name": "南嶺日報", "type": "MediaOutlet", "aliases": []}
+  ],
+  "relations": [
+    {"source": "南嶺市衛生局", "target": "星河食品股份有限公司", "type": "REGULATES"},
+    {"source": "孫立文", "target": "南嶺市衛生局", "type": "WORKS_FOR"},
+    {"source": "高明哲", "target": "星河食品股份有限公司", "type": "LEADS"},
+    {"source": "許雅琪", "target": "星河食品股份有限公司", "type": "WORKS_FOR"},
+    {"source": "星河食品股份有限公司", "target": "綠源檢測研究院", "type": "HIRES"},
+    {"source": "鄧慧敏", "target": "南嶺市消費者保護委員會", "type": "LEADS"},
+    {"source": "馮志強", "target": "南嶺市衛生局", "type": "CRITICIZES"},
+    {"source": "羅建國", "target": "南嶺大學公共衛生學院", "type": "WORKS_FOR"},
+    {"source": "何美華", "target": "食品業職業工會", "type": "LEADS"},
+    {"source": "南嶺日報", "target": "星河食品股份有限公司", "type": "REPORTS_ON"}
+  ]
+}

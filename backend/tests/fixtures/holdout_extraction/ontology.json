@@ -1,0 +1,40 @@
+{
+  "entity_types": [
+    {"name": "Company", "description": "企業或公司", "attributes": []},
+    {"name": "GovernmentAgency", "description": "政府機關、委員會或議會", "attributes": []},
+    {"name": "GovernmentOfficial", "description": "政府官員或民意代表", "attributes": []},
+    {"name": "CorporateExecutive", "description": "企業主管或發言人", "attributes": []},
+    {"name": "LaborUnion", "description": "工會或從業者組織", "attributes": []},
+    {"name": "MediaOutlet", "description": "新聞媒體", "attributes": []},
+    {"name": "Academic", "description": "學者或教授", "attributes": []},
+    {"name": "ResearchInstitute", "description": "研究院、檢測機構或智庫", "attributes": []},
+    {"name": "Person", "description": "不屬於上述具體類型的自然人", "attributes": []},
+    {"name": "Organization", "description": "不屬於上述具體類型的組織（含大學、學院）", "attributes": []}
+  ],
+  "edge_types": [
+    {"name": "WORKS_FOR", "description": "任職於", "source_targets": [
+      {"source": "GovernmentOfficial", "target": "GovernmentAgency"},
+      {"source": "CorporateExecutive", "target": "Company"},
+      {"source": "Academic", "target": "Organization"},
+      {"source": "Person", "target": "Organization"}
+    ], "attributes": []},
+    {"name": "LEADS", "description": "擔任負責人、主席或理事長", "source_targets": [
+      {"source": "CorporateExecutive", "target": "Company"},
+      {"source": "GovernmentOfficial", "target": "GovernmentAgency"},
+      {"source": "Person", "target": "LaborUnion"}
+    ], "attributes": []},
+    {"name": "REGULATES", "description": "監管、抽驗或開罰", "source_targets": [
+      {"source": "GovernmentAgency", "target": "Company"}
+    ], "attributes": []},
+    {"name": "HIRES", "description": "委託辦理", "source_targets": [
+      {"source": "Company", "target": "ResearchInstitute"}
+    ], "attributes": []},
+    {"name": "CRITICIZES", "description": "批評", "source_targets": [
+      {"source": "GovernmentOfficial", "target": "GovernmentAgency"},
+      {"source": "Person", "target": "Company"}
+    ], "attributes": []},
+    {"name": "REPORTS_ON", "description": "報導", "source_targets": [
+      {"source": "MediaOutlet", "target": "Company"}
+    ], "attributes": []}
+  ]
+}

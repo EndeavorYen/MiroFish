@@ -1,0 +1,55 @@
+{
+  "entity_types": [
+    {"name": "GovernmentAgency", "description": "政府機關、委員會、議會或官方工作組", "attributes": []},
+    {"name": "GovernmentOfficial", "description": "代表政府機關發言或任職的官員", "attributes": []},
+    {"name": "TechCompany", "description": "科技公司或新創企業", "attributes": []},
+    {"name": "CorporateExecutive", "description": "企業的執行長或高階主管", "attributes": []},
+    {"name": "LaborUnion", "description": "工會或行業從業者組織", "attributes": []},
+    {"name": "CommunityGroup", "description": "社區居民、業主或在地團體", "attributes": []},
+    {"name": "Academic", "description": "大學教授、學者或研究人員", "attributes": []},
+    {"name": "ResearchInstitute", "description": "研究所、研究院或智庫", "attributes": []},
+    {"name": "Person", "description": "不屬於上述具體類型的自然人", "attributes": []},
+    {"name": "Organization", "description": "不屬於上述具體類型的組織機構（含大學、學院）", "attributes": []}
+  ],
+  "edge_types": [
+    {"name": "WORKS_FOR", "description": "任職於、隸屬於", "source_targets": [
+      {"source": "GovernmentOfficial", "target": "GovernmentAgency"},
+      {"source": "CorporateExecutive", "target": "TechCompany"},
+      {"source": "Academic", "target": "Organization"},
+      {"source": "Academic", "target": "ResearchInstitute"},
+      {"source": "Person", "target": "Organization"}
+    ], "attributes": []},
+    {"name": "LEADS", "description": "擔任領導者、主席或負責人", "source_targets": [
+      {"source": "Person", "target": "LaborUnion"},
+      {"source": "CorporateExecutive", "target": "TechCompany"},
+      {"source": "Person", "target": "CommunityGroup"}
+    ], "attributes": []},
+    {"name": "REPRESENTS", "description": "作為代表發聲", "source_targets": [
+      {"source": "Person", "target": "CommunityGroup"},
+      {"source": "Person", "target": "LaborUnion"},
+      {"source": "GovernmentOfficial", "target": "GovernmentAgency"}
+    ], "attributes": []},
+    {"name": "COLLABORATES_WITH", "description": "合作、聯合辦理", "source_targets": [
+      {"source": "GovernmentAgency", "target": "GovernmentAgency"},
+      {"source": "TechCompany", "target": "GovernmentAgency"}
+    ], "attributes": []},
+    {"name": "REGULATES", "description": "監管、審批", "source_targets": [
+      {"source": "GovernmentAgency", "target": "TechCompany"}
+    ], "attributes": []},
+    {"name": "PETITIONS", "description": "向對方陳情、提交意見或呼籲", "source_targets": [
+      {"source": "Person", "target": "GovernmentAgency"},
+      {"source": "CommunityGroup", "target": "GovernmentAgency"},
+      {"source": "LaborUnion", "target": "GovernmentAgency"}
+    ], "attributes": []},
+    {"name": "OPPOSES", "description": "反對或批評", "source_targets": [
+      {"source": "LaborUnion", "target": "TechCompany"},
+      {"source": "CommunityGroup", "target": "TechCompany"},
+      {"source": "Person", "target": "TechCompany"}
+    ], "attributes": []},
+    {"name": "SUPPORTS", "description": "支持或正面評價", "source_targets": [
+      {"source": "ResearchInstitute", "target": "TechCompany"},
+      {"source": "Academic", "target": "TechCompany"}
+    ], "attributes": []}
+  ],
+  "analysis_summary": "Hand-written ontology for the golden scenario; used by the local extraction eval (#7)."
+}

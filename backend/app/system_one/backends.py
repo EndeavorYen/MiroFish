@@ -146,14 +146,21 @@ class LocalReadoutBackend:
         started = time.perf_counter()
         response = self._post(self._payload(prompt))
         latency_ms = (time.perf_counter() - started) * 1000
-        record_usage(response, latency_ms, model=self.model)
         usage = response.get("usage") or {}
+        # max_tokens=1: the one sampled token comes from the prefill's
+        # last-position logits, so no decode forward pass runs. Record it as
+        # zero decode tokens; the server's completion_tokens=1 is not decode.
+        record_usage(
+            {"usage": {"prompt_tokens": usage.get("prompt_tokens") or 0, "completion_tokens": 0}},
+            latency_ms,
+            model=self.model,
+        )
         answer = readout_answer(
             question,
             parse_top_logprobs(response),
             temperature=self.temperatures.get(question.type, 1.0),
         )
-        return answer, int(usage.get("prompt_tokens") or 0), int(usage.get("completion_tokens") or 0)
+        return answer, int(usage.get("prompt_tokens") or 0), 0
 
     def ask(self, request: SystemOneRequest) -> SystemOneResponse:
         items = list(request.questions.items())

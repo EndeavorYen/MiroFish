@@ -36,7 +36,15 @@ class Extraction:
 
 
 class Extractor(Protocol):
-    def extract(self, text: str, ontology: dict[str, Any] | None) -> Extraction: ...
+    def extract(
+        self,
+        text: str,
+        ontology: dict[str, Any] | None,
+        known_entities: list[tuple[str, str]] | None = None,
+    ) -> Extraction:
+        """``known_entities`` lists ``(name, type)`` already in the graph so
+        an extractor can map aliases onto existing names."""
+        ...
 
 
 _SENTENCE_RE = re.compile(r"[^。！？!?\.\n]+[。！？!?\.]?")
@@ -58,7 +66,12 @@ class StubExtractor:
     def __init__(self, lexicon: dict[str, str] | None = None) -> None:
         self.lexicon = dict(lexicon or {})
 
-    def extract(self, text: str, ontology: dict[str, Any] | None) -> Extraction:
+    def extract(
+        self,
+        text: str,
+        ontology: dict[str, Any] | None,
+        known_entities: list[tuple[str, str]] | None = None,
+    ) -> Extraction:
         allowed = {e["name"] for e in (ontology or {}).get("entity_types", [])}
         lexicon = {
             name: etype

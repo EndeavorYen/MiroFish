@@ -159,4 +159,6 @@ def test_local_backend_request_is_prefill_only_and_records_usage(tmp_path, monke
     assert captured[0]["temperature"] == 0
     assert response.answers["q"].choice == "x"
     lines = (tmp_path / "llm_usage.jsonl").read_text(encoding="utf-8").splitlines()
-    assert json.loads(lines[0])["completion_tokens"] == 1
+    # Readout runs no decode step; it is recorded as zero decode tokens.
+    assert json.loads(lines[0])["completion_tokens"] == 0
+    assert json.loads(lines[0])["prompt_tokens"] == 10

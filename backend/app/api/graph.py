@@ -25,6 +25,7 @@ from ..services.simulation_manager import SimulationManager
 from ..services.simulation_runner import SimulationRunner, RunnerStatus
 from ..services.zep_graph_memory_updater import ZepGraphMemoryManager
 from ..utils.llm_client import LLMResponseError
+from ..utils.llm_usage import usage_stage
 
 # 获取日志器
 logger = get_logger('mirofish.api')
@@ -816,7 +817,15 @@ def _build_graph_impl():
                     )
         
         # 启动后台线程
-        thread = threading.Thread(target=build_task, daemon=True)
+        def build_task_with_usage():
+            # Local extraction readouts are recorded under graph_build.
+            with usage_stage(
+                "graph_build",
+                metrics_dir=os.path.join(ProjectManager._get_project_dir(project_id), "metrics"),
+            ):
+                build_task()
+
+        thread = threading.Thread(target=build_task_with_usage, daemon=True)
         thread.start()
         
         return jsonify({

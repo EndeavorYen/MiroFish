@@ -1,0 +1,35 @@
+{
+  "entity_types": [
+    {"name": "GovernmentAgency", "description": "政府機關、事業單位、議會或其委員會", "attributes": []},
+    {"name": "GovernmentOfficial", "description": "政府官員、議員或官方發言人", "attributes": []},
+    {"name": "CivicGroup", "description": "民間團體、公民組織", "attributes": []},
+    {"name": "BusinessAssociation", "description": "產業或商業公會、協會", "attributes": []},
+    {"name": "GroupLeader", "description": "民間團體或協會的負責人、秘書長", "attributes": []},
+    {"name": "MediaOutlet", "description": "新聞媒體", "attributes": []},
+    {"name": "Academic", "description": "學者或教授", "attributes": []},
+    {"name": "Person", "description": "不屬於上述具體類型的自然人", "attributes": []},
+    {"name": "Organization", "description": "不屬於上述具體類型的組織（含大學、系所）", "attributes": []}
+  ],
+  "edge_types": [
+    {"name": "WORKS_FOR", "description": "任職於", "source_targets": [
+      {"source": "GovernmentOfficial", "target": "GovernmentAgency"},
+      {"source": "GroupLeader", "target": "CivicGroup"},
+      {"source": "GroupLeader", "target": "BusinessAssociation"},
+      {"source": "Academic", "target": "Organization"},
+      {"source": "Person", "target": "Organization"}
+    ], "attributes": []},
+    {"name": "LEADS", "description": "擔任首長、處長、理事長或召集人", "source_targets": [
+      {"source": "GovernmentOfficial", "target": "GovernmentAgency"},
+      {"source": "GroupLeader", "target": "CivicGroup"}
+    ], "attributes": []},
+    {"name": "SUPPORTS", "description": "支持", "source_targets": [
+      {"source": "GovernmentOfficial", "target": "GovernmentAgency"},
+      {"source": "GovernmentAgency", "target": "GovernmentAgency"}
+    ], "attributes": []},
+    {"name": "CRITICIZES", "description": "批評或質疑", "source_targets": [
+      {"source": "GovernmentOfficial", "target": "GovernmentAgency"},
+      {"source": "CivicGroup", "target": "GovernmentAgency"},
+      {"source": "BusinessAssociation", "target": "GovernmentAgency"}
+    ], "attributes": []}
+  ]
+}

@@ -104,6 +104,7 @@ else:
 
 from app.utils.llm_usage import wrap_camel_model, usage_stage
 from app.simulation_policy.oasis_bridge import build_policy, decision_backend, system_one_actions
+from app.simulation_policy.interview import augment_interview_prompt
 
 
 class MaxTokensWarningFilter(logging.Filter):
@@ -333,7 +334,7 @@ class ParallelIPCHandler:
             agent = agent_graph.get_agent(agent_id)
             interview_action = ManualAction(
                 action_type=ActionType.INTERVIEW,
-                action_args={"prompt": prompt}
+                action_args={"prompt": augment_interview_prompt(prompt, self.simulation_dir, agent_id, actual_platform)}
             )
             actions = {agent: interview_action}
             metrics_dir = os.path.join(self.simulation_dir, "metrics")
@@ -465,7 +466,7 @@ class ParallelIPCHandler:
                         agent = self.twitter_agent_graph.get_agent(agent_id)
                         twitter_actions[agent] = ManualAction(
                             action_type=ActionType.INTERVIEW,
-                            action_args={"prompt": prompt}
+                            action_args={"prompt": augment_interview_prompt(prompt, self.simulation_dir, agent_id, "twitter")}
                         )
                     except Exception as e:
                         print(f"  警告: 无法获取Twitter Agent {agent_id}: {e}")
@@ -494,7 +495,7 @@ class ParallelIPCHandler:
                         agent = self.reddit_agent_graph.get_agent(agent_id)
                         reddit_actions[agent] = ManualAction(
                             action_type=ActionType.INTERVIEW,
-                            action_args={"prompt": prompt}
+                            action_args={"prompt": augment_interview_prompt(prompt, self.simulation_dir, agent_id, "reddit")}
                         )
                     except Exception as e:
                         print(f"  警告: 无法获取Reddit Agent {agent_id}: {e}")

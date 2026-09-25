@@ -7,6 +7,7 @@ run_parallel_simulation.py when ``SIM_DECISION_BACKEND=system_one``.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import threading
@@ -50,6 +51,15 @@ def build_policy(
     if not 0.0 <= alpha <= 1.0:
         raise ValueError(f"SIM_EMOTION_ALPHA must be within 0..1, got {alpha}")
     decision_concurrency()  # fail fast on a bad value
+    if content_provider is None:
+        from .tiers import build_tiered_provider
+
+        config_path = os.path.join(simulation_dir, "simulation_config.json")
+        config = {}
+        if os.path.exists(config_path):
+            with open(config_path, encoding="utf-8") as f:
+                config = json.load(f)
+        content_provider = build_tiered_provider(platform, simulation_dir, config)
     return SystemOnePolicy(
         client,
         load_taxonomy(platform),
@@ -179,6 +189,10 @@ async def system_one_actions(
                 return None
 
     decisions = await asyncio.gather(*(decide(obs) for _, obs in observations))
+    # One call is one platform round: close its content metrics row.
+    flush = getattr(policy.content, "flush", None)
+    if callable(flush):
+        flush()
     actions = {}
     for (agent, _), decision in zip(observations, decisions):
         if decision is None:

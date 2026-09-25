@@ -75,7 +75,13 @@
     "layoutGraph": "图谱",
     "layoutSplit": "双栏",
     "layoutWorkbench": "工作台",
-    "stepNames": ["图谱构建", "环境搭建", "开始模拟", "报告生成", "深度互动"]
+    "stepNames": [
+      "图谱构建",
+      "环境搭建",
+      "开始模拟",
+      "报告生成",
+      "深度互动"
+    ]
   },
   "step1": {
     "ontologyGeneration": "本体生成",
@@ -663,5 +669,169 @@
     "llmSelectAgentFailed": "LLM选择Agent失败，使用默认选择: {error}",
     "generateInterviewQuestionsFailed": "生成采访问题失败: {error}",
     "generateInterviewSummaryFailed": "生成采访摘要失败: {error}"
+  },
+  "simContent": {
+    "templates": {
+      "opinion": {
+        "neg": [
+          "说实话，我对{topic}不太乐观。",
+          "{topic}这件事，我觉得问题比好处多。"
+        ],
+        "neu": [
+          "关于{topic}，我还在观察，先看看后续。",
+          "{topic}有利有弊，需要更多信息。"
+        ],
+        "pos": [
+          "我觉得{topic}是好事，值得一试。",
+          "{topic}的方向是对的，支持。"
+        ]
+      },
+      "support": {
+        "neg": [
+          "虽然有疑虑，但{entity}这次的做法还算可以。",
+          "勉强支持{topic}，前提是要做好配套。"
+        ],
+        "neu": [
+          "{entity}愿意推动{topic}，给个机会看看。",
+          "先支持{topic}，再看执行。"
+        ],
+        "pos": [
+          "大力支持{topic}！{entity}加油！",
+          "{topic}终于来了，太期待了！"
+        ]
+      },
+      "criticism": {
+        "neg": [
+          "{entity}在{topic}上根本没想清楚，太草率了！",
+          "{topic}问题一大堆，{entity}必须负责。"
+        ],
+        "neu": [
+          "{topic}还有不少细节没交代，{entity}应该说明。",
+          "对{topic}有些质疑，希望{entity}回应。"
+        ],
+        "pos": [
+          "整体支持{topic}，但{entity}的沟通还可以更好。",
+          "{topic}方向没错，只是细节要再加强。"
+        ]
+      },
+      "question": {
+        "neg": [
+          "{topic}出了事谁负责？{entity}能不能说清楚？",
+          "{topic}真的安全吗？有没有数据？"
+        ],
+        "neu": [
+          "请问{topic}什么时候开始？怎么参与？",
+          "有人知道{topic}的具体细节吗？"
+        ],
+        "pos": [
+          "{topic}什么时候可以体验？想第一时间试试！",
+          "{entity}的{topic}会扩大到更多地区吗？"
+        ]
+      },
+      "worry": {
+        "neg": [
+          "很担心{topic}会影响到我们的生活，{entity}有想过吗？",
+          "{topic}让人不安，风险到底有多大？"
+        ],
+        "neu": [
+          "对{topic}有点担心，希望配套措施到位。",
+          "{topic}还是要谨慎一点比较好。"
+        ],
+        "pos": [
+          "对{topic}有信心，只是希望安全再多做一点。",
+          "期待{topic}，但愿别出什么差错。"
+        ]
+      },
+      "rumor": {
+        "neg": [
+          "听说{topic}背后还有内情，{entity}没说实话？",
+          "有人说{topic}出过问题，被压下来了。"
+        ],
+        "neu": [
+          "网上传{topic}有新消息，不知道真假。",
+          "听说{entity}对{topic}有新安排，求证中。"
+        ],
+        "pos": [
+          "听说{topic}很快就要扩大了，好消息！",
+          "有消息说{entity}会给{topic}更多补贴。"
+        ]
+      },
+      "clarification": {
+        "neg": [
+          "澄清一下：{topic}并不像传言那么安全，别被误导。",
+          "更正：{entity}并没有保证{topic}没有风险。"
+        ],
+        "neu": [
+          "澄清一下：关于{topic}，目前官方信息还不完整。",
+          "补充说明：{topic}的细节要以{entity}公告为准。"
+        ],
+        "pos": [
+          "澄清：{topic}的安全测试其实做得很充分。",
+          "更正：{entity}已经说明{topic}的保障措施。"
+        ]
+      },
+      "humor": {
+        "neg": [
+          "{topic}这件事，真是让人哭笑不得。",
+          "看到{topic}，我只能说：佩服{entity}的想象力。"
+        ],
+        "neu": [
+          "{topic}上线后，大家上班迟到的理由又少了一个。",
+          "{topic}：未来已来，只是还没到我家。"
+        ],
+        "pos": [
+          "有了{topic}，通勤终于可以看风景了哈哈。",
+          "{topic}太酷了，感觉活在科幻片里！"
+        ]
+      },
+      "other": {
+        "neg": [
+          "对{topic}实在高兴不起来。",
+          "{topic}？还是算了吧。"
+        ],
+        "neu": [
+          "今天大家都在讨论{topic}。",
+          "{topic}又上热搜了。"
+        ],
+        "pos": [
+          "今天被{topic}刷屏了，好热闹！",
+          "{topic}真是个好话题。"
+        ]
+      }
+    },
+    "prefixes": [
+      "",
+      "",
+      "说真的，",
+      "个人觉得，",
+      "看了一下，",
+      "刚看到消息，"
+    ],
+    "suffixes": [
+      "",
+      "",
+      "",
+      "#{topicTag}",
+      "大家怎么看？",
+      "…"
+    ],
+    "synonyms": {
+      "担心": [
+        "担忧",
+        "忧心"
+      ],
+      "支持": [
+        "赞成",
+        "力挺"
+      ],
+      "问题": [
+        "毛病",
+        "疑点"
+      ],
+      "期待": [
+        "盼望",
+        "期盼"
+      ]
+    }
   }
 }

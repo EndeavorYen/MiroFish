@@ -47,6 +47,7 @@ else:
         load_dotenv(_backend_env)
 
 from app.utils.llm_usage import wrap_camel_model, usage_stage
+from app.simulation_policy.interview import augment_interview_prompt
 
 
 import re
@@ -227,7 +228,7 @@ class IPCHandler:
             # 创建Interview动作
             interview_action = ManualAction(
                 action_type=ActionType.INTERVIEW,
-                action_args={"prompt": prompt}
+                action_args={"prompt": augment_interview_prompt(prompt, self.simulation_dir, agent_id, "twitter")}
             )
             
             # 执行Interview
@@ -269,7 +270,7 @@ class IPCHandler:
                     agent = self.agent_graph.get_agent(agent_id)
                     actions[agent] = ManualAction(
                         action_type=ActionType.INTERVIEW,
-                        action_args={"prompt": prompt}
+                        action_args={"prompt": augment_interview_prompt(prompt, self.simulation_dir, agent_id, "twitter")}
                     )
                     agent_prompts[agent_id] = prompt
                 except Exception as e:

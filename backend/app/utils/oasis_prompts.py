@@ -6,7 +6,8 @@ every Chinese character reaches the model as a ``\\uXXXX`` escape: six
 characters and several tokens instead of about one. A 24-post Chinese feed
 alone came to ~10K characters, and a single observation overflowed an 8K
 context. ``install_unicode_observations`` makes that module's ``json.dumps``
-default to ``ensure_ascii=False``; the content is unchanged.
+default to ``ensure_ascii=False`` and compact separators; the content is
+unchanged.
 """
 
 from __future__ import annotations
@@ -21,6 +22,11 @@ class _UnicodeJson:
     @staticmethod
     def dumps(obj: Any, **kwargs: Any) -> str:
         kwargs.setdefault("ensure_ascii", False)
+        # OASIS pretty-prints the feed (indent=4); compact separators carry the
+        # same content in ~16% fewer tokens.
+        if "indent" in kwargs and "separators" not in kwargs:
+            kwargs.pop("indent")
+            kwargs["separators"] = (",", ":")
         return json.dumps(obj, **kwargs)
 
     def __getattr__(self, name: str) -> Any:

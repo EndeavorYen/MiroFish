@@ -122,7 +122,8 @@ def test_oasis_observations_keep_chinese_characters():
 
     install_unicode_observations()
     install_unicode_observations()  # idempotent
-    text = agent_environment.json.dumps([{"content": "東海市空中計程車"}], indent=4)
+    text = agent_environment.json.dumps([{"content": "東海市空中計程車", "likes": 1}], indent=4)
+    assert text == '[{"content":"東海市空中計程車","likes":1}]'  # compact, same content
     assert "東海市空中計程車" in text and "\\u" not in text
     assert agent_environment.json.loads(text)[0]["content"] == "東海市空中計程車"
     assert agent_environment.json.dumps("東", ensure_ascii=True) == '"\\u6771"'  # explicit wins

@@ -376,7 +376,10 @@ def build_tiered_provider(
     return TieredContentProvider(
         templates=load_templates(os.environ.get("CONTENT_LANG", "zh")),
         llm_fn=llm_fn if mode == "tiered" else None,
-        budget_per_round=int(os.environ.get("CONTENT_DECODE_BUDGET_PER_ROUND", "600")),
+        # Per platform and round. With agents active as often as on the LLM
+        # path (#34), 600 let content decode reach ~11% of the LLM path's;
+        # 100 keeps it at ~4.5% with the same distinct-2 (golden, 5 seeds).
+        budget_per_round=int(os.environ.get("CONTENT_DECODE_BUDGET_PER_ROUND", "100")),
         top_k_percent=float(os.environ.get("CONTENT_TOP_K_PERCENT", "10")),
         followers=followers,
         entities=entities,

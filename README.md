@@ -176,6 +176,10 @@ Reads `.env` from root directory by default, maps ports `3000 (frontend) / 5001 
 
 > Mirror address for faster pulling is provided as comments in `docker-compose.yml`, replace if needed.
 
+### Option 3: Local-First Mode (no external APIs)
+
+Run the whole pipeline (knowledge graph, preparation, simulation, report) on one consumer GPU: set `MIROFISH_PROFILE=local` (or `local-llm`) in `.env` and start the local model servers. Steps, measured results and limitations (in Traditional Chinese): [docs/local-first.md](docs/local-first.md).
+
 ## 📬 Join the Conversation
 
 <div align="center">

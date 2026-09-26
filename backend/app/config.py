@@ -13,6 +13,11 @@ else:
     # 如果根目录没有 .env，尝试加载环境变量（用于生产环境）
     load_dotenv(override=True)
 
+# MIROFISH_PROFILE=local|local-llm fills unset variables (#36).
+from .profiles import apply_profile  # noqa: E402
+
+apply_profile()
+
 
 class Config:
     """Flask配置类"""

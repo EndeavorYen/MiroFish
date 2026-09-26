@@ -176,6 +176,10 @@ docker compose up -d
 
 > 在 `docker-compose.yml` 中已通过注释提供加速镜像地址，可按需替换
 
+### 三、本机优先模式（不调用任何外部 API）
+
+在一张消费级 GPU 上本机运行整条流程（知识图谱、准备、模拟、报告），只需在 `.env` 设置 `MIROFISH_PROFILE=local`（或 `local-llm`）并启动本机模型服务。完整步骤、实测数据与限制见 [docs/local-first.md](docs/local-first.md)。
+
 ## 📬 更多交流
 
 <div align="center">

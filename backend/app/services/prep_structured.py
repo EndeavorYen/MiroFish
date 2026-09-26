@@ -271,6 +271,32 @@ def structured_profile(
 # ---------------------------------------------------------------- sim config
 
 
+ACTIVITY_FLOOR = 0.3
+# Share of agents the runner may activate per hour. The LLM time config picks
+# about half the agents (golden: 8-9 of 16); the generic fallback (n/15 to
+# n/5) activated 1-5 of 16, a third of the LLM path's activity (#34).
+AGENTS_PER_HOUR_SHARE = (0.4, 0.6)
+
+
+def structured_time_config(num_entities: int) -> dict[str, Any]:
+    """Time config without an LLM: the usual daily rhythm, activation share
+    matched to what the LLM time config chooses."""
+
+    low = max(1, round(num_entities * AGENTS_PER_HOUR_SHARE[0]))
+    high = max(low + 1, round(num_entities * AGENTS_PER_HOUR_SHARE[1]))
+    return {
+        "total_simulation_hours": 72,
+        "minutes_per_round": 60,
+        "agents_per_hour_min": min(low, max(1, num_entities - 1)),
+        "agents_per_hour_max": min(high, max(2, num_entities)),
+        "peak_hours": [19, 20, 21, 22],
+        "off_peak_hours": [0, 1, 2, 3, 4, 5],
+        "morning_hours": [6, 7, 8],
+        "work_hours": [9, 10, 11, 12, 13, 14, 15, 16, 17, 18],
+        "reasoning": "structured: daily rhythm, 40-60% of agents per hour",
+    }
+
+
 def structured_agent_config(client, name: str, entity_type: str, summary: str) -> dict[str, Any]:
     state = f"實體：{name}（類型：{entity_type}）\n摘要：{summary[:400]}"
     answers = _ask(
@@ -291,7 +317,11 @@ def structured_agent_config(client, name: str, entity_type: str, summary: str) -
     stance = _level(answers["stance"].score, len(STANCE5))
     stance_label = "opposing" if stance < 0.35 else "supportive" if stance > 0.65 else "neutral"
     return {
-        "activity_level": round(0.1 + 0.8 * activity, 3),
+        # activity_level gates whether an agent is a candidate each round.
+        # The readout places most entities at the low end, and 0.1 + 0.8a gave
+        # a golden mean of 0.18 against 0.44 from the LLM config, so agents
+        # were rarely active; the floor keeps quiet entities participating.
+        "activity_level": round(ACTIVITY_FLOOR + (0.9 - ACTIVITY_FLOOR) * activity, 3),
         "posts_per_hour": round(0.1 + 0.9 * activity, 3),
         "comments_per_hour": round(0.2 + 1.3 * activity, 3),
         "active_hours": ACTIVE_PATTERNS[answers["hours"].choice][1],

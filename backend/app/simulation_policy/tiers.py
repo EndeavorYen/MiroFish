@@ -40,6 +40,7 @@ LlmFn = Callable[[str, int], tuple[str, int]]  # (prompt, max_tokens) -> (text, 
 
 SHARED_MAX_TOKENS = 80
 FULL_MAX_TOKENS = 120
+DEFAULT_BUDGET_PER_ROUND = FULL_MAX_TOKENS  # keeps the full tier reachable
 _THINK_RE = re.compile(r"<think>.*?(</think>|$)", re.S)
 _LEADING_THINK_END_RE = re.compile(r"^.*?</think>", re.S)
 
@@ -376,7 +377,11 @@ def build_tiered_provider(
     return TieredContentProvider(
         templates=load_templates(os.environ.get("CONTENT_LANG", "zh")),
         llm_fn=llm_fn if mode == "tiered" else None,
-        budget_per_round=int(os.environ.get("CONTENT_DECODE_BUDGET_PER_ROUND", "600")),
+        # Per platform and round, for every CONTENT_MODE=tiered run. With
+        # agents active as often as on the LLM path (#34), 600 let content
+        # decode reach ~11% of the LLM path's. DEFAULT_BUDGET_PER_ROUND fits
+        # one full-tier (influential) post or one shared generation a round.
+        budget_per_round=int(os.environ.get("CONTENT_DECODE_BUDGET_PER_ROUND", str(DEFAULT_BUDGET_PER_ROUND))),
         top_k_percent=float(os.environ.get("CONTENT_TOP_K_PERCENT", "10")),
         followers=followers,
         entities=entities,

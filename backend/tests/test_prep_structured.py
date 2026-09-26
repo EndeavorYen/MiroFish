@@ -117,7 +117,7 @@ def test_generate_profile_from_entity_uses_structured_mode_without_llm(monkeypat
 def test_structured_agent_and_event_config():
     client = FakeSystemOne()
     cfg = structured_agent_config(client, "林建東", "GovernmentOfficial", "交通委發言人")
-    assert 0.1 <= cfg["activity_level"] <= 0.9
+    assert 0.3 <= cfg["activity_level"] <= 0.9
     assert cfg["stance"] in ("supportive", "opposing", "neutral")
     assert cfg["active_hours"] and all(0 <= h <= 23 for h in cfg["active_hours"])
     assert -1 <= cfg["sentiment_bias"] <= 1
@@ -196,3 +196,26 @@ def test_use_llm_false_stays_rule_based_in_structured_mode(monkeypatch):
     generator = opg.OasisProfileGenerator(api_key="k", base_url="http://127.0.0.1:9", zep_api_key=None)
     entity = EntityNode(uuid="e1", name="陳維", labels=["Entity", "Person"], summary="s", attributes={})
     assert generator.generate_profile_from_entity(entity, user_id=1, use_llm=False).name == "陳維"
+
+
+def test_structured_time_config_activates_about_half_the_agents(monkeypatch):
+    from app.services.prep_structured import structured_time_config
+    from app.services.simulation_config_generator import SimulationConfigGenerator
+
+    cfg = structured_time_config(16)
+    assert (cfg["agents_per_hour_min"], cfg["agents_per_hour_max"]) == (6, 10)
+    for n in (0, 1, 2, 3):
+        small = structured_time_config(n)
+        assert 1 <= small["agents_per_hour_min"] < small["agents_per_hour_max"] <= 2
+
+    generator = SimulationConfigGenerator.__new__(SimulationConfigGenerator)
+    monkeypatch.setattr(Config, "SIM_CONFIG_MODE", "structured")
+    parsed = generator._parse_time_config(generator._generate_time_config("ctx", 16), 16)
+    assert (parsed.agents_per_hour_min, parsed.agents_per_hour_max) == (6, 10)  # not undone
+
+
+def test_default_content_budget_keeps_the_full_tier_reachable(monkeypatch, tmp_path):
+    from app.simulation_policy import tiers
+
+    monkeypatch.delenv("CONTENT_DECODE_BUDGET_PER_ROUND", raising=False)
+    assert tiers.DEFAULT_BUDGET_PER_ROUND >= tiers.FULL_MAX_TOKENS

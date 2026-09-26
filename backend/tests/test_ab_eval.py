@@ -37,7 +37,8 @@ def test_render_reports_recommendation():
         "gates": {
             "decode_ratio": {"value": 10 / 150, "passed": True},
             "action_js": {"b_vs_a": 0.05, "a_seed_noise": 0.04, "passed": True},
-            "stance_correlation": {"value": math.nan, "a_seed_pairs_mean": None, "passed": False},
+            "stance_by_persona": {"value": math.nan, "a_seed_pairs_mean": None, "passed": False},
+            "stance_distribution": {"b_vs_a": 0.01, "a_seed_noise": 0.02, "passed": True},
             "vram": {"peak_mib": 9000, "budget_mib": 10240, "passed": True},
         },
         "recommendation": "conditional",
@@ -56,8 +57,13 @@ def test_llm_errors_counts_server_errors(tmp_path):
     assert ab.llm_errors(tmp_path / "missing") == 0
 
 
-def _run(decode, actions, curve, vram=8000, errors=0, posts=3):
+def _run(decode, actions, curve, vram=8000, errors=0, posts=3, persona=None, levels=None):
+    persona = persona or {"甲": 0.2, "乙": 0.5, "丙": 0.8}
+    levels = levels or {"強烈反對": 1, "反對": 2, "中立": 3, "支持": 4, "強烈支持": 1}
     return {
+        "stance_curve_windowed": curve[:2],
+        "stance_by_persona": persona,
+        "stance_levels": levels,
         "decode_per_round": decode,
         "round_latency_mean_s": 1.0,
         "llm_errors": errors,
@@ -122,3 +128,25 @@ def test_action_counts_skip_do_nothing(monkeypatch, tmp_path):
         ab.gp, "action_counts", lambda sim: {"twitter": {"LIKE_POST": 2, "DO_NOTHING": 5}, "reddit": {"do_nothing": 1}}
     )
     assert dict(ab.action_counts(tmp_path)) == {"twitter:LIKE_POST": 2}
+
+
+def test_stance_measures_and_persona_gates():
+    cache = {"a": {"unit": 0.0, "levels": [1, 0, 0, 0, 0]}, "b": {"unit": 1.0, "levels": [0, 0, 0, 0, 1]},
+             "c": {"unit": 0.5, "levels": [0, 0, 1, 0, 0]}}
+    rows = [{"round": 1, "agent": "甲", "text": "a"}, {"round": 2, "agent": "乙", "text": "b"},
+            {"round": 5, "agent": "甲", "text": "c"}]
+    m = ab.stance_measures(rows, cache, 8)
+    assert m["stance_curve"][:5] == [0.0, 1.0, None, None, 0.5]
+    assert m["stance_curve_windowed"] == [0.5, 0.5]
+    assert m["stance_by_persona"] == {"甲": 0.25, "乙": 1.0}
+    assert m["stance_levels"]["強烈反對"] == 1 and m["stance_levels"]["中立"] == 1
+
+    curve = [0.2, 0.4, 0.6, 0.8]
+    flipped = {"甲": 0.8, "乙": 0.5, "丙": 0.2}
+    per_run = {"A": {1: _run(150, {"like": 1}, curve), 2: _run(150, {"like": 1}, curve)},
+               "B": {1: _run(5, {"like": 1}, curve, persona=flipped)}}
+    gates, _, summary, _ = ab.evaluate_groups(per_run)
+    assert gates["stance_by_persona"]["value"] < 0 and not gates["stance_by_persona"]["passed"]
+    assert gates["stance_by_persona"]["a_seed_pairs_mean"] == pytest.approx(1.0)
+    assert gates["stance_distribution"]["passed"]  # identical mixes pass via the floor
+    assert summary["stance_curve_report"]["per_round"]["a_seed_pairs_mean"] == pytest.approx(1.0)

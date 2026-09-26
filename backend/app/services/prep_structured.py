@@ -274,7 +274,7 @@ def structured_profile(
 ACTIVITY_FLOOR = 0.3
 # Share of agents the runner may activate per hour. The LLM time config picks
 # about half the agents (golden: 8-9 of 16); the generic fallback (n/15 to
-# n/5) activated 1-5 of 16, a third of the LLM path's activity (#35).
+# n/5) activated 1-5 of 16, a third of the LLM path's activity (#34).
 AGENTS_PER_HOUR_SHARE = (0.4, 0.6)
 
 

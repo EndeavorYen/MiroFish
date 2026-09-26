@@ -198,12 +198,24 @@ def test_use_llm_false_stays_rule_based_in_structured_mode(monkeypatch):
     assert generator.generate_profile_from_entity(entity, user_id=1, use_llm=False).name == "陳維"
 
 
-
-def test_structured_time_config_activates_about_half_the_agents():
+def test_structured_time_config_activates_about_half_the_agents(monkeypatch):
     from app.services.prep_structured import structured_time_config
+    from app.services.simulation_config_generator import SimulationConfigGenerator
 
     cfg = structured_time_config(16)
     assert (cfg["agents_per_hour_min"], cfg["agents_per_hour_max"]) == (6, 10)
-    small = structured_time_config(2)
-    assert 1 <= small["agents_per_hour_min"] < small["agents_per_hour_max"] <= 2
-    assert structured_time_config(1)["agents_per_hour_min"] == 1
+    for n in (0, 1, 2, 3):
+        small = structured_time_config(n)
+        assert 1 <= small["agents_per_hour_min"] < small["agents_per_hour_max"] <= 2
+
+    generator = SimulationConfigGenerator.__new__(SimulationConfigGenerator)
+    monkeypatch.setattr(Config, "SIM_CONFIG_MODE", "structured")
+    parsed = generator._parse_time_config(generator._generate_time_config("ctx", 16), 16)
+    assert (parsed.agents_per_hour_min, parsed.agents_per_hour_max) == (6, 10)  # not undone
+
+
+def test_default_content_budget_keeps_the_full_tier_reachable(monkeypatch, tmp_path):
+    from app.simulation_policy import tiers
+
+    monkeypatch.delenv("CONTENT_DECODE_BUDGET_PER_ROUND", raising=False)
+    assert tiers.DEFAULT_BUDGET_PER_ROUND >= tiers.FULL_MAX_TOKENS

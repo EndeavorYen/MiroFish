@@ -171,7 +171,8 @@ def post_rows(run: Path) -> list[dict[str, Any]]:
             if text:
                 rows.append({
                     "round": int(row.get("round", 0)),
-                    "agent": str(row.get("agent_name") or row.get("agent_id")),
+                    # Names match across groups; an id would not, so mark it.
+                    "agent": str(row.get("agent_name") or f"id:{row.get('agent_id')}"),
                     "text": str(text),
                 })
     return rows
@@ -235,9 +236,20 @@ def stance_measures(rows: list[dict[str, Any]], cache: dict[str, dict[str, Any]]
     }
 
 
+MIN_COMMON_PERSONAS = 8
+MIN_COMMON_SHARE = 0.8
+
+
 def persona_correlation(x: dict[str, float], y: dict[str, float]) -> float | None:
     common = sorted(set(x) & set(y))
     return pearson([x[k] for k in common], [y[k] for k in common])
+
+
+def enough_common_personas(a: dict[str, float], b: dict[str, float]) -> tuple[int, bool]:
+    """A few shared personas can correlate by chance: require >= 8 and >= 80% of A's."""
+
+    common = len(set(a) & set(b))
+    return common, bool(a) and common >= MIN_COMMON_PERSONAS and common >= MIN_COMMON_SHARE * len(a)
 
 
 def mean_persona(runs: list[dict[str, Any]]) -> dict[str, float]:
@@ -304,6 +316,7 @@ def evaluate_groups(
     # Stance, gated: per-persona means and the level mix.
     a_persona, b_persona = mean_persona(a_runs), mean_persona(b_runs)
     persona_ab = persona_correlation(a_persona, b_persona) if a_runs and b_runs else None
+    n_common, enough_personas = enough_common_personas(a_persona, b_persona)
     persona_aa = pairwise(persona_correlation, "stance_by_persona")
     levels_aa = [js_divergence(x["stance_levels"], y["stance_levels"]) for x, y in itertools.combinations(a_runs, 2)]
     levels_ba = [js_divergence(b["stance_levels"], a["stance_levels"]) for b in b_runs for a in a_runs]
@@ -335,7 +348,8 @@ def evaluate_groups(
             "value": persona_ab,
             "a_seed_pairs_mean": persona_aa,
             "threshold": 0.5,
-            "passed": persona_ab is not None and persona_ab >= 0.5,
+            "common_personas": n_common,
+            "passed": enough_personas and persona_ab is not None and persona_ab >= 0.5,
         },
         "stance_distribution": {
             "b_vs_a": levels_b,
@@ -506,7 +520,7 @@ def render(report: dict[str, Any]) -> str:
         "| --- | --- | --- | --- |",
         f"| B／A 每回合 decode | {_fmt(g['decode_ratio']['value'])} | ≤ 0.10 | {'✅' if g['decode_ratio']['passed'] else '❌'} |",
         f"| 動作分布 JS（B vs A） | {_fmt(g['action_js']['b_vs_a'])}（A 組間 {_fmt(g['action_js']['a_seed_noise'])}） | ≤ 2 × A 組間 | {'✅' if g['action_js']['passed'] else '❌'} |",
-        f"| 各角色平均立場相關（B vs A） | {_fmt(g['stance_by_persona']['value'])}（A 組間平均 {_fmt(g['stance_by_persona']['a_seed_pairs_mean'])}） | ≥ 0.5 | {'✅' if g['stance_by_persona']['passed'] else '❌'} |",
+        f"| 各角色平均立場相關（B vs A） | {_fmt(g['stance_by_persona']['value'])}（A 組間平均 {_fmt(g['stance_by_persona']['a_seed_pairs_mean'])}；共同角色 {g['stance_by_persona'].get('common_personas', '—')}） | ≥ 0.5，共同角色 ≥ 8 且 ≥ 80% | {'✅' if g['stance_by_persona']['passed'] else '❌'} |",
         f"| 立場分布 JS（B vs A） | {_fmt(g['stance_distribution']['b_vs_a'])}（A 組間 {_fmt(g['stance_distribution']['a_seed_noise'])}） | ≤ 2 × A 組間 | {'✅' if g['stance_distribution']['passed'] else '❌'} |",
         f"| VRAM 峰值（B） | {_fmt(g['vram']['peak_mib'])} MiB（A {_fmt(g['vram'].get('a_peak_mib'))} MiB） | ≤ {g['vram']['budget_mib']} MiB | {'✅' if g['vram']['passed'] else '❌'} |",
         "",

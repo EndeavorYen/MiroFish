@@ -58,7 +58,7 @@ def test_llm_errors_counts_server_errors(tmp_path):
 
 
 def _run(decode, actions, curve, vram=8000, errors=0, posts=3, persona=None, levels=None):
-    persona = persona or {"甲": 0.2, "乙": 0.5, "丙": 0.8}
+    persona = persona or {n: i / 9 for i, n in enumerate("甲乙丙丁戊己庚辛壬癸")}
     levels = levels or {"強烈反對": 1, "反對": 2, "中立": 3, "支持": 4, "強烈支持": 1}
     return {
         "stance_curve_windowed": curve[:2],
@@ -142,7 +142,7 @@ def test_stance_measures_and_persona_gates():
     assert m["stance_levels"]["強烈反對"] == 1 and m["stance_levels"]["中立"] == 1
 
     curve = [0.2, 0.4, 0.6, 0.8]
-    flipped = {"甲": 0.8, "乙": 0.5, "丙": 0.2}
+    flipped = {n: 1 - i / 9 for i, n in enumerate("甲乙丙丁戊己庚辛壬癸")}
     per_run = {"A": {1: _run(150, {"like": 1}, curve), 2: _run(150, {"like": 1}, curve)},
                "B": {1: _run(5, {"like": 1}, curve, persona=flipped)}}
     gates, _, summary, _ = ab.evaluate_groups(per_run)
@@ -150,3 +150,16 @@ def test_stance_measures_and_persona_gates():
     assert gates["stance_by_persona"]["a_seed_pairs_mean"] == pytest.approx(1.0)
     assert gates["stance_distribution"]["passed"]  # identical mixes pass via the floor
     assert summary["stance_curve_report"]["per_round"]["a_seed_pairs_mean"] == pytest.approx(1.0)
+
+
+def test_persona_gate_needs_enough_shared_personas():
+    a = {n: i / 9 for i, n in enumerate("甲乙丙丁戊己庚辛壬癸")}
+    assert ab.enough_common_personas(a, a) == (10, True)
+    few = {k: a[k] for k in "甲乙丙"}
+    assert ab.enough_common_personas(a, few) == (3, False)
+    curve = [0.2, 0.4, 0.6, 0.8]
+    per_run = {"A": {1: _run(150, {"like": 1}, curve), 2: _run(150, {"like": 1}, curve)},
+               "B": {1: _run(5, {"like": 1}, curve, persona=few)}}
+    gates, _, _, _ = ab.evaluate_groups(per_run)
+    assert gates["stance_by_persona"]["common_personas"] == 3
+    assert not gates["stance_by_persona"]["passed"]  # r = 1.0 on 3 points is not enough

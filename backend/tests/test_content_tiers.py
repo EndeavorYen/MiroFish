@@ -291,3 +291,29 @@ def test_clean_generation_handles_missing_opening_tag():
     assert clean_generation("思考中…</think>真正的貼文") == "真正的貼文"
     assert clean_generation("<think>還沒想完") == ""
     assert clean_generation("「一般貼文」") == "一般貼文"
+
+
+def test_strong_bands_and_five_level_prompts():
+    from app.simulation_policy.tiers import stance_words, template_band
+
+    by_kind = {"neg": [], "neu": [], "pos": [], "neg_strong": [], "pos_strong": []}
+    assert template_band(0.1, by_kind) == "neg_strong"
+    assert template_band(0.3, by_kind) == "neg"
+    assert template_band(0.7, by_kind) == "pos"
+    assert template_band(0.9, by_kind) == "pos_strong"
+    assert template_band(0.9, {"neg": [], "neu": [], "pos": []}) == "pos"  # locale without strong bands
+    assert [stance_words(x) for x in (0.1, 0.3, 0.5, 0.7, 0.9)] == ["强烈反对", "反对或担忧", "中立", "支持", "强烈支持"]
+
+
+def test_locales_have_strong_bands_for_every_kind():
+    import json
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2] / "locales"
+    for lang in ("zh", "en"):
+        templates = json.loads((root / f"{lang}.json").read_text(encoding="utf-8"))["simContent"]["templates"]
+        for kind, bands in templates.items():
+            assert {"neg", "neu", "pos", "neg_strong", "pos_strong"} <= set(bands), (lang, kind)
+    zh = json.loads((root / "zh.json").read_text(encoding="utf-8"))["simContent"]["templates"]
+    assert not any("支持" in line and "反对" not in line and "诉求" not in line and "暂停" not in line
+                   for line in zh["support"]["neg"])  # support + negative stance backs the opposition

@@ -133,6 +133,13 @@ except ImportError as e:
     print("请先安装: pip install oasis-ai camel-ai")
     sys.exit(1)
 
+# Chinese feed text as characters, not \uXXXX escapes; agent memory within
+# SIM_AGENT_CONTEXT_TOKENS (#28).
+from app.utils.oasis_prompts import install_unicode_observations  # noqa: E402
+from app.utils.camel_context import apply_agent_graph_budget, context_budget_from_env  # noqa: E402
+
+install_unicode_observations()
+
 
 # IPC相关常量
 IPC_COMMANDS_DIR = "ipc_commands"
@@ -593,6 +600,9 @@ class RedditSimulationRunner:
             model=model,
             available_actions=self.AVAILABLE_ACTIONS,
         )
+        budget = context_budget_from_env()
+        if apply_agent_graph_budget(self.agent_graph, budget):
+            print(f"agent memory budget: {budget} tokens")
         
         db_path = self._get_db_path()
         if os.path.exists(db_path):

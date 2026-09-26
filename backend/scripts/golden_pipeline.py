@@ -417,7 +417,8 @@ def llm_error_count(log_path: Path) -> int:
     if not log_path.exists():
         return 0
     text = log_path.read_text(encoding="utf-8", errors="replace")
-    return sum(1 for line in text.splitlines() if re.search(r"Error code: [45]\d\d", line))
+    pattern = r"Error code: [45]\d\d|APIConnectionError|APITimeoutError"
+    return sum(1 for line in text.splitlines() if re.search(pattern, line))
 
 
 def cmd_simulate(args: argparse.Namespace) -> int:

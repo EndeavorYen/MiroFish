@@ -84,14 +84,35 @@ def test_graph_budget_and_none(agent):
 
 
 def test_budget_from_env(monkeypatch):
+    from app.utils.camel_context import DEFAULT_LOCAL_BUDGET
+
     monkeypatch.delenv("SIM_AGENT_CONTEXT_TOKENS", raising=False)
-    assert context_budget_from_env() is None
+    monkeypatch.setenv("LLM_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+    assert context_budget_from_env() is None  # hosted model: camel's default
+    monkeypatch.setenv("LLM_BASE_URL", "http://127.0.0.1:8000/v1")
+    assert context_budget_from_env() == DEFAULT_LOCAL_BUDGET  # local model: safe default
     monkeypatch.setenv("SIM_AGENT_CONTEXT_TOKENS", " 4096 ")
     assert context_budget_from_env() == 4096
-    for bad in ("abc", "0", "-5"):
+    for off in ("0", "off"):
+        monkeypatch.setenv("SIM_AGENT_CONTEXT_TOKENS", off)
+        assert context_budget_from_env() is None
+    for bad in ("abc", "-5"):
         monkeypatch.setenv("SIM_AGENT_CONTEXT_TOKENS", bad)
         with pytest.raises(ValueError):
             context_budget_from_env()
+
+
+def test_extra_system_records_are_not_charged(agent):
+    from camel.messages import BaseMessage
+    from camel.types import OpenAIBackendRole
+
+    apply_memory_budget(agent, 2000)
+    for i in range(40):  # OASIS writes one per ManualAction; camel never sends them
+        agent.update_memory(BaseMessage.make_assistant_message("system", "初始貼文" * 50), OpenAIBackendRole.SYSTEM)
+    for i in range(3):
+        _turn(agent, i, feed_chars=50)
+    messages, _ = agent.memory.get_context()
+    assert len([m for m in messages if m["role"] == "user"]) == 3
 
 
 def test_oasis_observations_keep_chinese_characters():

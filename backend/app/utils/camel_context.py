@@ -23,24 +23,38 @@ from __future__ import annotations
 
 import os
 from typing import Any
+from urllib.parse import urlparse
 
 from camel.memories import ChatHistoryMemory, ContextRecord
 from camel.types import OpenAIBackendRole
 
 ENV_VAR = "SIM_AGENT_CONTEXT_TOKENS"
+# Unset + a local model server: fits llama-server -c 65536 -np 8 (8K per slot)
+# with room for the tool schemas and the reply.
+DEFAULT_LOCAL_BUDGET = 3072
+_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "0.0.0.0", "host.docker.internal"}
+
+
+def _local_llm() -> bool:
+    host = urlparse(os.environ.get("LLM_BASE_URL") or "").hostname or ""
+    return host in _LOCAL_HOSTS
 
 
 def context_budget_from_env() -> int | None:
-    """``SIM_AGENT_CONTEXT_TOKENS`` as a positive int, or None (no budget)."""
+    """``SIM_AGENT_CONTEXT_TOKENS`` as a positive int; unset means
+    DEFAULT_LOCAL_BUDGET for a local LLM_BASE_URL and None (no budget,
+    camel's default) for a hosted model. ``0`` or ``off`` disables it."""
 
     raw = (os.environ.get(ENV_VAR) or "").strip()
     if not raw:
+        return DEFAULT_LOCAL_BUDGET if _local_llm() else None
+    if raw.lower() in ("0", "off"):
         return None
     try:
         value = int(raw)
     except ValueError as error:
         raise ValueError(f"{ENV_VAR} must be an integer, got {raw!r}") from error
-    if value <= 0:
+    if value < 0:
         raise ValueError(f"{ENV_VAR} must be positive, got {value}")
     return value
 
@@ -53,7 +67,10 @@ class TurnBudgetMemory(ChatHistoryMemory):
 
     def retrieve(self) -> list[ContextRecord]:
         records = super().retrieve()
-        system = [r for r in records if r.memory_record.role_at_backend == OpenAIBackendRole.SYSTEM]
+        # camel sends only the first system message (ScoreBasedContextCreator
+        # drops later ones, e.g. OASIS's per-ManualAction records), so only
+        # that one is kept and charged.
+        system = records[:1] if records and records[0].memory_record.role_at_backend == OpenAIBackendRole.SYSTEM else []
         rest = [r for r in records if r.memory_record.role_at_backend != OpenAIBackendRole.SYSTEM]
         turns: list[list[ContextRecord]] = []
         for record in rest:

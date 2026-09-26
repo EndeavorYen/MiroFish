@@ -489,7 +489,9 @@ def test_stance_prior_anchors_the_intent_stance():
 
     assert stance_priors({"agent_configs": [
         {"agent_id": 1, "sentiment_bias": -0.8}, {"agent_id": 2, "sentiment_bias": 1.4}, {"agent_id": 3},
+        {"agent_id": "a", "sentiment_bias": 0.2}, {"agent_id": 4, "sentiment_bias": float("nan")},
     ]}) == {1: pytest.approx(0.1), 2: 1.0}
+    assert stance_priors({"agent_configs": None}) == {}
 
     feed = _feed()
     plain = SystemOnePolicy(Pick("create", "create_post"), load_taxonomy("twitter"), seed=3)

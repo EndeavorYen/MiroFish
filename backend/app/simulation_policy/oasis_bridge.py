@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import logging
 import os
 import threading
@@ -61,7 +62,12 @@ def build_policy(
         from .tiers import build_tiered_provider
 
         content_provider = build_tiered_provider(platform, simulation_dir, config)
-    weight = float(os.environ.get("SIM_STANCE_PRIOR_WEIGHT", "0.5"))
+    try:
+        weight = float(os.environ.get("SIM_STANCE_PRIOR_WEIGHT", "0.5"))
+    except ValueError as error:
+        raise ValueError("SIM_STANCE_PRIOR_WEIGHT must be a number within 0..1") from error
+    if not 0.0 <= weight <= 1.0:
+        raise ValueError(f"SIM_STANCE_PRIOR_WEIGHT must be within 0..1, got {weight}")
     taxonomy = with_priors(load_taxonomy(platform), load_action_priors().get(platform))
     return SystemOnePolicy(
         client,
@@ -83,10 +89,15 @@ def stance_priors(config: dict[str, Any]) -> dict[int, float]:
     """agent_id -> standing stance in 0..1 from the sim config's sentiment_bias (-1..1)."""
 
     priors = {}
-    for agent in config.get("agent_configs", []):
-        bias = agent.get("sentiment_bias")
-        if isinstance(bias, (int, float)) and not isinstance(bias, bool) and "agent_id" in agent:
-            priors[int(agent["agent_id"])] = min(1.0, max(0.0, (float(bias) + 1) / 2))
+    for agent in config.get("agent_configs") or []:
+        if not isinstance(agent, dict):
+            continue
+        bias, agent_id = agent.get("sentiment_bias"), agent.get("agent_id")
+        if isinstance(bias, bool) or not isinstance(bias, (int, float)) or not math.isfinite(bias):
+            continue  # unknown stance: no anchor
+        if isinstance(agent_id, bool) or not isinstance(agent_id, int):
+            continue
+        priors[agent_id] = min(1.0, max(0.0, (float(bias) + 1) / 2))
     return priors
 
 

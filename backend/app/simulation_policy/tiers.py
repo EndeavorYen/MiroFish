@@ -211,7 +211,9 @@ class TieredContentProvider:
         return self._vary(text, rng, intent)
 
     def _shared_prompt(self, intent: ContentIntent) -> str:
-        band = stance_words(intent.stance)
+        # Three levels, like the shared cache bucket: agents at 0.1 and 0.35
+        # share one generation, so its wording must fit both.
+        band = {"neg": "反对或担忧", "neu": "中立", "pos": "支持"}[stance_band(intent.stance)]
         target = f"\n回应的贴文：{intent.target_text[:120]}" if intent.target_text else ""
         return (
             f"用一句社群贴文（40字以内）表达「{intent.kind}」类的发言，立场{band}，"

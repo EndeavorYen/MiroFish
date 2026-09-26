@@ -298,6 +298,7 @@ def test_strong_bands_and_five_level_prompts():
 
     by_kind = {"neg": [], "neu": [], "pos": [], "neg_strong": [], "pos_strong": []}
     assert template_band(0.1, by_kind) == "neg_strong"
+    assert template_band(0.2, by_kind) == "neg" and template_band(0.8, by_kind) == "pos"  # boundaries
     assert template_band(0.3, by_kind) == "neg"
     assert template_band(0.7, by_kind) == "pos"
     assert template_band(0.9, by_kind) == "pos_strong"
@@ -315,5 +316,24 @@ def test_locales_have_strong_bands_for_every_kind():
         for kind, bands in templates.items():
             assert {"neg", "neu", "pos", "neg_strong", "pos_strong"} <= set(bands), (lang, kind)
     zh = json.loads((root / "zh.json").read_text(encoding="utf-8"))["simContent"]["templates"]
-    assert not any("支持" in line and "反对" not in line and "诉求" not in line and "暂停" not in line
-                   for line in zh["support"]["neg"])  # support + negative stance backs the opposition
+    en = json.loads((root / "en.json").read_text(encoding="utf-8"))["simContent"]["templates"]
+    # support + negative stance backs the opposition, never the project
+    assert not any("勉强支持" in line or "还算可以" in line for line in zh["support"]["neg"])
+    assert not any("I'll back" in line or "did OK" in line for line in en["support"]["neg"])
+
+
+def test_shared_prompt_wording_matches_its_bucket():
+    from app.simulation_policy.content import ContentIntent
+    from app.simulation_policy.tiers import TieredContentProvider
+
+    provider = TieredContentProvider.__new__(TieredContentProvider)
+    provider.templates = {"templates": {}}
+    provider._topic = lambda intent: "试点"
+    provider._entity_for = lambda intent: "市府"
+
+    def prompt(stance):
+        return provider._shared_prompt(ContentIntent(kind="opinion", stance=stance, intensity=0.5, target_ref=None,
+                                                     persona_ref=1))
+
+    assert prompt(0.1) == prompt(0.35)  # same bucket, same wording
+    assert "强烈" not in prompt(0.1)

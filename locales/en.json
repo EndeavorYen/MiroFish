@@ -730,8 +730,8 @@
           "Support {topic}; the messaging could be better."
         ],
         "pos_strong": [
-          "Fine with {topic}, but {entity} should communicate better.",
-          "Right direction on {topic}, details need work."
+          "{topic} is absolutely the right call; critics should check the data!",
+          "Fully behind {topic}; {entity}, ignore the noise!"
         ],
         "neg_strong": [
           "{entity} ignored every consequence of {topic}. Outrageous!",
@@ -756,8 +756,8 @@
           "Will {entity} expand {topic} to more areas?"
         ],
         "neg_strong": [
-          "Who pays when {topic} costs lives? Why is {entity} forcing it?",
-          "Who benefits from {entity} ramming {topic} through?"
+          "Who is accountable if {topic} goes wrong? Why is {entity} forcing it?",
+          "Why won't {entity} listen to the opposition before pushing {topic}?"
         ]
       },
       "worry": {
@@ -779,7 +779,7 @@
         ],
         "neg_strong": [
           "{topic} will wreck our lives. Unacceptable!",
-          "Push {topic} further and people will take to the streets, {entity}!"
+          "Keep pushing {topic} and public anger will only grow, {entity}!"
         ]
       },
       "rumor": {
@@ -800,8 +800,8 @@
           "Word is {entity} will add subsidies for {topic}."
         ],
         "neg_strong": [
-          "The story behind {topic} is dirty; {entity} has lied all along!",
-          "Leaks say {topic} had an accident that was hushed up!"
+          "Word is the risks of {topic} were played down. What is {entity} hiding?",
+          "People say {topic} has serious problems; {entity}, explain!"
         ]
       },
       "clarification": {
@@ -862,8 +862,8 @@
           "Positive about {topic}."
         ],
         "pos_strong": [
-          "My feed is all {topic} today, lively!",
-          "{topic} is a great topic."
+          "{topic} is great, fully behind it!",
+          "Strongly for {topic}. Go {entity}!"
         ],
         "neg_strong": [
           "No to {topic}!",

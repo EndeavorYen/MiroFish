@@ -712,7 +712,7 @@
           "{topic}终于来了，太期待了！"
         ],
         "neg_strong": [
-          "全力支持抗议！{topic}必须撤回，{entity}别想蒙混过关！",
+          "全力声援抗议！{topic}必须撤回，{entity}别想蒙混过关！",
           "和受影响的人站在一起，坚决反对{topic}！"
         ]
       },
@@ -730,8 +730,8 @@
           "支持{topic}，不过沟通还能更好。"
         ],
         "pos_strong": [
-          "整体支持{topic}，但{entity}的沟通还可以更好。",
-          "{topic}方向没错，只是细节要再加强。"
+          "{topic}绝对是对的方向，挑毛病的人多看看数据！",
+          "全力支持{topic}，{entity}别被杂音影响！"
         ],
         "neg_strong": [
           "{entity}在{topic}上完全不顾后果，简直离谱！",
@@ -756,8 +756,8 @@
           "{entity}的{topic}会扩大到更多地区吗？"
         ],
         "neg_strong": [
-          "{topic}出了人命谁来赔？{entity}凭什么一意孤行？",
-          "{entity}到底收了谁的好处，非要强推{topic}？"
+          "{topic}出了事谁来负责？{entity}凭什么一意孤行？",
+          "{entity}为什么听不进反对声音，非要强推{topic}？"
         ]
       },
       "worry": {
@@ -779,7 +779,7 @@
         ],
         "neg_strong": [
           "{topic}会毁掉我们的生活，绝对不能接受！",
-          "再推{topic}就是逼人上街，{entity}清醒点！"
+          "再推{topic}，民怨只会越来越大，{entity}清醒点！"
         ]
       },
       "rumor": {
@@ -800,8 +800,8 @@
           "有消息说{entity}会给{topic}更多补贴。"
         ],
         "neg_strong": [
-          "{topic}的内幕太黑了，{entity}一直在骗大家！",
-          "爆料说{topic}出过事故被压下来，这还能信？"
+          "听说{topic}的风险一直被低估，{entity}到底瞒了什么？",
+          "有人爆料{topic}问题不少，{entity}还不出来说明？"
         ]
       },
       "clarification": {
@@ -837,7 +837,7 @@
         ],
         "pos": [
           "{topic}来了，以后通勤可以飞了哈哈。",
-          "有了{topic}，塞车终于有解了（笑）。"
+          "有了{topic}，堵车终于有解了（笑）。"
         ],
         "pos_strong": [
           "有了{topic}，通勤终于可以看风景了哈哈。",
@@ -862,8 +862,8 @@
           "对{topic}持正面看法。"
         ],
         "pos_strong": [
-          "今天被{topic}刷屏了，好热闹！",
-          "{topic}真是个好话题。"
+          "{topic}太棒了，全力支持！",
+          "强烈支持{topic}，{entity}加油！"
         ],
         "neg_strong": [
           "{topic}坚决不行！",

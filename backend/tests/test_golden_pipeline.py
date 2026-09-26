@@ -42,3 +42,14 @@ def test_dotenv_search_covers_backend_and_parents():
     searched = [gp.BACKEND_DIR / "app", *(gp.BACKEND_DIR / "app").parents]
     assert gp.BACKEND_DIR in searched and gp.BACKEND_DIR.parent in searched
     assert isinstance(gp.dotenv_files(), list)
+
+
+def test_llm_error_count(tmp_path):
+    log = tmp_path / "simulation.log"
+    log.write_text("ok\nError code: 400 - context\nopenai.InternalServerError: Error code: 500\n", encoding="utf-8")
+    assert gp.llm_error_count(log) == 2
+    assert gp.llm_error_count(tmp_path / "missing.log") == 0
+
+
+def test_local_defaults_budget_agent_memory():
+    assert int(gp.LOCAL_DEFAULTS["SIM_AGENT_CONTEXT_TOKENS"]) < 8192

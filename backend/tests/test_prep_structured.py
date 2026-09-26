@@ -117,7 +117,7 @@ def test_generate_profile_from_entity_uses_structured_mode_without_llm(monkeypat
 def test_structured_agent_and_event_config():
     client = FakeSystemOne()
     cfg = structured_agent_config(client, "林建東", "GovernmentOfficial", "交通委發言人")
-    assert 0.1 <= cfg["activity_level"] <= 0.9
+    assert 0.3 <= cfg["activity_level"] <= 0.9
     assert cfg["stance"] in ("supportive", "opposing", "neutral")
     assert cfg["active_hours"] and all(0 <= h <= 23 for h in cfg["active_hours"])
     assert -1 <= cfg["sentiment_bias"] <= 1
@@ -196,3 +196,14 @@ def test_use_llm_false_stays_rule_based_in_structured_mode(monkeypatch):
     generator = opg.OasisProfileGenerator(api_key="k", base_url="http://127.0.0.1:9", zep_api_key=None)
     entity = EntityNode(uuid="e1", name="陳維", labels=["Entity", "Person"], summary="s", attributes={})
     assert generator.generate_profile_from_entity(entity, user_id=1, use_llm=False).name == "陳維"
+
+
+
+def test_structured_time_config_activates_about_half_the_agents():
+    from app.services.prep_structured import structured_time_config
+
+    cfg = structured_time_config(16)
+    assert (cfg["agents_per_hour_min"], cfg["agents_per_hour_max"]) == (6, 10)
+    small = structured_time_config(2)
+    assert 1 <= small["agents_per_hour_min"] < small["agents_per_hour_max"] <= 2
+    assert structured_time_config(1)["agents_per_hour_min"] == 1

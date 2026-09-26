@@ -540,7 +540,9 @@ class SimulationConfigGenerator:
     def _generate_time_config(self, context: str, num_entities: int) -> Dict[str, Any]:
         """生成时间配置"""
         if Config.structured_mode(Config.SIM_CONFIG_MODE):
-            return self._get_default_time_config(num_entities)
+            from .prep_structured import structured_time_config
+
+            return structured_time_config(num_entities)
         # 使用配置的上下文截断长度
         context_truncated = context[:self.TIME_CONFIG_CONTEXT_LENGTH]
         

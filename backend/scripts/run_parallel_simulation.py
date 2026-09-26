@@ -102,6 +102,9 @@ else:
         load_dotenv(_backend_env)
         print(f"已加载环境配置: {_backend_env}")
 
+from app.profiles import apply_profile
+
+apply_profile()  # MIROFISH_PROFILE after this script's own .env load (#36)
 from app.utils.llm_usage import wrap_camel_model, usage_stage
 from app.utils.camel_context import apply_agent_graph_budget, context_budget_from_env
 from app.simulation_policy.oasis_bridge import build_policy, decision_backend, system_one_actions

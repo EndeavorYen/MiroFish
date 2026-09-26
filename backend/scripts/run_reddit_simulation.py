@@ -46,6 +46,9 @@ else:
     if os.path.exists(_backend_env):
         load_dotenv(_backend_env)
 
+from app.profiles import apply_profile
+
+apply_profile()  # MIROFISH_PROFILE after this script's own .env load (#36)
 from app.utils.llm_usage import wrap_camel_model, usage_stage
 from app.simulation_policy.interview import augment_interview_prompt
 

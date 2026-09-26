@@ -1,0 +1,58 @@
+{
+  "scenarios": [
+    {
+      "name": "golden_scenario",
+      "path": "tests/fixtures/golden_scenario",
+      "domain": "交通",
+      "language": "zh",
+      "structure": "兩極對立",
+      "expected_personas": 14,
+      "digest": "caf5920f731e6de333b39bc7b66a668fc676884c65ed8b5be9c8ee43296a56d1"
+    },
+    {
+      "name": "qingpu_clinic",
+      "path": "tests/fixtures/scenarios/qingpu_clinic",
+      "domain": "醫療",
+      "language": "zh",
+      "structure": "一面倒",
+      "expected_personas": 27,
+      "digest": "6b353e293879aca9b5d264c227c3e7488252f05c5a96aa5001f10985fac1a918"
+    },
+    {
+      "name": "gangwan_curriculum",
+      "path": "tests/fixtures/scenarios/gangwan_curriculum",
+      "domain": "教育",
+      "language": "zh",
+      "structure": "多數中立",
+      "expected_personas": 17,
+      "digest": "3a950e426c8d98d164de44990cb5960cf60219e2301370bcdabfee4fb223a060"
+    },
+    {
+      "name": "chengchuan_power",
+      "path": "tests/fixtures/scenarios/chengchuan_power",
+      "domain": "能源",
+      "language": "zh",
+      "structure": "兩極對立",
+      "expected_personas": 31,
+      "digest": "51b7679acc0c907570afd66bf23f57ad83c505d5e350c68363f3196492873496"
+    },
+    {
+      "name": "northbridge_measles",
+      "path": "tests/fixtures/scenarios/northbridge_measles",
+      "domain": "公共衛生",
+      "language": "en",
+      "structure": "多數中立",
+      "expected_personas": 17,
+      "digest": "398674f8062b12f11496d11be47cbd3d6390f7aeb0bcb4e1f8b4a913b8631e5c"
+    },
+    {
+      "name": "fengqiao_recall",
+      "path": "tests/fixtures/scenarios/fengqiao_recall",
+      "domain": "消費爭議",
+      "language": "zh",
+      "structure": "一面倒",
+      "expected_personas": 17,
+      "digest": "b5b2981a858eb293cc20a1a95413d7aff4296c9e7a7609b863710db79479c810"
+    }
+  ]
+}

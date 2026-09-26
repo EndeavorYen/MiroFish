@@ -20,6 +20,7 @@ deterministic.
 from __future__ import annotations
 
 import hashlib
+import logging
 import json
 import random
 import threading
@@ -41,6 +42,8 @@ from .emotion import (
     update_emotion,
 )
 from .taxonomy import Taxonomy
+
+logger = logging.getLogger(__name__)
 
 MAX_FEED = 20
 MAX_ACTIONS_PER_ROUND = 3
@@ -295,7 +298,14 @@ class SystemOnePolicy:
                 for need in ("post", "comment", "user", "query")
                 if f"{need}_chosen" in d.record
             }
-            decision = self.decide(obs, index=index, emotion=emotion, done=done, used=used)
+            try:
+                decision = self.decide(obs, index=index, emotion=emotion, done=done, used=used)
+            except Exception as error:  # noqa: BLE001 - keep the actions already decided
+                logger.warning(
+                    "extra System One decision %s failed for agent %s round %s: %s",
+                    index, obs.agent_id, obs.round_num, error,
+                )
+                break
             if decision.action == "DO_NOTHING":
                 break
             decisions.append(decision)
@@ -347,7 +357,12 @@ class SystemOnePolicy:
 
         action, args = leaf.action, {}
         target_post: dict[str, Any] | None = None
-        for need in leaf.needs:
+        if action == "CREATE_POST" and "CREATE_POST" in (done or ()):
+            # A second original post in one round would get the same content
+            # seed and budget bucket as the first one.
+            action = "DO_NOTHING"
+            record["fallback"] = "already posted this round"
+        for need in leaf.needs if action != "DO_NOTHING" else ():
             if need == "content":
                 continue
             options = {

@@ -451,3 +451,34 @@ def test_later_actions_in_a_round_skip_used_targets():
     liked = [d.args["post_id"] for d in decisions if d.action == "LIKE_POST"]
     assert sorted(liked) == [101, 102]  # the third like finds no unused post and stops the round
     assert len(decisions) == 2
+
+
+def test_one_post_per_round_and_failures_keep_earlier_actions(tmp_path):
+    feed = _feed() + [{"post_id": 103, "user_id": 2, "content": "票價何時公布？", "comments": []}]
+    poster = SystemOnePolicy(Pick("create", "create_post"), load_taxonomy("twitter"), seed=3, extra_action_rate=0.99)
+    assert [d.action for d in poster.decide_round(_obs(feed=feed))] == ["CREATE_POST"]
+
+    class FailsAfterFirst(Pick):
+        def __init__(self):
+            super().__init__("engage", "like_post")
+            self.decisions = 0
+
+        def ask(self, request):
+            if "這一輪已經做了" in request.state:
+                raise TimeoutError("model server down")
+            return super().ask(request)
+
+    policy = SystemOnePolicy(FailsAfterFirst(), load_taxonomy("twitter"), seed=3, extra_action_rate=0.99)
+    assert [d.action for d in policy.decide_round(_obs(feed=feed))] == ["LIKE_POST"]
+
+
+def test_interview_ignores_exit_rows_of_extra_actions(tmp_path):
+    from app.simulation_policy.interview import interview_context
+
+    rows = [
+        {"agent_id": 1, "platform": "twitter", "action": "LIKE_POST", "args": {}},
+        {"agent_id": 1, "platform": "twitter", "action": "DO_NOTHING", "args": {}, "action_index": 1},
+    ]
+    (tmp_path / "decisions.jsonl").write_text("\n".join(json.dumps(r) for r in rows), encoding="utf-8")
+    text = interview_context(str(tmp_path), 1)
+    assert "旁观" not in text and "点赞" in text

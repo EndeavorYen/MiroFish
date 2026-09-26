@@ -46,8 +46,12 @@ def _decisions(simulation_dir: str, platform: str | None, agent_id: int) -> list
                 row = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if row.get("agent_id") == agent_id and (platform is None or row.get("platform") == platform):
-                rows.append(row)
+            if row.get("agent_id") != agent_id or (platform is not None and row.get("platform") != platform):
+                continue
+            # A later action of a round that ended in an exit is not "did nothing".
+            if row.get("action_index") and row.get("action") == "DO_NOTHING":
+                continue
+            rows.append(row)
     return rows
 
 

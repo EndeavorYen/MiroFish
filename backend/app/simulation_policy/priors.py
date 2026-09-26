@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 import os
 from dataclasses import replace
 from pathlib import Path
@@ -38,11 +39,12 @@ def load_action_priors(setting: str | None = None) -> dict[str, dict[str, dict[s
             return {}
         raise FileNotFoundError(f"{ENV_VAR} points to a missing file: {path}")
     data = json.loads(path.read_text(encoding="utf-8"))
-    priors = data.get("priors", data)
+    priors = data.get("priors") or {}
     for platform, nodes in priors.items():
         for node, weights in nodes.items():
             for option, weight in weights.items():
-                if not isinstance(weight, (int, float)) or weight < 0:
+                if isinstance(weight, bool) or not isinstance(weight, (int, float)) \
+                        or not math.isfinite(weight) or weight < 0:
                     raise ValueError(f"bad prior {platform}/{node}/{option}: {weight!r}")
     return priors
 
@@ -58,7 +60,7 @@ def load_extra_action_rates(setting: str | None = None) -> dict[str, float]:
         return {}
     rates = json.loads(path.read_text(encoding="utf-8")).get("extra_action_rate") or {}
     for platform, rate in rates.items():
-        if not isinstance(rate, (int, float)) or not 0 <= rate < 1:
+        if isinstance(rate, bool) or not isinstance(rate, (int, float)) or not 0 <= rate < 1:
             raise ValueError(f"bad extra_action_rate for {platform}: {rate!r}")
     return {platform: float(rate) for platform, rate in rates.items()}
 
@@ -81,5 +83,16 @@ def with_priors(taxonomy: Taxonomy, priors: dict[str, dict[str, float]] | None) 
     if not priors:
         return taxonomy
     tree = copy.deepcopy(taxonomy.tree)
+    known: set[str] = set()
+
+    def keys(node: dict[str, Any], path: tuple[str, ...]) -> None:
+        known.add("/".join(path))
+        for key, child in (node.get("children") or {}).items():
+            keys(child, path + (key,))
+
+    keys(tree, ())
+    unknown = set(priors) - known
+    if unknown:
+        raise ValueError(f"priors name unknown tree nodes {sorted(unknown)} for {taxonomy.platform}")
     _attach(tree, (), priors)
     return replace(taxonomy, tree=tree)

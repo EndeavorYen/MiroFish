@@ -16,9 +16,10 @@ LLM agents never log DO_NOTHING, so the exits' targets come from activity:
 an activation is one LLM call; the share of calls after which the agent
 took no action is the root exit's target, and exits below the root target
 zero (an agent that chose "engage" engages). LLM agents also take ~1.6
-actions per activation; ``extra_action_rate`` = 1 - activations/actions is
-the chance of one more action after each action (see
-``SystemOnePolicy.decide_round``).
+actions per activation; ``extra_action_rate`` is the chance of one more
+action after each action, solved so that the capped count
+(MAX_ACTIONS_PER_ROUND) matches it (see ``SystemOnePolicy.decide_round``).
+Nodes no recorded agent reached are left without priors.
 
 Usage:
     uv run python scripts/fit_action_priors.py --a-runs <A_seed11> ... \\
@@ -37,6 +38,7 @@ from typing import Any
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND_DIR))
 
+from app.simulation_policy.policy import MAX_ACTIONS_PER_ROUND  # noqa: E402
 from app.simulation_policy.taxonomy import EXIT_KEYS, Taxonomy, load_taxonomy  # noqa: E402
 
 PLATFORMS = ("twitter", "reddit")
@@ -110,9 +112,12 @@ def fit_node(
     if not active or not sum(counts.get(o, 0) for o in options if o not in EXIT_KEYS):
         return {}
     if not readouts:
-        readouts = [{o: 1.0 / len(options) for o in options}]
+        return {}  # no agent reached this node: nothing to correct
     readouts = [{o: float(r.get(o, 0.0)) for o in options} for r in readouts]
-    smoothed = {o: counts.get(o, 0) + SMOOTHING for o in active}
+    # Exits get no pseudo-count: their target is the measured share (often 0).
+    smoothed = {o: counts.get(o, 0) + (0.0 if o in EXIT_KEYS else SMOOTHING) for o in active}
+    if fit_exits:
+        smoothed = {o: max(v, 1e-6) for o, v in smoothed.items()}
     total = sum(smoothed.values())
     mass = 1.0 if fit_exits else sum(sum(r[o] for o in active) for r in readouts) / len(readouts)
     target = {o: mass * smoothed[o] / total for o in active}
@@ -155,6 +160,20 @@ def fit_platform(
         if weights:
             priors[node] = weights
     return priors
+
+
+def capped_extra_rate(actions_per_activation: float, cap: int = MAX_ACTIONS_PER_ROUND) -> float:
+    """q with 1 + q + ... + q^(cap-1) = actions per activation (bisection)."""
+
+    target = min(max(actions_per_activation, 1.0), cap - 1e-6)
+    low, high = 0.0, 0.999
+    for _ in range(60):
+        mid = (low + high) / 2
+        if sum(mid ** k for k in range(cap)) < target:
+            low = mid
+        else:
+            high = mid
+    return round(min(low, 0.95), 4)
 
 
 def activity(run: Path) -> dict[str, Any]:
@@ -227,8 +246,7 @@ def main(argv: list[str] | None = None) -> int:
     acted_actions = {p: sum(a["actions"][p] for a in runs_activity) for p in PLATFORMS}
     no_action_share = max(0.0, 1 - sum(acted.values()) / calls) if calls else 0.0
     extra_rate = {
-        p: round(min(0.9, max(0.0, 1 - acted[p] / acted_actions[p])), 4) if acted_actions[p] else 0.0
-        for p in PLATFORMS
+        p: capped_extra_rate(acted_actions[p] / acted[p]) if acted[p] else 0.0 for p in PLATFORMS
     }
     priors = {
         platform: fit_platform(actions[platform], [d for d in decisions if d.get("platform") == platform],
@@ -237,8 +255,11 @@ def main(argv: list[str] | None = None) -> int:
     }
     out = {
         "fitted_on": {
-            "a_runs": [run.name for run in args.a_runs],
-            "b_runs": [run.name for run in args.b_runs],
+            "a_runs": [str(run) for run in args.a_runs],
+            "b_runs": [str(run) for run in args.b_runs],
+            "a_actions_per_activation": {
+                p: round(acted_actions[p] / acted[p], 3) if acted[p] else None for p in PLATFORMS
+            },
             "a_actions": {p: dict(c) for p, c in actions.items()},
             "b_decisions": len(decisions),
             "a_llm_calls": calls,

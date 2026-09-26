@@ -287,7 +287,15 @@ class SystemOnePolicy:
             if gate.random() >= self.extra_action_rate:
                 break
             done = [d.action for d in decisions]
-            decision = self.decide(obs, index=index, emotion=emotion, done=done)
+            # The same action on the same target twice fails in OASIS (a
+            # second like of one post), so earlier targets are left out.
+            used = {
+                (d.action, d.record[f"{need}_chosen"])
+                for d in decisions
+                for need in ("post", "comment", "user", "query")
+                if f"{need}_chosen" in d.record
+            }
+            decision = self.decide(obs, index=index, emotion=emotion, done=done, used=used)
             if decision.action == "DO_NOTHING":
                 break
             decisions.append(decision)
@@ -300,6 +308,7 @@ class SystemOnePolicy:
         index: int = 0,
         emotion: tuple[dict[str, float], dict[str, float]] | None = None,
         done: list[str] | None = None,
+        used: set[tuple[str, str]] | None = None,
     ) -> Decision:
         platform_key = obs.platform if index == 0 else f"{obs.platform}+{index}"
         rng = decision_rng(self.seed, platform_key, obs.round_num, obs.agent_id)
@@ -341,7 +350,9 @@ class SystemOnePolicy:
         for need in leaf.needs:
             if need == "content":
                 continue
-            options = self._target_options(need, obs)
+            options = {
+                k: v for k, v in self._target_options(need, obs).items() if (leaf.action, k) not in (used or ())
+            }
             if not options:
                 action, args = "DO_NOTHING", {}
                 record["fallback"] = f"no {need} to act on"

@@ -429,7 +429,8 @@ def test_decide_round_takes_extra_actions_and_reuses_emotion(tmp_path):
 
     policy = SystemOnePolicy(Pick("engage", "like_post"), load_taxonomy("twitter"), seed=3, extra_action_rate=0.99,
                              decision_log=DecisionLog(str(tmp_path / "d.jsonl")))
-    decisions = policy.decide_round(_obs())
+    feed = _feed() + [{"post_id": 103, "user_id": 2, "content": "票價何時公布？", "comments": []}]
+    decisions = policy.decide_round(_obs(feed=feed))
     assert len(decisions) == MAX_ACTIONS_PER_ROUND
     assert all(d.action == "LIKE_POST" for d in decisions)
     rows = [json.loads(line) for line in (tmp_path / "d.jsonl").read_text(encoding="utf-8").splitlines()]
@@ -442,3 +443,11 @@ def test_decide_round_takes_extra_actions_and_reuses_emotion(tmp_path):
     assert [d.action for d in idle.decide_round(_obs())] == ["DO_NOTHING"]
     with pytest.raises(ValueError):
         SystemOnePolicy(FakeSystemOne(), load_taxonomy("twitter"), extra_action_rate=1.0)
+
+
+def test_later_actions_in_a_round_skip_used_targets():
+    policy = SystemOnePolicy(Pick("engage", "like_post"), load_taxonomy("twitter"), seed=3, extra_action_rate=0.99)
+    decisions = policy.decide_round(_obs())  # the feed has two posts
+    liked = [d.args["post_id"] for d in decisions if d.action == "LIKE_POST"]
+    assert sorted(liked) == [101, 102]  # the third like finds no unused post and stops the round
+    assert len(decisions) == 2

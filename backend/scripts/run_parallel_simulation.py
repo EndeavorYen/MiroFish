@@ -103,6 +103,7 @@ else:
         print(f"已加载环境配置: {_backend_env}")
 
 from app.utils.llm_usage import wrap_camel_model, usage_stage
+from app.utils.camel_context import apply_agent_graph_budget, context_budget_from_env
 from app.simulation_policy.oasis_bridge import build_policy, decision_backend, system_one_actions
 from app.simulation_policy.interview import augment_interview_prompt
 
@@ -176,6 +177,11 @@ except ImportError as e:
     print(f"错误: 缺少依赖 {e}")
     print("请先安装: pip install oasis-ai camel-ai")
     sys.exit(1)
+
+# Chinese feed text as characters, not \uXXXX escapes (#28).
+from app.utils.oasis_prompts import install_unicode_observations  # noqa: E402
+
+install_unicode_observations()
 
 
 # Twitter可用动作（不包含INTERVIEW，INTERVIEW只能通过ManualAction手动触发）
@@ -1001,6 +1007,17 @@ def _get_comment_info(
     return None
 
 
+def _apply_memory_budget(agent_graph, platform: str, log) -> None:
+    """Keep agent chat memory within SIM_AGENT_CONTEXT_TOKENS (#28): camel
+    gives unknown local model names a ~1e9 token limit, so memory would grow
+    past the server's per-slot context and agent turns would be lost."""
+
+    budget = context_budget_from_env()
+    count = apply_agent_graph_budget(agent_graph, budget)
+    if count:
+        log(f"[{platform}] agent memory budget: {budget} tokens x {count} agents")
+
+
 def create_model(config: Dict[str, Any], use_boost: bool = False):
     """
     创建LLM模型
@@ -1165,6 +1182,7 @@ async def run_twitter_simulation(
         model=model,
         available_actions=TWITTER_ACTIONS,
     )
+    _apply_memory_budget(result.agent_graph, "Twitter", log_info)
     
     # 从配置文件获取 Agent 真实名称映射（使用 entity_name 而非默认的 Agent_X）
     agent_names = get_agent_names_from_config(config)
@@ -1370,6 +1388,7 @@ async def run_reddit_simulation(
         model=model,
         available_actions=REDDIT_ACTIONS,
     )
+    _apply_memory_budget(result.agent_graph, "Reddit", log_info)
     
     # 从配置文件获取 Agent 真实名称映射（使用 entity_name 而非默认的 Agent_X）
     agent_names = get_agent_names_from_config(config)

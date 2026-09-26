@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import statistics
 import subprocess
@@ -77,6 +78,9 @@ LOCAL_DEFAULTS = {
     "EMBED_BASE_URL": "http://127.0.0.1:8001/v1",
     "EMBED_MODEL_NAME": "intfloat/multilingual-e5-small",
     "GRAPH_EMBEDDER": "http",
+    # Agent chat memory for LLM decisions; fits llama-server -c 65536 -np 8
+    # (8K per slot) with room for the tool schemas and the reply (#28).
+    "SIM_AGENT_CONTEXT_TOKENS": "3072",
 }
 
 
@@ -407,6 +411,16 @@ def replay_graph_writeback(run: Path, prepared: dict[str, Any]) -> dict[str, Any
     return {"actions_fed": fed, "llm_usage_rows_added": after - before, "stats": updater.get_stats()}
 
 
+def llm_error_count(log_path: Path) -> int:
+    """Lines where the model server rejected or failed a request (4xx/5xx)."""
+
+    if not log_path.exists():
+        return 0
+    text = log_path.read_text(encoding="utf-8", errors="replace")
+    pattern = r"Error code: [45]\d\d|APIConnectionError|APITimeoutError"
+    return sum(1 for line in text.splitlines() if re.search(pattern, line))
+
+
 def cmd_simulate(args: argparse.Namespace) -> int:
     work = Path(args.work).resolve()
     prepared = json.loads((work / "prepared.json").read_text(encoding="utf-8"))
@@ -447,6 +461,9 @@ def cmd_simulate(args: argparse.Namespace) -> int:
         "seed": args.seed,
         "max_rounds": args.max_rounds,
         "exit_code": completed.returncode,
+        # Model-server errors lose agent turns; numbers from such runs are
+        # not comparable (#28).
+        "llm_errors": llm_error_count(run / "simulation.log"),
         "elapsed_s": round(elapsed, 1),
         "usage": totals,
         "simulation_decode_tokens": sim_decode,
@@ -472,6 +489,13 @@ def cmd_simulate(args: argparse.Namespace) -> int:
         summary["graph_writeback"] = replay_graph_writeback(run, prepared)
     (run / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps(summary, ensure_ascii=False, indent=2))
+    if summary["llm_errors"]:
+        print(
+            f"WARNING: {summary['llm_errors']} model-server errors in {run / 'simulation.log'}; "
+            "agent turns were lost (raise the server's per-slot context or lower "
+            "SIM_AGENT_CONTEXT_TOKENS)",
+            file=sys.stderr,
+        )
     return 0 if completed.returncode == 0 else completed.returncode
 
 

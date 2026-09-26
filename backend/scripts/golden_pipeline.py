@@ -199,8 +199,9 @@ def cmd_prepare(args: argparse.Namespace) -> int:
     from app.services.text_processor import TextProcessor
     from app.utils.llm_usage import usage_stage
 
-    seed_text = (FIXTURE / "news_seed.txt").read_text(encoding="utf-8")
-    requirement = (FIXTURE / "simulation_requirement.txt").read_text(encoding="utf-8").strip()
+    fixture = Path(args.fixture).resolve()
+    seed_text = (fixture / "news_seed.txt").read_text(encoding="utf-8")
+    requirement = (fixture / "simulation_requirement.txt").read_text(encoding="utf-8").strip()
     timings: dict[str, float] = {}
 
     started = time.perf_counter()
@@ -236,6 +237,7 @@ def cmd_prepare(args: argparse.Namespace) -> int:
 
     prepared = {
         "prep_mode": args.prep_mode,
+        "fixture": str(fixture),
         "graph_id": graph_id,
         "simulation_id": state.simulation_id,
         "prepared_dir": str(work / "prepared"),
@@ -524,6 +526,10 @@ def main(argv: list[str] | None = None) -> int:
     prep = sub.add_parser("prepare")
     prep.add_argument("--work", required=True)
     prep.add_argument("--prep-mode", choices=["llm", "template"], default="llm")
+    prep.add_argument(
+        "--fixture", default=str(FIXTURE),
+        help="scenario dir with news_seed.txt and simulation_requirement.txt (default: the golden scenario)",
+    )
     sim = sub.add_parser("simulate")
     sim.add_argument("--work", required=True)
     sim.add_argument("--out", required=True)

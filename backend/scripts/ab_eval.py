@@ -479,7 +479,12 @@ def main(argv: list[str] | None = None) -> int:
             for seed, row in rows.items()
         }
 
+    fixture_a = json.loads((groups["A"]["work"] / "prepared.json").read_text(encoding="utf-8")).get("fixture")
+    fixture_b = json.loads((groups["B"]["work"] / "prepared.json").read_text(encoding="utf-8")).get("fixture")
+    if fixture_a and fixture_b and Path(fixture_a).name != Path(fixture_b).name:
+        raise SystemExit(f"A and B were prepared from different scenarios: {fixture_a} vs {fixture_b}")
     report = {
+        "scenario": Path(fixture_a or fixture_b or "golden_scenario").name,
         "seeds": args.seeds,
         "rounds": args.rounds,
         "groups": {name: strip(rows) for name, rows in per_run.items()},
@@ -506,7 +511,7 @@ def render(report: dict[str, Any]) -> str:
     s, g = report["summary"], report["gates"]
     labels = {"switch": "切換預設值", "conditional": "有條件切換", "keep_llm": "維持 llm"}
     lines = [
-        "# A/B 忠實度評估（golden scenario）",
+        f"# A/B 忠實度評估（{report.get('scenario', 'golden_scenario')}）",
         "",
         f"- seeds：{', '.join(map(str, report['seeds']))}；每組 {len(report['seeds'])} 次；每次 {report['rounds']} 回合",
         "- A：LLM 決策（LLM 準備）；B：System One 決策＋分層內容（模板／結構化準備）；兩組都用本機圖譜與本機模型",

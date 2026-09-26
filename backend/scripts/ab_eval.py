@@ -11,9 +11,12 @@ existing run is reused), then this script computes:
 * decode tokens per round, round latency, VRAM peak;
 * Jensen-Shannon divergence of action-type distributions: A seed vs A seed
   (the noise floor) and B vs A;
-* stance curves: every post of every run is scored with the same System One
-  ``score`` question, averaged per round; B's mean curve is correlated with
-  A's (and A seeds with each other);
+* stance (#27): every post of every run is scored with the same System One
+  ``score`` question. Gated: the per-persona mean stance (the same named
+  agents exist in both groups) correlated B vs A, and the stance-level
+  distribution (JS against the A seed-to-seed noise floor). Reported only:
+  the per-round curve and a 4-round windowed curve, whose seed-to-seed
+  correlation on the golden scenario is too low to judge anything;
 * distinct-2 and seed-entity mention rate of posts;
 * extraction recall from #7 (passed in).
 
@@ -151,8 +154,10 @@ def action_counts(run: Path) -> Counter:
     return counts
 
 
-def posts_by_round(run: Path) -> dict[int, list[str]]:
-    result: dict[int, list[str]] = {}
+def post_rows(run: Path) -> list[dict[str, Any]]:
+    """Posts, quotes and comments: round, author name, text."""
+
+    rows: list[dict[str, Any]] = []
     for platform in ("twitter", "reddit"):
         path = run / "sim" / platform / "actions.jsonl"
         if not path.exists():
@@ -164,29 +169,95 @@ def posts_by_round(run: Path) -> dict[int, list[str]]:
             args = row.get("action_args") or {}
             text = args.get("quote_content") or args.get("content")
             if text:
-                result.setdefault(int(row.get("round", 0)), []).append(str(text))
+                rows.append({
+                    "round": int(row.get("round", 0)),
+                    # Names match across groups; an id would not, so mark it.
+                    "agent": str(row.get("agent_name") or f"id:{row.get('agent_id')}"),
+                    "text": str(text),
+                })
+    return rows
+
+
+def posts_by_round(run: Path) -> dict[int, list[str]]:
+    result: dict[int, list[str]] = {}
+    for row in post_rows(run):
+        result.setdefault(row["round"], []).append(row["text"])
     return result
 
 
-def stance_curve(client, run: Path, rounds: int, cache: dict[str, float]) -> list[float | None]:
+def score_posts(client, texts: list[str], cache: dict[str, dict[str, Any]], workers: int = 8) -> None:
+    """Fill ``cache[text] = {"unit": 0..1, "levels": [p per stance level]}``."""
+
+    from concurrent.futures import ThreadPoolExecutor
+
     from app.system_one.models import ScoreQuestion, SystemOneRequest
 
-    curve: list[float | None] = []
-    by_round = posts_by_round(run)
-    for r in range(1, rounds + 1):
-        scores = []
-        for text in by_round.get(r, []):
-            if text not in cache:
-                answer = client.ask(
-                    SystemOneRequest(
-                        state=f"貼文：{text[:300]}",
-                        questions={"s": ScoreQuestion(instructions=STANCE_QUESTION, criteria=STANCE_LEVELS)},
-                    )
-                ).answers["s"]
-                cache[text] = answer.score / (len(STANCE_LEVELS) - 1)
-            scores.append(cache[text])
-        curve.append(statistics.mean(scores) if scores else None)
-    return curve
+    todo = sorted({t for t in texts if t not in cache})
+
+    def ask(text: str) -> tuple[str, dict[str, Any]]:
+        answer = client.ask(
+            SystemOneRequest(
+                state=f"貼文：{text[:300]}",
+                questions={"s": ScoreQuestion(instructions=STANCE_QUESTION, criteria=STANCE_LEVELS)},
+            )
+        ).answers["s"]
+        levels = [float(answer.probabilities.get(level, 0.0)) for level in STANCE_LEVELS]
+        return text, {"unit": answer.score / (len(STANCE_LEVELS) - 1), "levels": levels}
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        for text, value in pool.map(ask, todo):
+            cache[text] = value
+
+
+WINDOW = 4
+
+
+def stance_measures(rows: list[dict[str, Any]], cache: dict[str, dict[str, Any]], rounds: int) -> dict[str, Any]:
+    """Per-round and windowed curves, per-persona means and the level mix."""
+
+    by_round: dict[int, list[float]] = {}
+    by_agent: dict[str, list[float]] = {}
+    levels = [0.0] * len(STANCE_LEVELS)
+    for row in rows:
+        scored = cache[row["text"]]
+        by_round.setdefault(row["round"], []).append(scored["unit"])
+        by_agent.setdefault(row["agent"], []).append(scored["unit"])
+        levels = [a + b for a, b in zip(levels, scored["levels"])]
+    curve = [statistics.mean(by_round[r]) if by_round.get(r) else None for r in range(1, rounds + 1)]
+    windowed = []
+    for start in range(1, rounds + 1, WINDOW):
+        values = [v for r in range(start, min(start + WINDOW, rounds + 1)) for v in by_round.get(r, [])]
+        windowed.append(statistics.mean(values) if values else None)
+    return {
+        "stance_curve": curve,
+        "stance_curve_windowed": windowed,
+        "stance_by_persona": {agent: statistics.mean(v) for agent, v in sorted(by_agent.items())},
+        "stance_levels": {level: round(n, 4) for level, n in zip(STANCE_LEVELS, levels)},
+    }
+
+
+MIN_COMMON_PERSONAS = 8
+MIN_COMMON_SHARE = 0.8
+
+
+def persona_correlation(x: dict[str, float], y: dict[str, float]) -> float | None:
+    common = sorted(set(x) & set(y))
+    return pearson([x[k] for k in common], [y[k] for k in common])
+
+
+def enough_common_personas(a: dict[str, float], b: dict[str, float]) -> tuple[int, bool]:
+    """A few shared personas can correlate by chance: require >= 8 and >= 80% of A's."""
+
+    common = len(set(a) & set(b))
+    return common, bool(a) and common >= MIN_COMMON_PERSONAS and common >= MIN_COMMON_SHARE * len(a)
+
+
+def mean_persona(runs: list[dict[str, Any]]) -> dict[str, float]:
+    values: dict[str, list[float]] = {}
+    for run in runs:
+        for agent, v in run["stance_by_persona"].items():
+            values.setdefault(agent, []).append(v)
+    return {agent: statistics.mean(v) for agent, v in values.items()}
 
 
 def mean_curve(curves: list[list[float | None]]) -> list[float | None]:
@@ -226,11 +297,31 @@ def evaluate_groups(
 
     js_aa = [js_divergence(x["actions"], y["actions"]) for x, y in itertools.combinations(a_runs, 2)]
     js_ba = [js_divergence(b["actions"], a["actions"]) for b in b_runs for a in a_runs]
+    def pairwise(fn, key):
+        values = [fn(x[key], y[key]) for x, y in itertools.combinations(a_runs, 2)]
+        values = [v for v in values if v is not None]
+        return statistics.mean(values) if values else None
+
+    # Stance, reported: per-round and windowed curves.
     a_curve = mean_curve([r["stance_curve"] for r in a_runs])
     b_curve = mean_curve([r["stance_curve"] for r in b_runs])
-    corr_aa = [pearson(x["stance_curve"], y["stance_curve"]) for x, y in itertools.combinations(a_runs, 2)]
-    corr_aa = [c for c in corr_aa if c is not None]
-    corr_ab = pearson(a_curve, b_curve) if a_runs and b_runs else None
+    a_window = mean_curve([r["stance_curve_windowed"] for r in a_runs])
+    b_window = mean_curve([r["stance_curve_windowed"] for r in b_runs])
+    curve_report = {
+        "per_round": {"b_vs_a": pearson(a_curve, b_curve) if a_runs and b_runs else None,
+                      "a_seed_pairs_mean": pairwise(pearson, "stance_curve")},
+        "windowed": {"b_vs_a": pearson(a_window, b_window) if a_runs and b_runs else None,
+                     "a_seed_pairs_mean": pairwise(pearson, "stance_curve_windowed")},
+    }
+    # Stance, gated: per-persona means and the level mix.
+    a_persona, b_persona = mean_persona(a_runs), mean_persona(b_runs)
+    persona_ab = persona_correlation(a_persona, b_persona) if a_runs and b_runs else None
+    n_common, enough_personas = enough_common_personas(a_persona, b_persona)
+    persona_aa = pairwise(persona_correlation, "stance_by_persona")
+    levels_aa = [js_divergence(x["stance_levels"], y["stance_levels"]) for x, y in itertools.combinations(a_runs, 2)]
+    levels_ba = [js_divergence(b["stance_levels"], a["stance_levels"]) for b in b_runs for a in a_runs]
+    levels_noise = statistics.mean(levels_aa) if levels_aa else None
+    levels_b = statistics.mean(levels_ba) if levels_ba else None
 
     a_decode = _mean_of(a_runs, "decode_per_round")
     b_decode = _mean_of(b_runs, "decode_per_round")
@@ -253,11 +344,20 @@ def evaluate_groups(
             "threshold": "≤ 2 × A noise",
             "passed": js_b is not None and js_noise is not None and js_b <= 2 * js_noise,
         },
-        "stance_correlation": {
-            "value": corr_ab,
-            "a_seed_pairs_mean": statistics.mean(corr_aa) if corr_aa else None,
+        "stance_by_persona": {
+            "value": persona_ab,
+            "a_seed_pairs_mean": persona_aa,
             "threshold": 0.5,
-            "passed": corr_ab is not None and corr_ab >= 0.5,
+            "common_personas": n_common,
+            "passed": enough_personas and persona_ab is not None and persona_ab >= 0.5,
+        },
+        "stance_distribution": {
+            "b_vs_a": levels_b,
+            "a_seed_noise": levels_noise,
+            "threshold": "≤ 2 × A noise",
+            # A floor under the noise: identical mixes would otherwise demand 0.
+            "passed": levels_b is not None and levels_noise is not None
+            and levels_b <= max(2 * levels_noise, 0.01),
         },
         "vram": {
             "peak_mib": vram_peak,
@@ -269,7 +369,8 @@ def evaluate_groups(
     if all(g["passed"] for g in gates.values()):
         recommendation = "switch"
     elif gates["decode_ratio"]["passed"] and gates["vram"]["passed"] and (
-        gates["action_js"]["passed"] or gates["stance_correlation"]["passed"]
+        gates["action_js"]["passed"]
+        or (gates["stance_by_persona"]["passed"] and gates["stance_distribution"]["passed"])
     ):
         recommendation = "conditional"
     else:
@@ -287,6 +388,9 @@ def evaluate_groups(
     }
     summary["stance_curve_A"] = a_curve
     summary["stance_curve_B"] = b_curve
+    summary["stance_curve_report"] = curve_report
+    summary["stance_by_persona_A"] = a_persona
+    summary["stance_by_persona_B"] = b_persona
     return gates, recommendation, summary, excluded
 
 
@@ -329,7 +433,9 @@ def main(argv: list[str] | None = None) -> int:
     from app.system_one.client import get_system_one_client
 
     client = get_system_one_client()
-    cache: dict[str, float] = {}
+    cache: dict[str, dict[str, Any]] = {}
+    all_rows = {(name, seed): post_rows(info["dir"]) for name in runs for seed, info in runs[name].items()}
+    score_posts(client, [row["text"] for rows in all_rows.values() for row in rows], cache)
     per_run: dict[str, dict[int, dict[str, Any]]] = {"A": {}, "B": {}}
     for name in runs:
         work = groups[name]["work"]
@@ -354,7 +460,7 @@ def main(argv: list[str] | None = None) -> int:
                 "vram_peak_mib": summary["vram_mib"]["peak"],
                 "actions": action_counts(info["dir"]),
                 "content": gp.content_stats(texts, names),
-                "stance_curve": stance_curve(client, info["dir"], scheduled, cache),
+                **stance_measures(all_rows[(name, seed)], cache, scheduled),
             }
 
     gates, recommendation, summary, excluded = evaluate_groups(per_run)
@@ -414,12 +520,24 @@ def render(report: dict[str, Any]) -> str:
         "| --- | --- | --- | --- |",
         f"| B／A 每回合 decode | {_fmt(g['decode_ratio']['value'])} | ≤ 0.10 | {'✅' if g['decode_ratio']['passed'] else '❌'} |",
         f"| 動作分布 JS（B vs A） | {_fmt(g['action_js']['b_vs_a'])}（A 組間 {_fmt(g['action_js']['a_seed_noise'])}） | ≤ 2 × A 組間 | {'✅' if g['action_js']['passed'] else '❌'} |",
-        f"| 立場曲線相關係數（B vs A） | {_fmt(g['stance_correlation']['value'])}（A 組間平均 {_fmt(g['stance_correlation']['a_seed_pairs_mean'])}） | ≥ 0.5 | {'✅' if g['stance_correlation']['passed'] else '❌'} |",
+        f"| 各角色平均立場相關（B vs A） | {_fmt(g['stance_by_persona']['value'])}（A 組間平均 {_fmt(g['stance_by_persona']['a_seed_pairs_mean'])}；共同角色 {g['stance_by_persona'].get('common_personas', '—')}） | ≥ 0.5，共同角色 ≥ 8 且 ≥ 80% | {'✅' if g['stance_by_persona']['passed'] else '❌'} |",
+        f"| 立場分布 JS（B vs A） | {_fmt(g['stance_distribution']['b_vs_a'])}（A 組間 {_fmt(g['stance_distribution']['a_seed_noise'])}） | ≤ 2 × A 組間 | {'✅' if g['stance_distribution']['passed'] else '❌'} |",
         f"| VRAM 峰值（B） | {_fmt(g['vram']['peak_mib'])} MiB（A {_fmt(g['vram'].get('a_peak_mib'))} MiB） | ≤ {g['vram']['budget_mib']} MiB | {'✅' if g['vram']['passed'] else '❌'} |",
         "",
         f"## 建議：{labels[report['recommendation']]}",
         "",
     ]
+    curves = s.get("stance_curve_report")
+    if curves:
+        lines += [
+            "## 立場曲線（只報告，不作為閘門）",
+            "",
+            "| 曲線 | B vs A | A 組間平均 |",
+            "| --- | --- | --- |",
+            f"| 每回合 | {_fmt(curves['per_round']['b_vs_a'])} | {_fmt(curves['per_round']['a_seed_pairs_mean'])} |",
+            f"| 每 {WINDOW} 回合 | {_fmt(curves['windowed']['b_vs_a'])} | {_fmt(curves['windowed']['a_seed_pairs_mean'])} |",
+            "",
+        ]
     if report.get("runs_with_llm_errors"):
         lines += [
             f"⚠️ 下列 run 有模型伺服器錯誤（丟失 agent 回合），已排除在閘門之外：{', '.join(report['runs_with_llm_errors'])}",

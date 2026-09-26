@@ -426,6 +426,10 @@ def main(argv: list[str] | None = None) -> int:
         "A": {"work": Path(args.work_a).resolve(), "backend": "llm", "content": None},
         "B": {"work": Path(args.work_b).resolve(), "backend": "system_one", "content": "tiered"},
     }
+    # Refuse a mismatched pair before any simulation runs.
+    scenario = gp.check_same_scenario(
+        *(json.loads((groups[g]["work"] / "prepared.json").read_text(encoding="utf-8")) for g in ("A", "B"))
+    )
     runs: dict[str, dict[int, dict[str, Any]]] = {"A": {}, "B": {}}
     for name, group in groups.items():
         if args.simulate_only and name != args.simulate_only:
@@ -480,6 +484,7 @@ def main(argv: list[str] | None = None) -> int:
         }
 
     report = {
+        "scenario": scenario,
         "seeds": args.seeds,
         "rounds": args.rounds,
         "groups": {name: strip(rows) for name, rows in per_run.items()},
@@ -506,7 +511,7 @@ def render(report: dict[str, Any]) -> str:
     s, g = report["summary"], report["gates"]
     labels = {"switch": "切換預設值", "conditional": "有條件切換", "keep_llm": "維持 llm"}
     lines = [
-        "# A/B 忠實度評估（golden scenario）",
+        f"# A/B 忠實度評估（{report.get('scenario', 'golden_scenario')}）",
         "",
         f"- seeds：{', '.join(map(str, report['seeds']))}；每組 {len(report['seeds'])} 次；每次 {report['rounds']} 回合",
         "- A：LLM 決策（LLM 準備）；B：System One 決策＋分層內容（模板／結構化準備）；兩組都用本機圖譜與本機模型",

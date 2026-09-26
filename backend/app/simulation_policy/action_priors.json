@@ -1,0 +1,97 @@
+{
+  "fitted_on": {
+    "a_runs": [
+      "A_seed11",
+      "A_seed12",
+      "A_seed13"
+    ],
+    "b_runs": [
+      "B_seed11",
+      "B_seed12",
+      "B_seed13"
+    ],
+    "a_actions": {
+      "twitter": {
+        "CREATE_POST": 50,
+        "LIKE_POST": 107,
+        "REPOST": 3,
+        "QUOTE_POST": 32
+      },
+      "reddit": {
+        "CREATE_POST": 33,
+        "LIKE_POST": 146,
+        "DISLIKE_POST": 8,
+        "CREATE_COMMENT": 80,
+        "LIKE_COMMENT": 57,
+        "SEARCH_USER": 5,
+        "FOLLOW": 1,
+        "SEARCH_POSTS": 1
+      }
+    },
+    "b_decisions": 142,
+    "a_llm_calls": 318,
+    "a_acted_agent_rounds": {
+      "twitter": 155,
+      "reddit": 162
+    },
+    "a_no_action_share": 0.0031
+  },
+  "method": "per node: mean(normalise(readout*w)) = f over recorded readouts; root exit = A no-action share",
+  "priors": {
+    "twitter": {
+      "": {
+        "engage": 4.301,
+        "create": 0.6023,
+        "social": 0.0737,
+        "none": 0.0109
+      },
+      "engage": {
+        "like_post": 8.1433,
+        "repost": 0.474,
+        "quote_post": 0.2843,
+        "none": 0.0135
+      },
+      "create": {
+        "create_post": 1.3411,
+        "none": 0.0361
+      }
+    },
+    "reddit": {
+      "": {
+        "engage": 10.6145,
+        "create": 0.7792,
+        "info": 0.049,
+        "social": 0.3374,
+        "none": 0.0288
+      },
+      "engage": {
+        "like_post": 10.8392,
+        "dislike_post": 0.3637,
+        "like_comment": 5.597,
+        "dislike_comment": 0.0349,
+        "none": 0.0029
+      },
+      "create": {
+        "create_post": 0.4792,
+        "create_comment": 3.1699,
+        "none": 0.0212
+      },
+      "info": {
+        "search_posts": 0.3347,
+        "search_user": 4.8432,
+        "trend": 0.6374,
+        "refresh": 1.1883,
+        "none": 0.2434
+      },
+      "social": {
+        "follow": 1.8,
+        "mute": 0.6,
+        "none": 0.6
+      }
+    }
+  },
+  "extra_action_rate": {
+    "twitter": 0.1927,
+    "reddit": 0.5106
+  }
+}

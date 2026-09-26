@@ -43,6 +43,7 @@ from .emotion import (
 from .taxonomy import Taxonomy
 
 MAX_FEED = 20
+MAX_ACTIONS_PER_ROUND = 3
 MAX_TEXT = 120
 STANCE_LEVELS = ["強烈反對", "反對", "中立", "支持", "強烈支持"]
 INTENSITY_LEVELS = ["平和", "有些情緒", "非常激動"]
@@ -70,6 +71,8 @@ class Decision:
     action: str  # OASIS ActionType name, e.g. "LIKE_POST"
     args: dict[str, Any]
     record: dict[str, Any]
+    # (emotion, readout) of this round, reused by later actions in it
+    emotion: tuple[dict[str, float], dict[str, float]] | None = None
 
 
 class DecisionLog:
@@ -103,7 +106,10 @@ class SystemOnePolicy:
         content_provider: ContentProvider | None = None,
         state_store: AgentStateStore | None = None,
         decision_log: DecisionLog | None = None,
+        extra_action_rate: float = 0.0,
     ) -> None:
+        if not 0.0 <= extra_action_rate < 1.0:
+            raise ValueError(f"extra_action_rate must be within [0, 1), got {extra_action_rate}")
         self.client = client
         self.taxonomy = taxonomy
         self.seed = seed
@@ -111,6 +117,9 @@ class SystemOnePolicy:
         self.content = content_provider or TemplateContentProvider()
         self.state_store = state_store
         self.log = decision_log or DecisionLog(None)
+        # Probability of one more action after each action in a round (#26):
+        # LLM agents take ~1.6 actions per activation.
+        self.extra_action_rate = extra_action_rate
         self._memory: dict[tuple[str, int], dict[str, float]] = {}
         self._memory_lock = threading.Lock()
 
@@ -263,11 +272,45 @@ class SystemOnePolicy:
 
     # ------------------------------------------------------------------ main
 
-    def decide(self, obs: Observation) -> Decision:
-        rng = decision_rng(self.seed, obs.platform, obs.round_num, obs.agent_id)
+    def decide_round(self, obs: Observation) -> list[Decision]:
+        """The agent's actions this round: one decision, then another with
+        probability ``extra_action_rate`` after each action, up to
+        MAX_ACTIONS_PER_ROUND; a DO_NOTHING ends the round."""
+
+        first = self.decide(obs)
+        decisions = [first]
+        if first.action == "DO_NOTHING" or self.extra_action_rate <= 0:
+            return decisions
+        emotion = first.emotion
+        for index in range(1, MAX_ACTIONS_PER_ROUND):
+            gate = decision_rng(self.seed, f"{obs.platform}+more{index}", obs.round_num, obs.agent_id)
+            if gate.random() >= self.extra_action_rate:
+                break
+            done = [d.action for d in decisions]
+            decision = self.decide(obs, index=index, emotion=emotion, done=done)
+            if decision.action == "DO_NOTHING":
+                break
+            decisions.append(decision)
+        return decisions
+
+    def decide(
+        self,
+        obs: Observation,
+        *,
+        index: int = 0,
+        emotion: tuple[dict[str, float], dict[str, float]] | None = None,
+        done: list[str] | None = None,
+    ) -> Decision:
+        platform_key = obs.platform if index == 0 else f"{obs.platform}+{index}"
+        rng = decision_rng(self.seed, platform_key, obs.round_num, obs.agent_id)
         base = self.base_state(obs)
-        emotion, readout = self.update_emotion(obs, base)
+        if emotion is None:
+            emotion, readout = self.update_emotion(obs, base)
+        else:
+            emotion, readout = emotion  # later actions in the round reuse it
         state = f"{base}\n目前情緒：{describe(emotion)}"
+        if done:
+            state += f"\n這一輪已經做了：{'、'.join(done)}（接下來還會做什麼？）"
         steps = ask_tree(self.client, state, self.taxonomy.tree, rng)
         path = [step.choice for step in steps]
         leaf = self.taxonomy.leaf(path)
@@ -287,6 +330,7 @@ class SystemOnePolicy:
                 else {}
             ),
             "chosen": leaf.action,
+            **({"action_index": index} if index else {}),
             "state_hash": hashlib.sha256(state.encode("utf-8")).hexdigest(),
             "emotion": {k: round(v, 6) for k, v in emotion.items()},
             "emotion_readout": {k: round(v, 6) for k, v in readout.items()},
@@ -336,4 +380,4 @@ class SystemOnePolicy:
         record["action"] = action
         record["args"] = args
         self.log.write(record)
-        return Decision(action, args, record)
+        return Decision(action, args, record, (emotion, readout))

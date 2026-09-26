@@ -76,3 +76,22 @@ def test_load_and_attach_priors(tmp_path, monkeypatch):
     bad.write_text(json.dumps({"priors": {"twitter": {"": {"nope": 1.0}}}}), encoding="utf-8")
     with pytest.raises(ValueError):
         with_priors(load_taxonomy("twitter"), load_action_priors(str(bad))["twitter"])
+
+
+def test_fit_exits_to_activity_and_extra_rates(tmp_path):
+    from app.simulation_policy.priors import load_extra_action_rates
+
+    taxonomy = load_taxonomy("twitter")
+    decisions = [{"path": ["none"], "probs": [{"engage": 0.1, "create": 0.3, "social": 0.1, "none": 0.5}], "platform": "twitter"}]
+    priors = fit.fit_platform(Counter({"LIKE_POST": 60, "CREATE_POST": 40}), decisions, taxonomy, no_action_share=0.05)
+    adjusted = apply_priors(decisions[0]["probs"][0], priors[""])
+    assert adjusted["none"] == pytest.approx(0.05, abs=0.02)  # the agent now acts ~95% of the time
+    assert priors["engage"]["none"] < 0.2  # an agent that chose engage engages
+
+    path = tmp_path / "p.json"
+    path.write_text(json.dumps({"priors": {}, "extra_action_rate": {"twitter": 0.4}}), encoding="utf-8")
+    assert load_extra_action_rates(str(path)) == {"twitter": 0.4}
+    assert load_extra_action_rates("off") == {}
+    path.write_text(json.dumps({"extra_action_rate": {"twitter": 1.2}}), encoding="utf-8")
+    with pytest.raises(ValueError):
+        load_extra_action_rates(str(path))

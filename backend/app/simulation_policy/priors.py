@@ -47,6 +47,22 @@ def load_action_priors(setting: str | None = None) -> dict[str, dict[str, dict[s
     return priors
 
 
+def load_extra_action_rates(setting: str | None = None) -> dict[str, float]:
+    """``{platform: rate}`` from the same file (``extra_action_rate``); empty when off."""
+
+    value = (os.environ.get(ENV_VAR, "") if setting is None else setting).strip()
+    if value.lower() == "off":
+        return {}
+    path = PRIORS_PATH if value in ("", "default") else Path(value)
+    if not path.exists():
+        return {}
+    rates = json.loads(path.read_text(encoding="utf-8")).get("extra_action_rate") or {}
+    for platform, rate in rates.items():
+        if not isinstance(rate, (int, float)) or not 0 <= rate < 1:
+            raise ValueError(f"bad extra_action_rate for {platform}: {rate!r}")
+    return {platform: float(rate) for platform, rate in rates.items()}
+
+
 def _attach(node: dict[str, Any], path: tuple[str, ...], priors: dict[str, dict[str, float]]) -> None:
     weights = priors.get("/".join(path))
     if weights:

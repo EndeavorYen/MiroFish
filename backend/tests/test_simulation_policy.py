@@ -402,3 +402,43 @@ def test_bridge_refreshes_recommendations_before_observing(tmp_path):
     policy = _policy(platform="twitter", seed=1, tmp_path=tmp_path)
     asyncio.run(system_one_actions(env, [(1, agent)], policy, "twitter", 1))
     assert calls[:2] == ["rec", "refresh"]
+
+
+class Pick(FakeSystemOne):
+    """Picks a fixed option wherever it is offered (e.g. engage, like_post)."""
+
+    def __init__(self, *prefer):
+        super().__init__()
+        self.prefer = prefer
+
+    def ask(self, request):
+        response = super().ask(request)
+        for name, answer in response.answers.items():
+            if isinstance(answer, ChoiceAnswer):
+                pick = next((p for p in self.prefer if p in answer.probabilities), None)
+                if pick:
+                    keys = list(answer.probabilities)
+                    response.answers[name] = ChoiceAnswer(
+                        choice=pick, probabilities={k: 1.0 if k == pick else 0.0 for k in keys}, confidence=1.0
+                    )
+        return response
+
+
+def test_decide_round_takes_extra_actions_and_reuses_emotion(tmp_path):
+    from app.simulation_policy.policy import MAX_ACTIONS_PER_ROUND
+
+    policy = SystemOnePolicy(Pick("engage", "like_post"), load_taxonomy("twitter"), seed=3, extra_action_rate=0.99,
+                             decision_log=DecisionLog(str(tmp_path / "d.jsonl")))
+    decisions = policy.decide_round(_obs())
+    assert len(decisions) == MAX_ACTIONS_PER_ROUND
+    assert all(d.action == "LIKE_POST" for d in decisions)
+    rows = [json.loads(line) for line in (tmp_path / "d.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert [r.get("action_index", 0) for r in rows] == [0, 1, 2]
+    assert len({json.dumps(r["emotion"], sort_keys=True) for r in rows}) == 1  # one emotion update
+
+    single = SystemOnePolicy(Pick("engage", "like_post"), load_taxonomy("twitter"), seed=3)
+    assert len(single.decide_round(_obs())) == 1  # extra_action_rate defaults to 0
+    idle = SystemOnePolicy(Pick("none"), load_taxonomy("twitter"), seed=3, extra_action_rate=0.99)
+    assert [d.action for d in idle.decide_round(_obs())] == ["DO_NOTHING"]
+    with pytest.raises(ValueError):
+        SystemOnePolicy(FakeSystemOne(), load_taxonomy("twitter"), extra_action_rate=1.0)

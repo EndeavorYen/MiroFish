@@ -142,15 +142,22 @@ NON_ACTIONS = {"DO_NOTHING"}
 
 
 def action_counts(run: Path) -> Counter:
-    """Action types per platform, without DO_NOTHING: the System One policy
-    logs it, OASIS LLM agents never do, so counting it would compare logging,
-    not behaviour."""
+    """Agent actions per platform and type. Left out: DO_NOTHING (the System
+    One policy logs it, OASIS LLM agents never do, so it would compare
+    logging, not behaviour) and round 0 (the scripted initial posts, the same
+    in both groups; they dominated the mix of a group whose agents act less)."""
 
     counts: Counter = Counter()
-    for platform, per_type in gp.action_counts(run / "sim").items():
-        for action, n in per_type.items():
-            if action.upper() not in NON_ACTIONS:
-                counts[f"{platform}:{action}"] += n
+    for platform in ("twitter", "reddit"):
+        path = run / "sim" / platform / "actions.jsonl"
+        if not path.exists():
+            continue
+        for line in path.read_text(encoding="utf-8").splitlines():
+            row = json.loads(line)
+            action = str(row.get("action_type") or "").upper()
+            if "event_type" in row or not action or action in NON_ACTIONS or int(row.get("round", 0)) == 0:
+                continue
+            counts[f"{platform}:{action}"] += 1
     return counts
 
 
@@ -379,6 +386,7 @@ def evaluate_groups(
     summary = {
         name: {
             "clean_runs": len(rows),
+            "actions_per_run": statistics.mean(sum(r["actions"].values()) for r in rows) if rows else None,
             "decode_per_round": _mean_of(rows, "decode_per_round"),
             "round_latency_mean_s": _mean_of(rows, "round_latency_mean_s"),
             "distinct_2": _content_mean(rows, "distinct_2"),
@@ -508,6 +516,7 @@ def render(report: dict[str, Any]) -> str:
         "| 指標 | A | B |",
         "| --- | --- | --- |",
         f"| 閘門採用的 run 數（排除伺服器錯誤） | {s['A'].get('clean_runs', '—')} | {s['B'].get('clean_runs', '—')} |",
+        f"| 每 run 的 agent 動作數（不含第 0 回合） | {_fmt(s['A'].get('actions_per_run'), 1)} | {_fmt(s['B'].get('actions_per_run'), 1)} |",
         f"| 每回合 decode tokens | {_fmt(s['A']['decode_per_round'], 1)} | {_fmt(s['B']['decode_per_round'], 1)} |",
         f"| 有動作回合平均延遲 (s) | {_fmt(s['A']['round_latency_mean_s'], 1)} | {_fmt(s['B']['round_latency_mean_s'], 1)} |",
         f"| distinct-2 | {_fmt(s['A']['distinct_2'])} | {_fmt(s['B']['distinct_2'])} |",

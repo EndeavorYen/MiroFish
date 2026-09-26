@@ -219,3 +219,38 @@ def test_default_content_budget_keeps_the_full_tier_reachable(monkeypatch, tmp_p
 
     monkeypatch.delenv("CONTENT_DECODE_BUDGET_PER_ROUND", raising=False)
     assert tiers.DEFAULT_BUDGET_PER_ROUND >= tiers.FULL_MAX_TOKENS
+
+
+def test_stance_question_names_the_event():
+    from app.services.prep_structured import stance_question
+
+    assert "利益" in stance_question("工會", "空中計程車試點").instructions
+    assert stance_question("工會", "").instructions == "「工會」對主要事件的立場？"
+
+
+
+def test_event_stance_is_asked_alone_with_the_same_state_as_the_profile():
+    from app.services.prep_structured import structured_agent_config
+    from app.system_one.models import ChoiceAnswer, ScoreAnswer, SystemOneResponse
+
+    seen = []
+
+    class Recorder:
+        def ask(self, request):
+            seen.append((request.state, sorted(request.questions)))
+            answers = {}
+            for name, q in request.questions.items():
+                if hasattr(q, "criteria") and isinstance(q.criteria, dict):
+                    key = next(iter(q.criteria))
+                    answers[name] = ChoiceAnswer(choice=key, probabilities={key: 1.0}, confidence=1.0)
+                else:
+                    answers[name] = ScoreAnswer(score=0.0, probabilities={}, confidence=1.0)
+            return SystemOneResponse(answers=answers)
+
+    cfg = structured_agent_config(Recorder(), "工會", "LaborUnion", "司機工會", event="空中計程車試點",
+                                  context="- 工會要求轉崗基金")
+    stance_calls = [s for s, q in seen if q == ["stance"]]
+    other_calls = [(s, q) for s, q in seen if q != ["stance"]]
+    assert len(stance_calls) == 1 and "空中計程車試點" in stance_calls[0] and "轉崗基金" in stance_calls[0]
+    assert all("stance" not in q and "空中計程車試點" not in s for s, q in other_calls)
+    assert cfg["sentiment_bias"] == -1.0  # score 0 = strongly opposed

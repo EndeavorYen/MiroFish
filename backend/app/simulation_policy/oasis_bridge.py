@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import logging
 import os
 import threading
@@ -52,15 +53,21 @@ def build_policy(
     if not 0.0 <= alpha <= 1.0:
         raise ValueError(f"SIM_EMOTION_ALPHA must be within 0..1, got {alpha}")
     decision_concurrency()  # fail fast on a bad value
+    config_path = os.path.join(simulation_dir, "simulation_config.json")
+    config = {}
+    if os.path.exists(config_path):
+        with open(config_path, encoding="utf-8") as f:
+            config = json.load(f)
     if content_provider is None:
         from .tiers import build_tiered_provider
 
-        config_path = os.path.join(simulation_dir, "simulation_config.json")
-        config = {}
-        if os.path.exists(config_path):
-            with open(config_path, encoding="utf-8") as f:
-                config = json.load(f)
         content_provider = build_tiered_provider(platform, simulation_dir, config)
+    try:
+        weight = float(os.environ.get("SIM_STANCE_PRIOR_WEIGHT", "0.5"))
+    except ValueError as error:
+        raise ValueError("SIM_STANCE_PRIOR_WEIGHT must be a number within 0..1") from error
+    if not 0.0 <= weight <= 1.0:
+        raise ValueError(f"SIM_STANCE_PRIOR_WEIGHT must be within 0..1, got {weight}")
     taxonomy = with_priors(load_taxonomy(platform), load_action_priors().get(platform))
     return SystemOnePolicy(
         client,
@@ -73,7 +80,25 @@ def build_policy(
         state_store=_shared(AgentStateStore, os.path.join(simulation_dir, "agent_state.db")),
         decision_log=_shared(DecisionLog, os.path.join(simulation_dir, "decisions.jsonl")),
         extra_action_rate=load_extra_action_rates().get(platform, 0.0),
+        stance_prior=stance_priors(config),
+        stance_prior_weight=weight,
     )
+
+
+def stance_priors(config: dict[str, Any]) -> dict[int, float]:
+    """agent_id -> standing stance in 0..1 from the sim config's sentiment_bias (-1..1)."""
+
+    priors = {}
+    for agent in config.get("agent_configs") or []:
+        if not isinstance(agent, dict):
+            continue
+        bias, agent_id = agent.get("sentiment_bias"), agent.get("agent_id")
+        if isinstance(bias, bool) or not isinstance(bias, (int, float)) or not math.isfinite(bias):
+            continue  # unknown stance: no anchor
+        if isinstance(agent_id, bool) or not isinstance(agent_id, int):
+            continue
+        priors[agent_id] = min(1.0, max(0.0, (float(bias) + 1) / 2))
+    return priors
 
 
 # Process-lifetime cache: build_policy runs in the per-simulation script

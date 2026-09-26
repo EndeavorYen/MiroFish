@@ -190,8 +190,39 @@ def _entity_state(name: str, entity_type: str, summary: str, context: str) -> st
     return f"實體：{name}（類型：{entity_type}）\n摘要：{summary[:400]}\n相關資訊：{context[:800]}"
 
 
+def _stance_score(client, state: str, name: str, event: str) -> float | None:
+    """Stance 0..1 asked on its own with the event in the state, so the other
+    readouts (activity, influence ...) keep the state they were calibrated
+    on (#34). None without an event: the caller asks it with the rest."""
+
+    if not event:
+        return None
+    answer = _ask(client, f"{state}\n模擬的事件：{event[:300]}", {"stance": stance_question(name, event)})["stance"]
+    return _level(answer.score, len(STANCE5))
+
+
+def stance_question(name: str, event: str) -> ScoreQuestion:
+    """Stance toward the simulated event, judged by the entity's interests.
+
+    Asked without the event ("對主要事件的立場？"), the small model read
+    opposition groups (a taxi drivers' union, a residents' association) as
+    supportive: a golden mean sentiment of 0.42 against 0.22 from the LLM
+    prep, and far fewer strongly opposed posts (#41).
+    """
+
+    if not event:
+        return ScoreQuestion(instructions=f"「{name}」對主要事件的立場？", criteria=STANCE5)
+    return ScoreQuestion(
+        instructions=(
+            f"上面描述的事件對「{name}」的利益、生計或訴求是有利還是不利？"
+            f"據此判斷，「{name}」對這個事件的立場是？"
+        ),
+        criteria=STANCE5,
+    )
+
+
 def structured_profile(
-    client, name: str, entity_type: str, summary: str, context: str, seed: str = ""
+    client, name: str, entity_type: str, summary: str, context: str, seed: str = "", event: str = ""
 ) -> dict[str, Any]:
     state = _entity_state(name, entity_type, summary, context)
     kind = _ask(
@@ -205,7 +236,6 @@ def structured_profile(
         },
     )["kind"].choice
     questions: dict[str, Any] = {
-        "stance": ScoreQuestion(instructions=f"「{name}」對素材中主要事件的立場？", criteria=STANCE5),
         "risk": ScoreQuestion(instructions=f"「{name}」面對新事物的風險偏好？", criteria=LEVEL5),
         "activity": ScoreQuestion(instructions=f"「{name}」在社群上發言的活躍程度？", criteria=LEVEL5),
     }
@@ -226,7 +256,9 @@ def structured_profile(
             instructions=f"「{name}」比較外向還是內向？", criteria={"E": "外向", "I": "內向"}
         )
     answers = _ask(client, state, questions)
-    stance = _level(answers["stance"].score, len(STANCE5))
+    stance = _stance_score(client, state, name, event)
+    if stance is None:
+        stance = _level(_ask(client, state, {"stance": stance_question(name, "")})["stance"].score, len(STANCE5))
     risk = _level(answers["risk"].score, len(LEVEL5))
     activity = _level(answers["activity"].score, len(LEVEL5))
     topics = sorted(TOPICS, key=lambda k: -answers[f"topic_{k}"].noul)
@@ -297,15 +329,19 @@ def structured_time_config(num_entities: int) -> dict[str, Any]:
     }
 
 
-def structured_agent_config(client, name: str, entity_type: str, summary: str) -> dict[str, Any]:
+def structured_agent_config(
+    client, name: str, entity_type: str, summary: str, event: str = "", context: str = ""
+) -> dict[str, Any]:
     state = f"實體：{name}（類型：{entity_type}）\n摘要：{summary[:400]}"
+    # The stance is judged from the same kind of state as the profile's
+    # (summary + related facts), so persona text and sentiment_bias agree.
+    stance_state = _entity_state(name, entity_type, summary, context) if context else state
     answers = _ask(
         client,
         state,
         {
             "activity": ScoreQuestion(instructions=f"「{name}」在社群上的整體活躍度？", criteria=LEVEL5),
             "influence": ScoreQuestion(instructions=f"「{name}」發言的影響力？", criteria=LEVEL5),
-            "stance": ScoreQuestion(instructions=f"「{name}」對主要事件的立場？", criteria=STANCE5),
             "hours": ChoiceQuestion(
                 instructions=f"「{name}」通常什麼時段上網發言？",
                 criteria={k: v[0] for k, v in ACTIVE_PATTERNS.items()},
@@ -314,7 +350,9 @@ def structured_agent_config(client, name: str, entity_type: str, summary: str) -
     )
     activity = _level(answers["activity"].score, len(LEVEL5))
     influence = _level(answers["influence"].score, len(LEVEL5))
-    stance = _level(answers["stance"].score, len(STANCE5))
+    stance = _stance_score(client, stance_state, name, event)
+    if stance is None:
+        stance = _level(_ask(client, state, {"stance": stance_question(name, "")})["stance"].score, len(STANCE5))
     stance_label = "opposing" if stance < 0.35 else "supportive" if stance > 0.65 else "neutral"
     return {
         # activity_level gates whether an agent is a candidate each round.

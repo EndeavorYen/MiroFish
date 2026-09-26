@@ -291,3 +291,49 @@ def test_clean_generation_handles_missing_opening_tag():
     assert clean_generation("思考中…</think>真正的貼文") == "真正的貼文"
     assert clean_generation("<think>還沒想完") == ""
     assert clean_generation("「一般貼文」") == "一般貼文"
+
+
+def test_strong_bands_and_five_level_prompts():
+    from app.simulation_policy.tiers import stance_words, template_band
+
+    by_kind = {"neg": [], "neu": [], "pos": [], "neg_strong": [], "pos_strong": []}
+    assert template_band(0.1, by_kind) == "neg_strong"
+    assert template_band(0.2, by_kind) == "neg" and template_band(0.8, by_kind) == "pos"  # boundaries
+    assert template_band(0.3, by_kind) == "neg"
+    assert template_band(0.7, by_kind) == "pos"
+    assert template_band(0.9, by_kind) == "pos_strong"
+    assert template_band(0.9, {"neg": [], "neu": [], "pos": []}) == "pos"  # locale without strong bands
+    assert [stance_words(x) for x in (0.1, 0.3, 0.5, 0.7, 0.9)] == ["强烈反对", "反对或担忧", "中立", "支持", "强烈支持"]
+
+
+def test_locales_have_strong_bands_for_every_kind():
+    import json
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2] / "locales"
+    for lang in ("zh", "en"):
+        templates = json.loads((root / f"{lang}.json").read_text(encoding="utf-8"))["simContent"]["templates"]
+        for kind, bands in templates.items():
+            assert {"neg", "neu", "pos", "neg_strong", "pos_strong"} <= set(bands), (lang, kind)
+    zh = json.loads((root / "zh.json").read_text(encoding="utf-8"))["simContent"]["templates"]
+    en = json.loads((root / "en.json").read_text(encoding="utf-8"))["simContent"]["templates"]
+    # support + negative stance backs the opposition, never the project
+    assert not any("勉强支持" in line or "还算可以" in line for line in zh["support"]["neg"])
+    assert not any("I'll back" in line or "did OK" in line for line in en["support"]["neg"])
+
+
+def test_shared_prompt_wording_matches_its_bucket():
+    from app.simulation_policy.content import ContentIntent
+    from app.simulation_policy.tiers import TieredContentProvider
+
+    provider = TieredContentProvider.__new__(TieredContentProvider)
+    provider.templates = {"templates": {}}
+    provider._topic = lambda intent: "试点"
+    provider._entity_for = lambda intent: "市府"
+
+    def prompt(stance):
+        return provider._shared_prompt(ContentIntent(kind="opinion", stance=stance, intensity=0.5, target_ref=None,
+                                                     persona_ref=1))
+
+    assert prompt(0.1) == prompt(0.35)  # same bucket, same wording
+    assert "强烈" not in prompt(0.1)

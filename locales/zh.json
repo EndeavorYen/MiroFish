@@ -682,22 +682,38 @@
           "{topic}有利有弊，需要更多信息。"
         ],
         "pos": [
+          "{topic}整体来看利大于弊，我偏向支持。",
+          "{topic}有它的道理，我是认同的。"
+        ],
+        "pos_strong": [
           "我觉得{topic}是好事，值得一试。",
           "{topic}的方向是对的，支持。"
+        ],
+        "neg_strong": [
+          "{topic}我坚决反对，这根本是拿大家的生计开玩笑！",
+          "强烈反对{topic}！{entity}必须马上叫停！"
         ]
       },
       "support": {
         "neg": [
-          "虽然有疑虑，但{entity}这次的做法还算可以。",
-          "勉强支持{topic}，前提是要做好配套。"
+          "支持大家的诉求，{topic}不能就这样推下去。",
+          "力挺反对的声音，{entity}应该先暂停{topic}。"
         ],
         "neu": [
           "{entity}愿意推动{topic}，给个机会看看。",
           "先支持{topic}，再看执行。"
         ],
         "pos": [
+          "支持{topic}，{entity}这次做得不错。",
+          "{topic}值得一试，我赞成。"
+        ],
+        "pos_strong": [
           "大力支持{topic}！{entity}加油！",
           "{topic}终于来了，太期待了！"
+        ],
+        "neg_strong": [
+          "全力声援抗议！{topic}必须撤回，{entity}别想蒙混过关！",
+          "和受影响的人站在一起，坚决反对{topic}！"
         ]
       },
       "criticism": {
@@ -710,8 +726,16 @@
           "对{topic}有些质疑，希望{entity}回应。"
         ],
         "pos": [
-          "整体支持{topic}，但{entity}的沟通还可以更好。",
-          "{topic}方向没错，只是细节要再加强。"
+          "大方向赞成{topic}，只是{entity}执行要再细一点。",
+          "支持{topic}，不过沟通还能更好。"
+        ],
+        "pos_strong": [
+          "{topic}绝对是对的方向，挑毛病的人多看看数据！",
+          "全力支持{topic}，{entity}别被杂音影响！"
+        ],
+        "neg_strong": [
+          "{entity}在{topic}上完全不顾后果，简直离谱！",
+          "{topic}就是一场灾难，{entity}要为此负全责！"
         ]
       },
       "question": {
@@ -724,8 +748,16 @@
           "有人知道{topic}的具体细节吗？"
         ],
         "pos": [
+          "{topic}接下来怎么安排？蛮期待的。",
+          "请问{entity}，{topic}什么时候扩大试点？"
+        ],
+        "pos_strong": [
           "{topic}什么时候可以体验？想第一时间试试！",
           "{entity}的{topic}会扩大到更多地区吗？"
+        ],
+        "neg_strong": [
+          "{topic}出了事谁来负责？{entity}凭什么一意孤行？",
+          "{entity}为什么听不进反对声音，非要强推{topic}？"
         ]
       },
       "worry": {
@@ -738,8 +770,16 @@
           "{topic}还是要谨慎一点比较好。"
         ],
         "pos": [
+          "对{topic}有信心，但安全细节还要再看。",
+          "希望{topic}顺利，配套也要跟上。"
+        ],
+        "pos_strong": [
           "对{topic}有信心，只是希望安全再多做一点。",
           "期待{topic}，但愿别出什么差错。"
+        ],
+        "neg_strong": [
+          "{topic}会毁掉我们的生活，绝对不能接受！",
+          "再推{topic}，民怨只会越来越大，{entity}清醒点！"
         ]
       },
       "rumor": {
@@ -752,8 +792,16 @@
           "听说{entity}对{topic}有新安排，求证中。"
         ],
         "pos": [
+          "听说{topic}进展不错，希望是真的。",
+          "有消息说{entity}会加快{topic}，乐见其成。"
+        ],
+        "pos_strong": [
           "听说{topic}很快就要扩大了，好消息！",
           "有消息说{entity}会给{topic}更多补贴。"
+        ],
+        "neg_strong": [
+          "听说{topic}的风险一直被低估，{entity}到底瞒了什么？",
+          "有人爆料{topic}问题不少，{entity}还不出来说明？"
         ]
       },
       "clarification": {
@@ -766,8 +814,16 @@
           "补充说明：{topic}的细节要以{entity}公告为准。"
         ],
         "pos": [
+          "补充一下，{topic}其实有不少正面数据。",
+          "澄清：{entity}对{topic}的说明是可信的。"
+        ],
+        "pos_strong": [
           "澄清：{topic}的安全测试其实做得很充分。",
           "更正：{entity}已经说明{topic}的保障措施。"
+        ],
+        "neg_strong": [
+          "别被洗脑了，{entity}关于{topic}的说法全是谎话！",
+          "澄清：{topic}的风险被严重隐瞒，大家要警惕！"
         ]
       },
       "humor": {
@@ -780,8 +836,16 @@
           "{topic}：未来已来，只是还没到我家。"
         ],
         "pos": [
+          "{topic}来了，以后通勤可以飞了哈哈。",
+          "有了{topic}，堵车终于有解了（笑）。"
+        ],
+        "pos_strong": [
           "有了{topic}，通勤终于可以看风景了哈哈。",
           "{topic}太酷了，感觉活在科幻片里！"
+        ],
+        "neg_strong": [
+          "{topic}？{entity}怕不是在拿全城人当小白鼠！",
+          "{topic}这种笑话也好意思推，真是够了。"
         ]
       },
       "other": {
@@ -794,8 +858,16 @@
           "{topic}又上热搜了。"
         ],
         "pos": [
-          "今天被{topic}刷屏了，好热闹！",
-          "{topic}真是个好话题。"
+          "{topic}这件事我是支持的。",
+          "对{topic}持正面看法。"
+        ],
+        "pos_strong": [
+          "{topic}太棒了，全力支持！",
+          "强烈支持{topic}，{entity}加油！"
+        ],
+        "neg_strong": [
+          "{topic}坚决不行！",
+          "强烈反对{topic}，{entity}必须收回！"
         ]
       }
     },

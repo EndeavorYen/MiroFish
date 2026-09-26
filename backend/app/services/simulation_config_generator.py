@@ -845,8 +845,12 @@ class SimulationConfigGenerator:
             client = get_system_one_client()
             configs = []
             for i, entity in enumerate(entities):
+                facts = "\n".join(
+                    f"- {edge['fact']}" for edge in (entity.related_edges or []) if edge.get("fact")
+                )
                 cfg = structured_agent_config(
-                    client, entity.name, entity.get_entity_type() or "Unknown", entity.summary or ""
+                    client, entity.name, entity.get_entity_type() or "Unknown", entity.summary or "",
+                    event=simulation_requirement, context=facts,
                 )
                 configs.append(
                     AgentActivityConfig(

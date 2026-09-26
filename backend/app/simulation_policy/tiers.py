@@ -54,6 +54,36 @@ def clean_generation(text: str) -> str:
     return " ".join(text.split()).strip("「」\"")
 
 
+STRONG = 0.2  # stance below STRONG or above 1 - STRONG: the strong template band
+
+
+def stance_words(stance: float) -> str:
+    """Five-level stance wording for the shared and full prompts (#41)."""
+
+    if stance < STRONG:
+        return "强烈反对"
+    if stance < 0.4:
+        return "反对或担忧"
+    if stance <= 0.6:
+        return "中立"
+    if stance <= 1 - STRONG:
+        return "支持"
+    return "强烈支持"
+
+
+def template_band(stance: float, by_kind: dict) -> str:
+    """neg/neu/pos, or neg_strong/pos_strong at the extremes when the locale has
+    them: three bands put moderate support in enthusiastic lines and never
+    produced strong opposition (#41)."""
+
+    band = stance_band(stance)
+    if band == "neg" and stance < STRONG and "neg_strong" in by_kind:
+        return "neg_strong"
+    if band == "pos" and stance > 1 - STRONG and "pos_strong" in by_kind:
+        return "pos_strong"
+    return band
+
+
 def stance_band(stance: float) -> str:
     if stance < 0.4:
         return "neg"
@@ -174,13 +204,15 @@ class TieredContentProvider:
     def template_text(self, intent: ContentIntent) -> str:
         rng = _rng("template", intent.platform, intent.round_num, intent.persona_ref, intent.kind)
         by_kind = self.templates["templates"].get(intent.kind) or self.templates["templates"]["other"]
-        options = by_kind.get(stance_band(intent.stance)) or by_kind["neu"]
+        options = by_kind.get(template_band(intent.stance, by_kind)) or by_kind["neu"]
         text = rng.choice(options).format(
             topic=self._topic(intent), entity=self._entity_for(intent), target=intent.target_text[:30]
         )
         return self._vary(text, rng, intent)
 
     def _shared_prompt(self, intent: ContentIntent) -> str:
+        # Three levels, like the shared cache bucket: agents at 0.1 and 0.35
+        # share one generation, so its wording must fit both.
         band = {"neg": "反对或担忧", "neu": "中立", "pos": "支持"}[stance_band(intent.stance)]
         target = f"\n回应的贴文：{intent.target_text[:120]}" if intent.target_text else ""
         return (
@@ -190,7 +222,7 @@ class TieredContentProvider:
         )
 
     def _full_prompt(self, intent: ContentIntent) -> str:
-        band = {"neg": "反对或担忧", "neu": "中立", "pos": "支持"}[stance_band(intent.stance)]
+        band = stance_words(intent.stance)
         target = f"\n你要回应的贴文：{intent.target_text[:160]}" if intent.target_text else ""
         return (
             f"你是{intent.agent_name}。人设：{intent.persona[:300]}\n"

@@ -1,0 +1,99 @@
+{
+  "fitted_on": {
+    "a_runs": [
+      "C:\\Users\\endea\\AppData\\Local\\Temp\\mf_runs\\ab26cal\\A_seed11",
+      "C:\\Users\\endea\\AppData\\Local\\Temp\\mf_runs\\ab26cal\\A_seed12",
+      "C:\\Users\\endea\\AppData\\Local\\Temp\\mf_runs\\ab26cal\\A_seed13"
+    ],
+    "b_runs": [
+      "C:\\Users\\endea\\AppData\\Local\\Temp\\mf_runs\\ab26cal\\B_seed11",
+      "C:\\Users\\endea\\AppData\\Local\\Temp\\mf_runs\\ab26cal\\B_seed12",
+      "C:\\Users\\endea\\AppData\\Local\\Temp\\mf_runs\\ab26cal\\B_seed13",
+      "C:\\Users\\endea\\AppData\\Local\\Temp\\mf_runs\\ab26cal2\\B_seed11",
+      "C:\\Users\\endea\\AppData\\Local\\Temp\\mf_runs\\ab26cal2\\B_seed12",
+      "C:\\Users\\endea\\AppData\\Local\\Temp\\mf_runs\\ab26cal2\\B_seed13"
+    ],
+    "a_actions_per_activation": {
+      "twitter": 1.239,
+      "reddit": 2.043
+    },
+    "a_actions": {
+      "twitter": {
+        "CREATE_POST": 50,
+        "LIKE_POST": 107,
+        "REPOST": 3,
+        "QUOTE_POST": 32
+      },
+      "reddit": {
+        "CREATE_POST": 33,
+        "LIKE_POST": 146,
+        "DISLIKE_POST": 8,
+        "CREATE_COMMENT": 80,
+        "LIKE_COMMENT": 57,
+        "SEARCH_USER": 5,
+        "FOLLOW": 1,
+        "SEARCH_POSTS": 1
+      }
+    },
+    "b_decisions": 349,
+    "a_llm_calls": 318,
+    "a_acted_agent_rounds": {
+      "twitter": 155,
+      "reddit": 162
+    },
+    "a_no_action_share": 0.0031
+  },
+  "method": "per node: mean(normalise(readout*w)) = f over recorded readouts; root exit = A no-action share",
+  "priors": {
+    "twitter": {
+      "": {
+        "engage": 3.7349,
+        "create": 0.6512,
+        "social": 0.0699,
+        "none": 0.0059
+      },
+      "engage": {
+        "like_post": 9.0449,
+        "repost": 0.5855,
+        "quote_post": 0.3302,
+        "none": 0.001
+      },
+      "create": {
+        "create_post": 1.453,
+        "none": 0.001
+      }
+    },
+    "reddit": {
+      "": {
+        "engage": 10.4225,
+        "create": 0.6281,
+        "info": 0.0637,
+        "social": 0.3556,
+        "none": 0.0232
+      },
+      "engage": {
+        "like_post": 5.861,
+        "dislike_post": 0.8043,
+        "like_comment": 2.0078,
+        "dislike_comment": 0.0697,
+        "none": 0.001
+      },
+      "create": {
+        "create_post": 0.5356,
+        "create_comment": 2.9847,
+        "none": 0.001
+      },
+      "info": {
+        "search_posts": 0.3762,
+        "search_user": 5.6432,
+        "trend": 0.7232,
+        "refresh": 1.3447,
+        "none": 0.001
+      }
+    }
+  },
+  "extra_action_rate": {
+    "twitter": 0.1991,
+    "reddit": 0.6372
+  }
+}

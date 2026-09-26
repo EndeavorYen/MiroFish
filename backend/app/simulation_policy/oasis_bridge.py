@@ -15,6 +15,7 @@ from typing import Any
 
 from .emotion import DEFAULT_ALPHA, AgentStateStore
 from .policy import DecisionLog, Observation, SystemOnePolicy
+from .priors import load_action_priors, load_extra_action_rates, with_priors
 from .taxonomy import load_taxonomy
 
 DECISION_BACKENDS = ("llm", "system_one")
@@ -60,9 +61,10 @@ def build_policy(
             with open(config_path, encoding="utf-8") as f:
                 config = json.load(f)
         content_provider = build_tiered_provider(platform, simulation_dir, config)
+    taxonomy = with_priors(load_taxonomy(platform), load_action_priors().get(platform))
     return SystemOnePolicy(
         client,
-        load_taxonomy(platform),
+        taxonomy,
         seed=seed or 0,
         alpha=alpha,
         content_provider=content_provider,
@@ -70,6 +72,7 @@ def build_policy(
         # simulation dir, so their writes are serialised by one lock.
         state_store=_shared(AgentStateStore, os.path.join(simulation_dir, "agent_state.db")),
         decision_log=_shared(DecisionLog, os.path.join(simulation_dir, "decisions.jsonl")),
+        extra_action_rate=load_extra_action_rates().get(platform, 0.0),
     )
 
 
@@ -170,7 +173,7 @@ async def system_one_actions(
     async def decide(obs: Observation):
         async with limit:
             try:
-                return await asyncio.to_thread(policy.decide, obs)
+                return await asyncio.to_thread(policy.decide_round, obs)
             except Exception as error:  # noqa: BLE001 - one agent must not stop the round
                 logger.warning(
                     "System One decision failed for agent %s round %s: %s",
@@ -194,11 +197,11 @@ async def system_one_actions(
     if callable(flush):
         flush()
     actions = {}
-    for (agent, _), decision in zip(observations, decisions):
-        if decision is None:
+    for (agent, _), chosen in zip(observations, decisions):
+        if not chosen:
             actions[agent] = ManualAction(action_type=ActionType.DO_NOTHING, action_args={})
-        else:
-            actions[agent] = ManualAction(
-                action_type=ActionType[decision.action], action_args=decision.args
-            )
+            continue
+        manual = [ManualAction(action_type=ActionType[d.action], action_args=d.args) for d in chosen]
+        # OASIS env.step takes a list for several actions by one agent.
+        actions[agent] = manual[0] if len(manual) == 1 else manual
     return actions

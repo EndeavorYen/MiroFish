@@ -123,9 +123,19 @@ def test_planned_rounds_follow_the_sim_config(tmp_path):
     assert ab.planned_rounds(tmp_path, 8) == 8
 
 
-def test_action_counts_skip_do_nothing(monkeypatch, tmp_path):
-    monkeypatch.setattr(
-        ab.gp, "action_counts", lambda sim: {"twitter": {"LIKE_POST": 2, "DO_NOTHING": 5}, "reddit": {"do_nothing": 1}}
+def test_action_counts_skip_do_nothing_and_round_zero(tmp_path):
+    import json
+
+    (tmp_path / "sim" / "twitter").mkdir(parents=True)
+    rows = [
+        {"round": 0, "agent_id": 1, "action_type": "CREATE_POST"},  # scripted initial post
+        {"round": 0, "event_type": "round_start"},
+        {"round": 1, "agent_id": 1, "action_type": "LIKE_POST"},
+        {"round": 1, "agent_id": 2, "action_type": "like_post"},
+        {"round": 2, "agent_id": 2, "action_type": "DO_NOTHING"},
+    ]
+    (tmp_path / "sim" / "twitter" / "actions.jsonl").write_text(
+        "\n".join(json.dumps(r) for r in rows), encoding="utf-8"
     )
     assert dict(ab.action_counts(tmp_path)) == {"twitter:LIKE_POST": 2}
 

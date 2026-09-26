@@ -11,7 +11,7 @@ MiroFish 原本依賴雲端 LLM 與 Zep Cloud。本機模式讓整條流程都�
 | `MIROFISH_PROFILE=local` | 全本機；agent 決策用 System One（讀 logprobs，不 decode）、分層內容、模板與結構化準備、metrics 報告 | 快、便宜、VRAM 小；大量情境掃描 |
 | `MIROFISH_PROFILE=local-llm` | 全本機；agent 決策與準備仍用本機 LLM decode（記憶有預算，8K/slot 可跑） | 行為最接近原本的 LLM 路徑 |
 
-兩者都只會補上「沒設定」的變數：`.env` 或環境中明確設定的值永遠優先。沒有設定 `MIROFISH_PROFILE` 時行為完全不變（預設仍是雲端 LLM + Zep）。
+模式類設定（決策、內容、準備、報告）只在沒設定時補上，`.env` 仍可覆寫。服務端點不同：本機 profile 保證不呼叫外部 API，所以 `.env` 裡若是雲端的 `LLM_BASE_URL`／`EMBED_BASE_URL`（例如 `.env.example` 附的 DashScope），會被換成本機服務並記錄警告，`LLM_BOOST_*` 會被移除；本機的其他 port 或模型名稱則保留，System One 跟著使用。沒有設定 `MIROFISH_PROFILE` 時行為完全不變（預設仍是雲端 LLM + Zep）。
 
 ## 快速開始（llama.cpp，已實測）
 
@@ -29,7 +29,7 @@ MiroFish 原本依賴雲端 LLM 與 Zep Cloud。本機模式讓整條流程都�
      --host 127.0.0.1 --port 8001
    ```
 
-3. 在 `.env` 加上一行（其餘本機預設由 profile 補上）：
+3. 在 `.env` 加上一行（其餘本機預設由 profile 補上；`.env` 裡原本的雲端 LLM 設定會被換成本機，不必手動刪除）：
 
    ```env
    MIROFISH_PROFILE=local        # 或 local-llm
@@ -42,15 +42,14 @@ MiroFish 原本依賴雲端 LLM 與 Zep Cloud。本機模式讓整條流程都�
 - `-c 65536 -np 8` 是每個 slot 8K context。本機路徑與 `local-llm`（有記憶預算）都在這個設定下實測零錯誤。
 - **不要加 `--kv-unified`**：共用 KV pool 在多個 agent 同時請求時會回 `Context size has been exceeded`，丟失回合。
 - ReportAgent（`REPORT_MODE=agent`）單一請求會超過 8K；本機建議用 `REPORT_MODE=metrics`（兩個 profile 都已預設）。
-- 若要跑沒有記憶預算的 LLM 決策（`SIM_AGENT_CONTEXT_TOKENS=off`），每個 slot 需要 64K（`-c 262144 -np 4`，約 13GB VRAM）。
+- 若要跑沒有記憶預算的 LLM 決策（`SIM_AGENT_CONTEXT_TOKENS=off`），每個 slot 需要 64K（`-c 262144 -np 4`，實測閒置 VRAM 13.0 GB）。
 
 ### Docker compose（未在本機驗證）
 
-`docker compose --profile local up` 會啟動 vLLM（`local-llm`，`--max-model-len 8192`）與 TEI（`local-embed`）。vLLM 以 Hugging Face 模型 ID 作為模型名稱，所以要在 `.env` 另外設定：
+`docker compose --profile local up local-llm local-embed` 會啟動 vLLM（`--max-model-len 8192`）與 TEI，port 8000／8001。這時後端請在主機上跑（`npm run dev`）；`mirofish` 容器裡的 `127.0.0.1` 指的是容器自己，要改用 `LLM_BASE_URL=http://host.docker.internal:8000/v1` 等位址。vLLM 以 Hugging Face 模型 ID 作為模型名稱，所以要在 `.env` 設定（System One 會跟著用）：
 
 ```env
 LLM_MODEL_NAME=SubSir/Qwen3.5-4B-AWQ
-SYSTEM_ONE_MODEL=SubSir/Qwen3.5-4B-AWQ
 ```
 
 ## 各元件與開關
@@ -85,9 +84,9 @@ SYSTEM_ONE_MODEL=SubSir/Qwen3.5-4B-AWQ
 | 條件 | 結果 | 門檻 |
 | --- | --- | --- |
 | 每回合 decode B／A | 0.067 ✅ | ≤ 0.10 |
-| 動作分布 JS | 0.043 ✅ | ≤ 2 × A 組間（0.054） |
+| 動作分布 JS | 0.043 ✅ | ≤ 0.054（= 2 × A 組間 0.027） |
 | 各角色平均立場相關 | 0.524 ✅ | ≥ 0.5 |
-| 立場分布 JS | 0.047 ❌ | ≤ 2 × A 組間（0.006） |
+| 立場分布 JS | 0.047 ❌ | ≤ 0.01（2 × A 組間 0.003，下限 0.01） |
 | VRAM | 7.2 GB ✅ | ≤ 10 GB |
 | 每 run agent 動作數 | 132.6 對 164.6（81%） | — |
 | distinct-2 | 0.350 對 0.360 | — |

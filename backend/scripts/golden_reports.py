@@ -48,8 +48,7 @@ def main(argv: list[str] | None = None) -> int:
     if not (run / "sim").is_dir():
         parser.error(f"{run} has no sim/ directory; is it a golden_pipeline run?")
     prepared = json.loads((work / "prepared.json").read_text(encoding="utf-8"))
-    fixture = Path(prepared.get("fixture") or gp.FIXTURE)
-    requirement = (fixture / "simulation_requirement.txt").read_text(encoding="utf-8").strip()
+    requirement = gp.requirement_for(work, prepared)
     out = run / "reports" / args.mode
     if out.exists():
         shutil.move(str(out), f"{out}.old{int(time.time())}")

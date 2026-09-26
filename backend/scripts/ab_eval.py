@@ -426,6 +426,10 @@ def main(argv: list[str] | None = None) -> int:
         "A": {"work": Path(args.work_a).resolve(), "backend": "llm", "content": None},
         "B": {"work": Path(args.work_b).resolve(), "backend": "system_one", "content": "tiered"},
     }
+    # Refuse a mismatched pair before any simulation runs.
+    scenario = gp.check_same_scenario(
+        *(json.loads((groups[g]["work"] / "prepared.json").read_text(encoding="utf-8")) for g in ("A", "B"))
+    )
     runs: dict[str, dict[int, dict[str, Any]]] = {"A": {}, "B": {}}
     for name, group in groups.items():
         if args.simulate_only and name != args.simulate_only:
@@ -479,12 +483,8 @@ def main(argv: list[str] | None = None) -> int:
             for seed, row in rows.items()
         }
 
-    fixture_a = json.loads((groups["A"]["work"] / "prepared.json").read_text(encoding="utf-8")).get("fixture")
-    fixture_b = json.loads((groups["B"]["work"] / "prepared.json").read_text(encoding="utf-8")).get("fixture")
-    if fixture_a and fixture_b and Path(fixture_a).name != Path(fixture_b).name:
-        raise SystemExit(f"A and B were prepared from different scenarios: {fixture_a} vs {fixture_b}")
     report = {
-        "scenario": Path(fixture_a or fixture_b or "golden_scenario").name,
+        "scenario": scenario,
         "seeds": args.seeds,
         "rounds": args.rounds,
         "groups": {name: strip(rows) for name, rows in per_run.items()},

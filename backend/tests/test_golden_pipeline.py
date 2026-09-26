@@ -53,3 +53,35 @@ def test_llm_error_count(tmp_path):
 
 def test_local_defaults_budget_agent_memory():
     assert int(gp.LOCAL_DEFAULTS["SIM_AGENT_CONTEXT_TOKENS"]) < 8192
+
+
+
+def _scenario(tmp_path, name, seed="種子", req="需求"):
+    d = tmp_path / name
+    d.mkdir(parents=True)
+    (d / "news_seed.txt").write_text(seed, encoding="utf-8")
+    (d / "simulation_requirement.txt").write_text(req, encoding="utf-8")
+    return d
+
+
+def test_scenario_guard_compares_content_and_defaults_to_golden(tmp_path):
+    a = _scenario(tmp_path / "x", "wind")
+    b = _scenario(tmp_path / "y", "wind")  # same scenario from another checkout
+    c = _scenario(tmp_path / "z", "wind", req="改過的需求")  # same name, edited
+    assert gp.check_same_scenario({"fixture": str(a)}, {"fixture": str(b)}) == "wind"
+    with pytest.raises(SystemExit):
+        gp.check_same_scenario({"fixture": str(a)}, {"fixture": str(c)})
+    # A prepared.json from before --fixture is the golden scenario.
+    assert gp.check_same_scenario({}, {"fixture": str(gp.FIXTURE)}) == "golden_scenario"
+    with pytest.raises(SystemExit):
+        gp.check_same_scenario({}, {"fixture": str(a)})
+
+
+def test_requirement_prefers_the_copy_in_the_work_dir(tmp_path):
+    fixture = _scenario(tmp_path, "wind", req="原始需求")
+    work = tmp_path / "work"
+    work.mkdir()
+    assert gp.requirement_for(work, {"fixture": str(fixture)}) == "原始需求"
+    (work / "simulation_requirement.txt").write_text("隨工作目錄的需求", encoding="utf-8")
+    assert gp.requirement_for(work, {"fixture": str(tmp_path / "gone")}) == "隨工作目錄的需求"
+    assert gp.requirement_for(tmp_path / "empty", {}) == (gp.FIXTURE / "simulation_requirement.txt").read_text(encoding="utf-8").strip()

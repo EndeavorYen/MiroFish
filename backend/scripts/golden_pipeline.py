@@ -69,6 +69,47 @@ def dotenv_files() -> list[Path]:
             found.append(candidate)
     return found
 FIXTURE = BACKEND_DIR / "tests" / "fixtures" / "golden_scenario"
+SCENARIO_FILES = ("news_seed.txt", "simulation_requirement.txt")
+
+
+def scenario_digest(fixture: Path) -> str:
+    """sha256 over the scenario's seed text and requirement."""
+
+    import hashlib
+
+    digest = hashlib.sha256()
+    for name in SCENARIO_FILES:
+        digest.update((fixture / name).read_bytes())
+    return digest.hexdigest()
+
+
+def scenario_of(prepared: dict[str, Any]) -> dict[str, str]:
+    """Name and content digest of the scenario a work dir was prepared from.
+    A prepared.json from before --fixture means the golden scenario."""
+
+    fixture = Path(prepared.get("fixture") or FIXTURE)
+    digest = prepared.get("fixture_digest")
+    if not digest and all((fixture / n).exists() for n in SCENARIO_FILES):
+        digest = scenario_digest(fixture)
+    return {"name": fixture.name, "digest": digest or ""}
+
+
+def check_same_scenario(a: dict[str, Any], b: dict[str, Any]) -> str:
+    """The shared scenario name; SystemExit if A and B differ."""
+
+    sa, sb = scenario_of(a), scenario_of(b)
+    same = sa["digest"] == sb["digest"] if sa["digest"] and sb["digest"] else sa["name"] == sb["name"]
+    if not same:
+        raise SystemExit(f"A and B were prepared from different scenarios: {sa} vs {sb}")
+    return sa["name"]
+
+
+def requirement_for(work: Path, prepared: dict[str, Any]) -> str:
+    """The simulation requirement: the copy in the work dir, else the fixture."""
+
+    copy = work / "simulation_requirement.txt"
+    source = copy if copy.exists() else Path(prepared.get("fixture") or FIXTURE) / "simulation_requirement.txt"
+    return source.read_text(encoding="utf-8").strip()
 LOCAL_DEFAULTS = {
     "LLM_API_KEY": "local",
     "LLM_BASE_URL": "http://127.0.0.1:8000/v1",
@@ -200,8 +241,13 @@ def cmd_prepare(args: argparse.Namespace) -> int:
     from app.utils.llm_usage import usage_stage
 
     fixture = Path(args.fixture).resolve()
+    missing = [n for n in SCENARIO_FILES if not (fixture / n).exists()]
+    if missing:
+        raise SystemExit(f"--fixture {fixture} lacks {', '.join(missing)}")
     seed_text = (fixture / "news_seed.txt").read_text(encoding="utf-8")
     requirement = (fixture / "simulation_requirement.txt").read_text(encoding="utf-8").strip()
+    # A copy travels with the work dir (reports read it from there).
+    shutil.copy(fixture / "simulation_requirement.txt", work / "simulation_requirement.txt")
     timings: dict[str, float] = {}
 
     started = time.perf_counter()
@@ -214,7 +260,7 @@ def cmd_prepare(args: argparse.Namespace) -> int:
     started = time.perf_counter()
     with usage_stage("graph_build"):
         builder = GraphBuilderService()
-        graph_id = builder.create_graph("golden")
+        graph_id = builder.create_graph(fixture.name)
         builder.set_ontology(graph_id, ontology)
         chunks = TextProcessor.split_text(seed_text, chunk_size=500, overlap=50)
         builder._wait_for_batch(builder.add_text_batches(graph_id, chunks))
@@ -223,7 +269,7 @@ def cmd_prepare(args: argparse.Namespace) -> int:
 
     started = time.perf_counter()
     manager = SimulationManager()
-    state = manager.create_simulation("proj_golden_scenario", graph_id)
+    state = manager.create_simulation(f"proj_{fixture.name}", graph_id)
     manager.prepare_simulation(
         state.simulation_id,
         simulation_requirement=requirement,
@@ -238,6 +284,7 @@ def cmd_prepare(args: argparse.Namespace) -> int:
     prepared = {
         "prep_mode": args.prep_mode,
         "fixture": str(fixture),
+        "fixture_digest": scenario_digest(fixture),
         "graph_id": graph_id,
         "simulation_id": state.simulation_id,
         "prepared_dir": str(work / "prepared"),

@@ -846,7 +846,8 @@ class SimulationConfigGenerator:
             configs = []
             for i, entity in enumerate(entities):
                 cfg = structured_agent_config(
-                    client, entity.name, entity.get_entity_type() or "Unknown", entity.summary or ""
+                    client, entity.name, entity.get_entity_type() or "Unknown", entity.summary or "",
+                    event=simulation_requirement,
                 )
                 configs.append(
                     AgentActivityConfig(

@@ -110,7 +110,11 @@ class SystemOnePolicy:
         state_store: AgentStateStore | None = None,
         decision_log: DecisionLog | None = None,
         extra_action_rate: float = 0.0,
+        stance_prior: dict[int, float] | None = None,
+        stance_prior_weight: float = 0.5,
     ) -> None:
+        if not 0.0 <= stance_prior_weight <= 1.0:
+            raise ValueError(f"stance_prior_weight must be within 0..1, got {stance_prior_weight}")
         if not 0.0 <= extra_action_rate < 1.0:
             raise ValueError(f"extra_action_rate must be within [0, 1), got {extra_action_rate}")
         self.client = client
@@ -123,6 +127,12 @@ class SystemOnePolicy:
         # Probability of one more action after each action in a round (#26):
         # LLM agents take ~1.6 actions per activation.
         self.extra_action_rate = extra_action_rate
+        # Standing stance per agent (0..1, from the sim config) anchoring the
+        # per-post stance readout (#41): replying to a post, the readout
+        # tended to take that post's stance, so opposition groups wrote
+        # supportive posts.
+        self.stance_prior = dict(stance_prior or {})
+        self.stance_prior_weight = stance_prior_weight
         self._memory: dict[tuple[str, int], dict[str, float]] = {}
         self._memory_lock = threading.Lock()
 
@@ -249,7 +259,10 @@ class SystemOnePolicy:
                 },
             )
         )
-        stance = score_to_unit(response.answers["stance"].score, len(STANCE_LEVELS))
+        readout_stance = score_to_unit(response.answers["stance"].score, len(STANCE_LEVELS))
+        prior = self.stance_prior.get(obs.agent_id)
+        w = self.stance_prior_weight if prior is not None else 0.0
+        stance = w * (prior or 0.0) + (1 - w) * readout_stance
         intensity = score_to_unit(response.answers["intensity"].score, len(INTENSITY_LEVELS))
         intent = ContentIntent(
             kind=kind,
@@ -270,6 +283,7 @@ class SystemOnePolicy:
             "kind_probs": kind_probs,
             "stance": round(stance, 4),
             "intensity": round(intensity, 4),
+            **({"stance_readout": round(readout_stance, 4), "stance_prior": round(prior, 4)} if w else {}),
         }
         return intent, record
 

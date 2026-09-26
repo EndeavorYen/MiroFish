@@ -246,8 +246,11 @@ class OasisProfileGenerator:
         base_url: Optional[str] = None,
         model_name: Optional[str] = None,
         zep_api_key: Optional[str] = None,
-        graph_id: Optional[str] = None
+        graph_id: Optional[str] = None,
+        simulation_requirement: str = "",
     ):
+        # The simulated event, for stance questions in PROFILE_MODE=structured (#41).
+        self.simulation_requirement = simulation_requirement
         self.api_key = api_key or Config.LLM_API_KEY
         self.base_url = base_url or Config.LLM_BASE_URL
         self.model_name = model_name or Config.LLM_MODEL_NAME
@@ -315,6 +318,7 @@ class OasisProfileGenerator:
                 entity.summary or "",
                 context,
                 seed=entity.uuid,
+                event=getattr(self, "simulation_requirement", ""),
             )
         elif use_llm:
             # 使用LLM生成详细人设

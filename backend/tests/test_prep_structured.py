@@ -219,3 +219,10 @@ def test_default_content_budget_keeps_the_full_tier_reachable(monkeypatch, tmp_p
 
     monkeypatch.delenv("CONTENT_DECODE_BUDGET_PER_ROUND", raising=False)
     assert tiers.DEFAULT_BUDGET_PER_ROUND >= tiers.FULL_MAX_TOKENS
+
+
+def test_stance_question_names_the_event():
+    from app.services.prep_structured import stance_question
+
+    assert "利益" in stance_question("工會", "空中計程車試點").instructions
+    assert stance_question("工會", "").instructions == "「工會」對主要事件的立場？"

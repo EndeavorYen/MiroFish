@@ -482,3 +482,23 @@ def test_interview_ignores_exit_rows_of_extra_actions(tmp_path):
     (tmp_path / "decisions.jsonl").write_text("\n".join(json.dumps(r) for r in rows), encoding="utf-8")
     text = interview_context(str(tmp_path), 1)
     assert "旁观" not in text and "点赞" in text
+
+
+def test_stance_prior_anchors_the_intent_stance():
+    from app.simulation_policy.oasis_bridge import stance_priors
+
+    assert stance_priors({"agent_configs": [
+        {"agent_id": 1, "sentiment_bias": -0.8}, {"agent_id": 2, "sentiment_bias": 1.4}, {"agent_id": 3},
+    ]}) == {1: pytest.approx(0.1), 2: 1.0}
+
+    feed = _feed()
+    plain = SystemOnePolicy(Pick("create", "create_post"), load_taxonomy("twitter"), seed=3)
+    anchored = SystemOnePolicy(Pick("create", "create_post"), load_taxonomy("twitter"), seed=3,
+                               stance_prior={1: 0.0}, stance_prior_weight=0.5)
+    raw = plain.decide(_obs(feed=feed)).record["intent"]
+    held = anchored.decide(_obs(feed=feed)).record["intent"]
+    assert "stance_prior" not in raw
+    assert held["stance_readout"] == pytest.approx(raw["stance"])
+    assert held["stance"] == pytest.approx(0.5 * raw["stance"])  # halfway to the standing stance 0
+    with pytest.raises(ValueError):
+        SystemOnePolicy(FakeSystemOne(), load_taxonomy("twitter"), stance_prior_weight=1.5)

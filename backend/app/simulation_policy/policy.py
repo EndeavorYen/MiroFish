@@ -280,6 +280,12 @@ class SystemOnePolicy:
             "probs": [
                 {k: round(v, 6) for k, v in step.probabilities.items()} for step in steps
             ],
+            # Raw readouts before action priors (#26), for refitting them.
+            **(
+                {"raw_probs": [{k: round(v, 6) for k, v in (step.readout or step.probabilities).items()} for step in steps]}
+                if any(step.readout is not None for step in steps)
+                else {}
+            ),
             "chosen": leaf.action,
             "state_hash": hashlib.sha256(state.encode("utf-8")).hexdigest(),
             "emotion": {k: round(v, 6) for k, v in emotion.items()},

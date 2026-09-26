@@ -15,6 +15,7 @@ from typing import Any
 
 from .emotion import DEFAULT_ALPHA, AgentStateStore
 from .policy import DecisionLog, Observation, SystemOnePolicy
+from .priors import load_action_priors, with_priors
 from .taxonomy import load_taxonomy
 
 DECISION_BACKENDS = ("llm", "system_one")
@@ -60,9 +61,10 @@ def build_policy(
             with open(config_path, encoding="utf-8") as f:
                 config = json.load(f)
         content_provider = build_tiered_provider(platform, simulation_dir, config)
+    taxonomy = with_priors(load_taxonomy(platform), load_action_priors().get(platform))
     return SystemOnePolicy(
         client,
-        load_taxonomy(platform),
+        taxonomy,
         seed=seed or 0,
         alpha=alpha,
         content_provider=content_provider,

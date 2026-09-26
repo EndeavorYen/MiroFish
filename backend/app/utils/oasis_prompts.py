@@ -24,7 +24,7 @@ class _UnicodeJson:
         kwargs.setdefault("ensure_ascii", False)
         # OASIS pretty-prints the feed (indent=4); compact separators carry the
         # same content in ~16% fewer tokens.
-        if "indent" in kwargs and "separators" not in kwargs:
+        if kwargs.get("indent") and "separators" not in kwargs:
             kwargs.pop("indent")
             kwargs["separators"] = (",", ":")
         return json.dumps(obj, **kwargs)

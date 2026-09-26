@@ -127,3 +127,14 @@ def test_oasis_observations_keep_chinese_characters():
     assert "東海市空中計程車" in text and "\\u" not in text
     assert agent_environment.json.loads(text)[0]["content"] == "東海市空中計程車"
     assert agent_environment.json.dumps("東", ensure_ascii=True) == '"\\u6771"'  # explicit wins
+
+
+def test_only_pretty_printed_observations_are_compacted():
+    from oasis.social_agent import agent_environment
+
+    from app.utils.oasis_prompts import install_unicode_observations
+
+    install_unicode_observations()
+    assert agent_environment.json.dumps({"a": ["群"]}) == '{"a": ["群"]}'  # group calls keep default spacing
+    assert agent_environment.json.dumps([1], indent=0) == "[\n1\n]"  # falsy indent untouched
+    assert agent_environment.json.dumps([1, 2], indent=2, separators=(", ", ": ")) == "[\n  1, \n  2\n]"

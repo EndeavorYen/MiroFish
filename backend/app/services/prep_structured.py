@@ -389,10 +389,14 @@ def structured_agent_config(
     # a golden mean of 0.18 against 0.44 from the LLM config, so agents
     # were rarely active; the floor keeps quiet entities participating.
     activity_level = ACTIVITY_FLOOR + (0.9 - ACTIVITY_FLOOR) * activity
-    from .stance_calibration import load_activity_by_role
+    from .stance_calibration import load_activity_by_role, load_activity_offset
 
-    by_role = load_activity_by_role()
-    if by_role and role in by_role:
+    offset = load_activity_offset()
+    by_role = load_activity_by_role() if offset is None else None
+    if offset is not None:
+        activity = min(1.0, max(0.0, activity + offset))
+        activity_level = min(1.0, max(0.0, activity_level + offset))
+    elif by_role and role in by_role:
         # The readout barely varies across entities (sd 0.06 over the suite);
         # the LLM prep makes aggrieved groups the most active and officials
         # the least, and the stakeholder role carries that (#46).

@@ -78,3 +78,23 @@ def test_fit_pairs_b_raw_with_a_llm_prep():
     assert [t for _, t in result["knots"]] == pytest.approx([0.1, 0.5, 0.8])
     with pytest.raises(ValueError):
         fit([(a, b)], seeds=[1, 11])
+
+
+def test_activity_offset_keeps_the_readout_order_and_wins_over_roles(monkeypatch, tmp_path):
+    from app.services.prep_structured import ACTIVITY_FLOOR
+
+    cfg = _config(
+        monkeypatch,
+        {"seeds": [11, 12, 13], "knots": [], "activity_offset": 0.16, "activity_by_role": {"beneficiary": 0.85}},
+        tmp_path,
+    )
+    assert cfg["activity_level"] == pytest.approx(ACTIVITY_FLOOR + 0.16)
+
+
+def test_fit_reports_the_mean_activity_offset():
+    from scripts.fit_prep_calibration import fit
+
+    a = {"x": {"sentiment_bias": 0.0, "activity_level": 0.6}, "y": {"sentiment_bias": 0.0, "activity_level": 0.4}}
+    b = {"x": {"stance_raw": 0.5, "stakeholder_role": "harmed", "activity_level": 0.3},
+         "y": {"stance_raw": 0.5, "stakeholder_role": "harmed", "activity_level": 0.3}}
+    assert fit([(a, b)], seeds=[11])["activity_offset"] == pytest.approx(0.2)

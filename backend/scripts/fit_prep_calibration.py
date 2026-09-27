@@ -45,12 +45,15 @@ def fit(groups: list[tuple[dict, dict]], seeds: list[int]) -> dict[str, Any]:
     refuse_eval_seeds(seeds)
     pairs: list[tuple[float, float]] = []
     activity: dict[str, list[float]] = {}
+    gaps: list[float] = []
     for a_configs, b_configs in groups:
         for name, b in b_configs.items():
             a = a_configs.get(name)
             if a is None or b.get("stance_raw") is None:
                 continue
             pairs.append((float(b["stance_raw"]), (float(a["sentiment_bias"]) + 1) / 2))
+            if b.get("activity_level") is not None:
+                gaps.append(float(a["activity_level"]) - float(b["activity_level"]))
             role = b.get("stakeholder_role")
             if role:
                 activity.setdefault(role, []).append(float(a["activity_level"]))
@@ -59,6 +62,7 @@ def fit(groups: list[tuple[dict, dict]], seeds: list[int]) -> dict[str, Any]:
         "seeds": list(seeds),
         "pairs": len(pairs),
         "knots": [[round(x, 4), round(y, 4)] for x, y in knots],
+        "activity_offset": round(statistics.mean(gaps), 4) if gaps else None,
         "activity_by_role": {role: round(statistics.mean(v), 4) for role, v in sorted(activity.items())},
         "activity_by_role_n": {role: len(v) for role, v in sorted(activity.items())},
     }

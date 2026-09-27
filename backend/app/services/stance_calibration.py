@@ -107,6 +107,19 @@ def load_knots(path: Path | None = None) -> list[tuple[float, float]] | None:
     return [(float(raw), float(target)) for raw, target in data.get("knots") or []]
 
 
+def load_activity_offset(path: Path | None = None) -> float | None:
+    """Mean LLM-prep activity minus mean structured activity on calibration
+    scenarios. Structured agents were active in fewer agent-rounds than LLM
+    ones (#47) because the readout sits near 0.35; the offset lifts the level
+    and keeps the readout's order, which held out of sample better than the
+    per-role means (activity correlation 0.36 vs 0.23 over the suite)."""
+
+    data = _load(path)
+    if data is None or data.get("activity_offset") is None:
+        return None
+    return float(data["activity_offset"])
+
+
 def load_activity_by_role(path: Path | None = None) -> dict[str, float] | None:
     """Mean LLM-prep activity per stakeholder role, fitted on calibration
     scenarios. The activity readout alone put almost every entity near 0.35,

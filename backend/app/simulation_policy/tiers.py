@@ -201,6 +201,7 @@ class RoundStats:
     cache_hits: int = 0
     texts: list[str] = field(default_factory=list)
     stance_check: dict[str, int] = field(default_factory=dict)
+    models: dict[str, int] = field(default_factory=dict)
 
     def row(self, platform: str) -> dict[str, Any]:
         return {
@@ -213,6 +214,7 @@ class RoundStats:
             "posts": len(self.texts),
             "distinct_2": round(distinct_2(self.texts), 4),
             "stance_check": dict(self.stance_check),
+            **({"models": dict(self.models)} if self.models else {}),
         }
 
 
@@ -233,10 +235,13 @@ class TieredContentProvider:
         score_fn: Callable[[str], float] | None = None,
         stance_bank: dict[str, Any] | None = None,
         bank_share: float = 0.0,
+        generator: Any = None,
     ) -> None:
         self.templates = templates
         self.stance_bank = stance_bank
         self.bank_share = bank_share
+        # A model_pool.PooledGenerator ties each persona to one model (#48).
+        self.generator = generator
         self.llm_fn = llm_fn
         self.budget_per_round = max(0, int(budget_per_round))
         self.top_k_percent = top_k_percent
@@ -514,7 +519,9 @@ class TieredContentProvider:
                 if tier != "template":
                     prompt = self._full_prompt(intent) if tier == "full" else self._shared_prompt(intent)
                     try:
-                        raw, spent = self.llm_fn(prompt, reserve)
+                        generator = getattr(self, "generator", None)
+                        call = generator.for_persona(intent.persona_ref) if generator else self.llm_fn
+                        raw, spent = call(prompt, reserve)
                         raw = clean_generation(raw)
                     except Exception as error:  # noqa: BLE001 - degrade, never fail a round
                         logger.warning("content generation failed, using template: %s", error)
@@ -552,6 +559,10 @@ class TieredContentProvider:
                 stats = self._round
                 if generated_tier in ("shared", "full"):
                     stats.decode_tokens[generated_tier] += spent
+                    generator = getattr(self, "generator", None)
+                    if generator is not None and raw:
+                        name = generator.name_for(intent.persona_ref)
+                        stats.models[name] = stats.models.get(name, 0) + 1
                 stats.tiers[tier] += 1
                 stats.texts.append(text)
             published = True
@@ -581,8 +592,15 @@ def system_one_stance_score(text: str) -> float:
     return _level(answer.score, len(STANCE5))
 
 
-def openai_llm_fn(stage_note: str = "content") -> LlmFn:
-    """Small-model call through the configured OpenAI-compatible LLM.
+def openai_llm_fn(
+    stage_note: str = "content",
+    *,
+    base_url: str | None = None,
+    model: str | None = None,
+    api_key: str | None = None,
+) -> LlmFn:
+    """Small-model call through the configured OpenAI-compatible LLM, or the
+    given endpoint (a MODEL_POOL entry, #48).
 
     Usage is recorded by create_chat_completion under the active stage.
     """
@@ -595,13 +613,17 @@ def openai_llm_fn(stage_note: str = "content") -> LlmFn:
     # A stalled server must not stall a round: short timeout, no retries
     # (a failed call falls back to a template).
     client = OpenAI(
-        api_key=Config.LLM_API_KEY, base_url=Config.LLM_BASE_URL, timeout=30, max_retries=0
+        api_key=api_key or Config.LLM_API_KEY or "local",
+        base_url=base_url or Config.LLM_BASE_URL,
+        timeout=30,
+        max_retries=0,
     )
+    model_name = model or Config.LLM_MODEL_NAME
 
     def call(prompt: str, max_tokens: int) -> tuple[str, int]:
         response = create_chat_completion(
             client,
-            model=Config.LLM_MODEL_NAME,
+            model=model_name,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.8,
             max_tokens=max_tokens,
@@ -639,8 +661,10 @@ def build_tiered_provider(
                 weight = float(agent.get("influence_weight") or 0) * 1000
             followers[int(agent_id)] = int(weight or 0)
     entities = [a.get("entity_name") for a in config.get("agent_configs", []) if a.get("entity_name")]
+    generator = None
     if mode == "tiered" and llm_fn is None:
-        llm_fn = openai_llm_fn()
+        generator = pooled_generator()
+        llm_fn = generator.default if generator else openai_llm_fn()
     if score_fn is None and os.environ.get("CONTENT_STANCE_CHECK", "1") != "0":
         score_fn = system_one_stance_score
     return TieredContentProvider(
@@ -663,4 +687,20 @@ def build_tiered_provider(
         # price, a school merger), so by default they only steer the tone of
         # the shared and full prompts; CONTENT_BANK_SHARE lets templates use them.
         bank_share=float(os.environ.get("CONTENT_BANK_SHARE", "0")),
+        generator=generator,
     )
+
+
+def pooled_generator():
+    """A PooledGenerator when MODEL_POOL has two or more generate models (#48)."""
+
+    if not os.environ.get("MODEL_POOL", "").strip():
+        return None
+    from ..model_pool import PooledGenerator, load_pool, models_for
+
+    models = models_for(load_pool(), "generate")
+    if len(models) < 2:
+        return None
+    return PooledGenerator([
+        (m.name, openai_llm_fn(base_url=m.base_url, model=m.model, api_key=m.api_key)) for m in models
+    ])

@@ -438,6 +438,9 @@ class SystemOnePolicy:
             intent, intent_record = self.build_intent(obs, state, emotion, rng, target_post)
             text = self.content.generate(intent)
             record["intent"] = intent_record
+            generator = getattr(self.content, "generator", None)
+            if generator is not None:
+                record["content_model"] = generator.name_for(intent.persona_ref)  # #48
             args["quote_content" if action == "QUOTE_POST" else "content"] = text
 
         record["action"] = action

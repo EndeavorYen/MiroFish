@@ -162,6 +162,31 @@ def load_templates(lang: str = "zh") -> dict[str, Any]:
     return data["simContent"]
 
 
+EVAL_SEEDS = frozenset({1, 2, 3, 4, 5})
+
+
+def load_stance_bank(lang: str = "zh", path: Path | None = None) -> dict[str, Any] | None:
+    """Tone examples per stance level, taken from calibration LLM runs (#45).
+
+    ``locales/<lang>_stance_bank.json``: ``{"seeds": [...], "levels": {level:
+    [line, ...]}}`` with names replaced by ``{entity}``. None when the file is
+    missing or CONTENT_STANCE_BANK=0. A bank built from evaluation seeds is
+    refused.
+    """
+
+    if path is None:
+        if os.environ.get("CONTENT_STANCE_BANK", "1") == "0":
+            return None
+        path = LOCALES_DIR / f"{lang}_stance_bank.json"
+    if not Path(path).exists():
+        return None
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    overlap = sorted({int(seed) for seed in data.get("seeds", [])} & EVAL_SEEDS)
+    if overlap:
+        raise ValueError(f"stance bank built from evaluation seeds {overlap}")
+    return data
+
+
 def _rng(*parts: Any) -> random.Random:
     digest = hashlib.sha256(":".join(map(str, parts)).encode("utf-8")).hexdigest()
     return random.Random(int(digest[:16], 16))
@@ -205,8 +230,12 @@ class TieredContentProvider:
         platform: str = "",
         lang: str = "zh",
         score_fn: Callable[[str], float] | None = None,
+        stance_bank: dict[str, Any] | None = None,
+        bank_share: float = 0.5,
     ) -> None:
         self.templates = templates
+        self.stance_bank = stance_bank
+        self.bank_share = bank_share
         self.llm_fn = llm_fn
         self.budget_per_round = max(0, int(budget_per_round))
         self.top_k_percent = top_k_percent
@@ -277,11 +306,32 @@ class TieredContentProvider:
         if intent.intensity >= 0.75 and band == "pos" and "pos_strong" in by_kind:
             band = "pos_strong"
         options = list(by_kind.get(band) or by_kind["neu"])
+        bank = self._bank_lines(band)
+        if bank and rng.random() < getattr(self, "bank_share", 0.0):
+            options = bank  # a tone example at the same level (#45)
         if skip:
             options = [line for line in options if skip not in line] or options
         return rng.choice(options).format(
             topic=self._topic(intent), entity=self._entity_for(intent), target=intent.target_text[:30]
         )
+
+    def _bank_lines(self, level: str) -> list[str]:
+        bank = getattr(self, "stance_bank", None)
+        if not bank:
+            return []
+        return list((bank.get("levels") or {}).get(level) or [])
+
+    def _example_line(self, intent: ContentIntent) -> str:
+        """One same-level tone example for the shared and full prompts, or ''."""
+
+        lines = self._bank_lines(stance_level(intent.stance))
+        if not lines:
+            return ""
+        line = _rng("example", intent.platform, intent.round_num, intent.persona_ref).choice(lines)
+        example = line.format(topic=self._topic(intent), entity=self._entity_for(intent), target="")
+        if getattr(self, "lang", "zh") == "en":
+            return f"Tone example at the same stance (do not copy it): {example}\n"
+        return f"同样立场的语气参考（不要照抄）：{example}\n"
 
     def template_text(self, intent: ContentIntent, *, skip: str = "") -> str:
         rng = _rng("template", intent.platform, intent.round_num, intent.persona_ref, intent.kind, skip)
@@ -296,11 +346,13 @@ class TieredContentProvider:
             return (
                 f"Write one social post (under 40 words) in English, kind \"{intent.kind}\", "
                 f"stance {band}, topic: {self._topic(intent)}, about {self._entity_for(intent)}.{reply}\n"
+                f"{self._example_line(intent)}"
                 "Output only the post."
             )
         return (
             f"用一句社群贴文（40字以内）表达「{intent.kind}」类的发言，立场{band}，"
             f"主题：{self._topic(intent)}，相关对象：{self._entity_for(intent)}。{target}\n"
+            f"{self._example_line(intent)}"
             "只输出贴文本身。"
         )
 
@@ -314,6 +366,7 @@ class TieredContentProvider:
                 f"Write one social post in English (under 60 words), kind \"{intent.kind}\", "
                 f"stance {band}, intensity {intent.intensity:.1f} (0-1), "
                 f"topic: {self._topic(intent)}.{reply}\n"
+                f"{self._example_line(intent)}"
                 "Keep the real names from the event. Output only the post."
             )
         target = f"\n你要回应的贴文：{intent.target_text[:160]}" if intent.target_text else ""
@@ -321,6 +374,7 @@ class TieredContentProvider:
             f"你是{intent.agent_name}。人设：{intent.persona[:300]}\n"
             f"用你的口吻写一则社群贴文（60字以内），发言类型「{intent.kind}」，立场{band}，"
             f"情绪强度{intent.intensity:.1f}（0-1），主题：{self._topic(intent)}。{target}\n"
+            f"{self._example_line(intent)}"
             "保留事件里的具体人名、机构或数字。只输出贴文本身。"
         )
 
@@ -584,4 +638,6 @@ def build_tiered_provider(
         platform=platform,
         lang=lang,
         score_fn=score_fn,
+        stance_bank=load_stance_bank(lang),
+        bank_share=float(os.environ.get("CONTENT_BANK_SHARE", "0.5")),
     )

@@ -381,6 +381,7 @@ class TieredContentProvider:
         bucket = (intent.round_num, intent.kind, band, intent.target_ref)
         waited: threading.Event | None = None
         cached_text: str | None = None
+        cached_stats: RoundStats | None = None
         cached_slot: int | None = None
         owner: threading.Event | None = None
         while True:
@@ -396,6 +397,7 @@ class TieredContentProvider:
                         cached_text = self._shared_cache[bucket]
                         stats.cache_hits += 1
                         stats.tiers["shared"] += 1
+                        cached_stats = stats
                         cached_slot = len(stats.texts)
                         stats.texts.append("")
                         break
@@ -418,8 +420,8 @@ class TieredContentProvider:
             varied = self._vary(cached_text, _rng("shared", intent.persona_ref, *bucket), intent)
             text = self._note_stance(intent, varied)
             with self._lock:
-                if self._round is not None and cached_slot is not None and cached_slot < len(self._round.texts):
-                    self._round.texts[cached_slot] = text
+                if cached_stats is not None and cached_slot is not None and cached_slot < len(cached_stats.texts):
+                    cached_stats.texts[cached_slot] = text
             return text
 
         spent = 0

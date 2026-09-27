@@ -371,20 +371,28 @@ def test_stance_check_replaces_a_text_more_than_one_level_off(tmp_path):
     assert raw not in provider._shared_cache[bucket]
 
 
-def test_shared_cache_keeps_the_unvaried_base():
+def test_shared_cache_keeps_the_unvaried_base(tmp_path):
+    from app.simulation_policy.tiers import build_tiered_provider
+
     raw = "UNIQUE_BAD_STANCE_SENTENCE"
-    provider = _provider(
+    provider = build_tiered_provider(
+        "twitter",
+        str(tmp_path),
+        {"agent_configs": []},
         llm_fn=lambda prompt, max_tokens: (raw, 5),
         score_fn=lambda text: 0.1,
-        budget_per_round=1000,
     )
     posts = [provider.generate(_intent(agent=i, stance=0.1)) for i in range(1, 4)]
     bucket = (0, "criticism", "neg_strong", "101")
-    assert provider._shared_cache[bucket] == raw
+    cached = provider._shared_cache[bucket]
     prefixes = ("说真的，", "个人觉得，", "看了一下，", "刚看到消息，")
-    for post in posts:
-        assert post.count(raw) == 1
-        assert sum(prefix in post for prefix in prefixes) <= 1
+    assert cached == raw
+    assert not any(prefix in cached for prefix in prefixes)
+    third = posts[2]
+    assert third.count(raw) == 1
+    assert sum(prefix in third for prefix in prefixes) <= 1
+    assert "看了一下，说真的，" not in third
+    assert provider._round.texts[2] == third
 
 
 def test_shared_prompt_wording_matches_its_bucket():

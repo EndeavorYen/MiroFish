@@ -4,9 +4,11 @@
     12,
     13
   ],
-  "note": "Fitted on tests/fixtures/calibration (seeds 11-13) with scripts/fit_prep_calibration.py. The isotonic stance map is left out (knots empty): on the evaluation suite it widened the mean stance gap (0.040 -> 0.061) by pulling one-sided supportive scenarios down. activity_offset lifts the structured activity readout to the LLM-prep mean.",
+  "note": "Fitted on tests/fixtures/calibration (seeds 11-13) with scripts/fit_prep_calibration.py. The isotonic stance map is left out (knots empty): on the evaluation suite it widened the mean stance gap (0.040 -> 0.061) by pulling one-sided supportive scenarios down. activity_offset scales the structured mean activity by the calibration runs' acted agent-round ratio (B/A 0.832); the raw level gap (activity_gap) overshot the action counts.",
   "knots": [],
-  "activity_offset": 0.1844,
+  "activity_offset": 0.0699,
+  "activity_gap": 0.1844,
+  "acted_ratio": 0.832,
   "fitted_pairs": 77,
   "activity_by_role_diagnostic": {
     "beneficiary": 0.7075,

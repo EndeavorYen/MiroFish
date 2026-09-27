@@ -347,12 +347,26 @@ def test_function_word_is_not_a_topic():
     assert "said" not in text
 
 
-def test_stance_check_replaces_a_text_more_than_one_level_off():
-    provider = _provider(score_fn=lambda text: 0.95)
-    text = provider.generate(_intent(stance=0.1))
-    assert provider._round.stance_check
+def test_stance_check_replaces_a_text_more_than_one_level_off(tmp_path):
+    from app.simulation_policy.tiers import build_tiered_provider, system_one_stance_score
+
+    raw = "UNIQUE_BAD_STANCE_SENTENCE"
+    wired = build_tiered_provider(
+        "twitter", str(tmp_path), {"agent_configs": []}, llm_fn=lambda prompt, max_tokens: (raw, 5)
+    )
+    assert wired.score_fn is system_one_stance_score
+    provider = build_tiered_provider(
+        "twitter", str(tmp_path), {"agent_configs": []},
+        llm_fn=lambda prompt, max_tokens: (raw, 5),
+        score_fn=lambda text: 0.95,
+    )
+    first = provider.generate(_intent(agent=1, stance=0.1))
+    second = provider.generate(_intent(agent=2, stance=0.1))
+    assert first != raw and second != raw
+    assert provider._round.cache_hits == 1
+    recorded = sum(provider._round.stance_check.values())
+    assert recorded == 2
     assert any(key.startswith("neg_strong->") for key in provider._round.stance_check)
-    assert text
 
 
 def test_shared_prompt_wording_matches_its_bucket():

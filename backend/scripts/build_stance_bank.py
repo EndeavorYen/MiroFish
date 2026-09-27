@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -29,15 +30,17 @@ import ab_eval  # noqa: E402
 import golden_pipeline as gp  # noqa: E402
 from app.simulation_policy.tiers import EVAL_SEEDS, LEVELS  # noqa: E402
 
-BLOCKED = ("@", "http", "#", "{", "}")
+BLOCKED = ("@", "http", "{", "}")
+_HASHTAG_RE = re.compile(r"#[^#\s]+#?")
 
 
 def deidentify(text: str, names: list[str]) -> str | None:
-    """``text`` with its one named entity as ``{entity}``; None when it names
-    more than one, or carries mentions, links, hashtags or braces."""
+    """``text`` without hashtags and with its one named entity as ``{entity}``;
+    None when it names more than one, or carries mentions, links or braces."""
 
     if any(mark in text for mark in BLOCKED):
         return None
+    text = _HASHTAG_RE.sub("", text)
     found = [name for name in sorted(set(names), key=len, reverse=True) if name and name in text]
     kept: list[str] = []
     for name in found:
@@ -54,8 +57,8 @@ def deidentify(text: str, names: list[str]) -> str | None:
 
 def usable_length(text: str, lang: str) -> bool:
     if lang == "en":
-        return 5 <= len(text.split()) <= 45
-    return 8 <= len(text) <= 70
+        return 5 <= len(text.split()) <= 60
+    return 8 <= len(text) <= 120
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -232,7 +232,7 @@ class TieredContentProvider:
         lang: str = "zh",
         score_fn: Callable[[str], float] | None = None,
         stance_bank: dict[str, Any] | None = None,
-        bank_share: float = 0.5,
+        bank_share: float = 0.0,
     ) -> None:
         self.templates = templates
         self.stance_bank = stance_bank
@@ -659,5 +659,8 @@ def build_tiered_provider(
         lang=lang,
         score_fn=score_fn,
         stance_bank=load_stance_bank(lang),
-        bank_share=float(os.environ.get("CONTENT_BANK_SHARE", "0.5")),
+        # Bank lines keep details of their own calibration event (a water
+        # price, a school merger), so by default they only steer the tone of
+        # the shared and full prompts; CONTENT_BANK_SHARE lets templates use them.
+        bank_share=float(os.environ.get("CONTENT_BANK_SHARE", "0")),
     )

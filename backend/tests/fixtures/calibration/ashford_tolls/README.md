@@ -7,6 +7,6 @@ Calibration 情境，不在評估情境庫（`tests/fixtures/scenarios/suite.jso
 - 領域：交通
 - 語言：英文
 - 預期立場結構：兩極對立
-- fixture digest：`46248a959a78fcfccbd8fc42953315352ae919082e428c832e54fef0eebb2987`
+- fixture digest：`2cafb53ff1e4d6ae1d4eeb59c75cf9d7abc8f0011ca3744d9b93895f368feac7`
 
 digest 只涵蓋 `news_seed.txt` 與 `simulation_requirement.txt`（換行先正規化成 LF）。

@@ -68,7 +68,8 @@ def test_deidentify_keeps_one_entity_and_drops_the_rest():
     names = ["星河食品", "星河", "南嶺市衛生局"]
     assert deidentify("星河食品這次真的要給交代", names) == "{entity}這次真的要給交代"
     assert deidentify("星河食品和南嶺市衛生局都有責任", names) is None
-    assert deidentify("#食安 星河食品", names) is None
+    assert deidentify("#食安 星河食品要負責", names) == "{entity}要負責"
+    assert deidentify("看 http://x 星河食品", names) is None
     assert deidentify("大家先冷靜看檢驗結果", names) == "大家先冷靜看檢驗結果"
 
 

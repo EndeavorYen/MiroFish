@@ -11,12 +11,15 @@ existing run is reused), then this script computes:
 * decode tokens per round, round latency, VRAM peak;
 * Jensen-Shannon divergence of action-type distributions: A seed vs A seed
   (the noise floor) and B vs A;
-* stance (#27): every post of every run is scored with the same System One
-  ``score`` question. Gated: the per-persona mean stance (the same named
-  agents exist in both groups) correlated B vs A, and the stance-level
-  distribution (JS against the A seed-to-seed noise floor). Reported only:
-  the per-round curve and a 4-round windowed curve, whose seed-to-seed
-  correlation on the golden scenario is too low to judge anything;
+* stance (#27, G4 v2 in #44): every post is scored with that scenario's
+  ``stance_question.txt`` (or ``--stance-question``; otherwise
+  ``STANCE_QUESTION``). Gated with a seed-level bootstrap (1,000 reps,
+  RNG seed 0): action-mix JS and stance-level JS fail when the one-sided
+  p-value of B-vs-A against A-within is < 0.05; per-persona correlation
+  passes when its 95% CI lower bound is at least the median A-pair
+  correlation minus delta (default 0.15), with at least 12 shared personas
+  and 80% of A's. Fewer than 12 shared personas is undecidable, not a
+  failure. Reported only: the per-round curve and a 4-round windowed curve;
 * distinct-2 and seed-entity mention rate of posts;
 * extraction recall from #7 (passed in).
 
@@ -38,11 +41,13 @@ import argparse
 import itertools
 import json
 import math
+import random
 import re
 import statistics
 import subprocess
 import sys
 from collections import Counter
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -192,7 +197,22 @@ def posts_by_round(run: Path) -> dict[int, list[str]]:
     return result
 
 
-def score_posts(client, texts: list[str], cache: dict[str, dict[str, Any]], workers: int = 8) -> None:
+def stance_question_for(prepared: dict[str, Any]) -> str:
+    """The scenario's question file, or the golden ``STANCE_QUESTION``."""
+
+    path = Path(prepared["fixture"]) / "stance_question.txt"
+    if path.is_file():
+        return path.read_text(encoding="utf-8").strip()
+    return STANCE_QUESTION
+
+
+def score_posts(
+    client,
+    texts: list[str],
+    cache: dict[str, dict[str, Any]],
+    question: str = STANCE_QUESTION,
+    workers: int = 8,
+) -> None:
     """Fill ``cache[text] = {"unit": 0..1, "levels": [p per stance level]}``."""
 
     from concurrent.futures import ThreadPoolExecutor
@@ -205,7 +225,7 @@ def score_posts(client, texts: list[str], cache: dict[str, dict[str, Any]], work
         answer = client.ask(
             SystemOneRequest(
                 state=f"貼文：{text[:300]}",
-                questions={"s": ScoreQuestion(instructions=STANCE_QUESTION, criteria=STANCE_LEVELS)},
+                questions={"s": ScoreQuestion(instructions=question, criteria=STANCE_LEVELS)},
             )
         ).answers["s"]
         levels = [float(answer.probabilities.get(level, 0.0)) for level in STANCE_LEVELS]
@@ -243,7 +263,10 @@ def stance_measures(rows: list[dict[str, Any]], cache: dict[str, dict[str, Any]]
     }
 
 
-MIN_COMMON_PERSONAS = 8
+BOOTSTRAP_REPS = 1000
+PERSONA_DELTA = 0.15
+ALPHA = 0.05
+MIN_COMMON_PERSONAS = 12  # below this the persona gate is undecidable
 MIN_COMMON_SHARE = 0.8
 
 
@@ -253,7 +276,7 @@ def persona_correlation(x: dict[str, float], y: dict[str, float]) -> float | Non
 
 
 def enough_common_personas(a: dict[str, float], b: dict[str, float]) -> tuple[int, bool]:
-    """A few shared personas can correlate by chance: require >= 8 and >= 80% of A's."""
+    """A few shared personas can correlate by chance: require >= 12 and >= 80% of A's."""
 
     common = len(set(a) & set(b))
     return common, bool(a) and common >= MIN_COMMON_PERSONAS and common >= MIN_COMMON_SHARE * len(a)
@@ -275,6 +298,126 @@ def mean_curve(curves: list[list[float | None]]) -> list[float | None]:
     return out
 
 
+def bootstrap_ci(values: list[float], alpha: float = ALPHA) -> tuple[float, float]:
+    """Percentile CI: sorted[floor(alpha/2*n)], sorted[ceil((1-alpha/2)*n)-1]."""
+
+    ordered = sorted(values)
+    n = len(ordered)
+    lo = math.floor(alpha / 2 * n)
+    hi = math.ceil((1 - alpha / 2) * n) - 1
+    return (float(ordered[lo]), float(ordered[hi]))
+
+
+def _distinct_pairs(sample: list[dict]) -> list[tuple[dict, dict]]:
+    """Pairs whose original run objects differ (same object means same seed)."""
+
+    pairs = []
+    for i, j in itertools.combinations(range(len(sample)), 2):
+        if sample[i] is not sample[j]:
+            pairs.append((sample[i], sample[j]))
+    return pairs
+
+
+def bootstrap_between(
+    a_runs: list[dict],
+    b_runs: list[dict],
+    stat: Callable[[list[dict], list[dict]], float | None],
+    reps: int,
+    rng: random.Random,
+) -> list[float]:
+    """Resample A and B with replacement; ``stat(b_sample, a_sample)`` each rep."""
+
+    values: list[float] = []
+    if not a_runs or not b_runs:
+        return values
+    for _ in range(reps):
+        a_sample = [rng.choice(a_runs) for _ in range(len(a_runs))]
+        b_sample = [rng.choice(b_runs) for _ in range(len(b_runs))]
+        value = stat(b_sample, a_sample)
+        if value is not None:
+            values.append(float(value))
+    return values
+
+
+def bootstrap_within(
+    a_runs: list[dict],
+    stat: Callable[[list[tuple[dict, dict]]], float | None],
+    reps: int,
+    rng: random.Random,
+) -> list[float]:
+    """Resample A with replacement. Pairs only across distinct original seeds.
+
+    A rep with no such pair is skipped.
+    """
+
+    values: list[float] = []
+    if len(a_runs) < 2:
+        return values
+    for _ in range(reps):
+        sample = [rng.choice(a_runs) for _ in range(len(a_runs))]
+        pairs = _distinct_pairs(sample)
+        if not pairs:
+            continue
+        value = stat(pairs)
+        if value is not None:
+            values.append(float(value))
+    return values
+
+
+def one_sided_p(ba: list[float], aa: list[float]) -> float:
+    """Share of reps with ``ba_i <= aa_i``."""
+
+    n = min(len(ba), len(aa))
+    if n == 0:
+        return 1.0
+    return sum(b <= a for b, a in zip(ba, aa)) / n
+
+
+def _paired_bootstrap(
+    a_runs: list[dict],
+    b_runs: list[dict],
+    between: Callable[[list[dict], list[dict]], float | None],
+    within: Callable[[list[tuple[dict, dict]]], float | None],
+    reps: int,
+    rng: random.Random,
+) -> tuple[list[float], list[float]]:
+    """One resample of A and B per rep. Skip the rep when A has no cross-seed pair."""
+
+    ba: list[float] = []
+    aa: list[float] = []
+    if len(a_runs) < 2 or not b_runs:
+        return ba, aa
+    for _ in range(reps):
+        a_sample = [rng.choice(a_runs) for _ in range(len(a_runs))]
+        b_sample = [rng.choice(b_runs) for _ in range(len(b_runs))]
+        pairs = _distinct_pairs(a_sample)
+        if not pairs:
+            continue
+        b_value = between(b_sample, a_sample)
+        a_value = within(pairs)
+        if b_value is None or a_value is None:
+            continue
+        ba.append(float(b_value))
+        aa.append(float(a_value))
+    return ba, aa
+
+
+def _mean_js_between(key: str) -> Callable[[list[dict], list[dict]], float | None]:
+    def stat(left: list[dict], right: list[dict]) -> float | None:
+        vals = [js_divergence(b[key], a[key]) for b in left for a in right]
+        return statistics.mean(vals) if vals else None
+
+    return stat
+
+
+def _mean_js_within(key: str) -> Callable[[list[tuple[dict, dict]]], float | None]:
+    def stat(pairs: list[tuple[dict, dict]]) -> float | None:
+        vals = [js_divergence(x[key], y[key]) for x, y in pairs]
+        return statistics.mean(vals) if vals else None
+
+    return stat
+
+
 # ------------------------------------------------------------------ gates
 
 
@@ -290,17 +433,72 @@ def _content_mean(rows: list[dict[str, Any]], key: str) -> float | None:
     return statistics.mean(values) if values else None
 
 
+def _clean_runs(rows: dict[int, dict[str, Any]]) -> list[dict]:
+    return [rows[seed] for seed in sorted(rows) if not rows[seed].get("llm_errors")]
+
+
+def _js_gate(
+    point_b: float | None,
+    point_a: float | None,
+    ba: list[float],
+    aa: list[float],
+    *,
+    comparable: bool,
+) -> dict[str, Any]:
+    """One-sided bootstrap gate. Fewer than two clean A runs, or no valid rep, fails."""
+
+    if not comparable or not ba:
+        return {
+            "b_vs_a": point_b,
+            "b_vs_a_ci": None,
+            "a_seed_noise": point_a,
+            "a_seed_noise_ci": None,
+            "p_value": None,
+            "alpha": ALPHA,
+            "status": "fail",
+            "passed": False,
+        }
+    p_value = one_sided_p(ba, aa)
+    status = "fail" if p_value < ALPHA else "pass"
+    return {
+        "b_vs_a": point_b,
+        "b_vs_a_ci": list(bootstrap_ci(ba)),
+        "a_seed_noise": point_a,
+        "a_seed_noise_ci": list(bootstrap_ci(aa)),
+        "p_value": p_value,
+        "alpha": ALPHA,
+        "status": status,
+        "passed": status == "pass",
+    }
+
+
+def _gate_ok(gate: dict[str, Any]) -> bool:
+    """``undecidable`` counts as a pass for the recommendation."""
+
+    status = gate.get("status")
+    if status == "undecidable":
+        return True
+    if status in ("pass", "fail"):
+        return status == "pass"
+    return bool(gate.get("passed"))
+
+
 def evaluate_groups(
     per_run: dict[str, dict[int, dict[str, Any]]],
+    *,
+    reps: int = BOOTSTRAP_REPS,
+    delta: float = PERSONA_DELTA,
+    rng_seed: int = 0,
 ) -> tuple[dict[str, Any], str, dict[str, Any], list[str]]:
-    """G4 gates over the clean runs; runs with model-server errors lost agent
+    """G4 v2 gates over the clean runs; runs with model-server errors lost agent
     turns and are excluded (and listed)."""
 
     excluded = sorted(
         f"{name}_seed{seed}" for name, rows in per_run.items() for seed, row in rows.items() if row.get("llm_errors")
     )
-    a_runs = [r for r in per_run.get("A", {}).values() if not r.get("llm_errors")]
-    b_runs = [r for r in per_run.get("B", {}).values() if not r.get("llm_errors")]
+    a_runs = _clean_runs(per_run.get("A", {}))
+    b_runs = _clean_runs(per_run.get("B", {}))
+    rng = random.Random(rng_seed)
 
     js_aa = [js_divergence(x["actions"], y["actions"]) for x, y in itertools.combinations(a_runs, 2)]
     js_ba = [js_divergence(b["actions"], a["actions"]) for b in b_runs for a in a_runs]
@@ -324,7 +522,6 @@ def evaluate_groups(
     a_persona, b_persona = mean_persona(a_runs), mean_persona(b_runs)
     persona_ab = persona_correlation(a_persona, b_persona) if a_runs and b_runs else None
     n_common, enough_personas = enough_common_personas(a_persona, b_persona)
-    persona_aa = pairwise(persona_correlation, "stance_by_persona")
     levels_aa = [js_divergence(x["stance_levels"], y["stance_levels"]) for x, y in itertools.combinations(a_runs, 2)]
     levels_ba = [js_divergence(b["stance_levels"], a["stance_levels"]) for b in b_runs for a in a_runs]
     levels_noise = statistics.mean(levels_aa) if levels_aa else None
@@ -334,6 +531,40 @@ def evaluate_groups(
     b_decode = _mean_of(b_runs, "decode_per_round")
     js_noise = statistics.mean(js_aa) if js_aa else None
     js_b = statistics.mean(js_ba) if js_ba else None
+    comparable = len(a_runs) >= 2
+    action_ba, action_aa = _paired_bootstrap(
+        a_runs, b_runs, _mean_js_between("actions"), _mean_js_within("actions"), reps, rng
+    )
+    level_ba, level_aa = _paired_bootstrap(
+        a_runs, b_runs, _mean_js_between("stance_levels"), _mean_js_within("stance_levels"), reps, rng
+    )
+    pair_corrs = [
+        persona_correlation(x["stance_by_persona"], y["stance_by_persona"])
+        for x, y in itertools.combinations(a_runs, 2)
+    ]
+    pair_corrs = [v for v in pair_corrs if v is not None]
+    persona_median = statistics.median(pair_corrs) if pair_corrs else None
+    persona_threshold = (persona_median - delta) if persona_median is not None else None
+    persona_samples: list[float] = []
+    if a_runs and b_runs:
+        for _ in range(reps):
+            a_sample = [rng.choice(a_runs) for _ in range(len(a_runs))]
+            b_sample = [rng.choice(b_runs) for _ in range(len(b_runs))]
+            corr = persona_correlation(mean_persona(a_sample), mean_persona(b_sample))
+            if corr is not None:
+                persona_samples.append(round(float(corr), 12))
+    persona_ci = list(bootstrap_ci(persona_samples)) if persona_samples else None
+    if n_common < MIN_COMMON_PERSONAS:
+        persona_status, persona_passed = "undecidable", None
+    elif (
+        not enough_personas
+        or persona_threshold is None
+        or persona_ci is None
+        or persona_ci[0] < persona_threshold
+    ):
+        persona_status, persona_passed = "fail", False
+    else:
+        persona_status, persona_passed = "pass", True
     # The gate is about the local path fitting a 10 GB card; A may run on a
     # server with larger per-slot contexts (OASIS LLM agents need ~32K+).
     b_vram = [r["vram_peak_mib"] for r in b_runs]
@@ -345,27 +576,18 @@ def evaluate_groups(
             "threshold": 0.10,
             "passed": bool(a_decode) and b_decode is not None and b_decode <= 0.10 * a_decode,
         },
-        "action_js": {
-            "b_vs_a": js_b,
-            "a_seed_noise": js_noise,
-            "threshold": "≤ 2 × A noise",
-            "passed": js_b is not None and js_noise is not None and js_b <= 2 * js_noise,
-        },
+        "action_js": _js_gate(js_b, js_noise, action_ba, action_aa, comparable=comparable),
         "stance_by_persona": {
             "value": persona_ab,
-            "a_seed_pairs_mean": persona_aa,
-            "threshold": 0.5,
+            "ci": persona_ci,
+            "a_seed_pairs_median": persona_median,
+            "delta": delta,
+            "threshold": persona_threshold,
             "common_personas": n_common,
-            "passed": enough_personas and persona_ab is not None and persona_ab >= 0.5,
+            "status": persona_status,
+            "passed": persona_passed,
         },
-        "stance_distribution": {
-            "b_vs_a": levels_b,
-            "a_seed_noise": levels_noise,
-            "threshold": "≤ 2 × A noise",
-            # A floor under the noise: identical mixes would otherwise demand 0.
-            "passed": levels_b is not None and levels_noise is not None
-            and levels_b <= max(2 * levels_noise, 0.01),
-        },
+        "stance_distribution": _js_gate(levels_b, levels_noise, level_ba, level_aa, comparable=comparable),
         "vram": {
             "peak_mib": vram_peak,
             "a_peak_mib": max(a_vram) if a_vram else None,
@@ -373,11 +595,11 @@ def evaluate_groups(
             "passed": vram_peak is not None and vram_peak <= VRAM_BUDGET_MIB,
         },
     }
-    if all(g["passed"] for g in gates.values()):
+    if all(_gate_ok(g) for g in gates.values()):
         recommendation = "switch"
     elif gates["decode_ratio"]["passed"] and gates["vram"]["passed"] and (
-        gates["action_js"]["passed"]
-        or (gates["stance_by_persona"]["passed"] and gates["stance_distribution"]["passed"])
+        _gate_ok(gates["action_js"])
+        or (_gate_ok(gates["stance_by_persona"]) and _gate_ok(gates["stance_distribution"]))
     ):
         recommendation = "conditional"
     else:
@@ -412,6 +634,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", required=True)
     parser.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3, 4, 5])
     parser.add_argument("--rounds", type=int, default=24)
+    parser.add_argument("--stance-question", default=None, help="override the scenario stance question")
+    parser.add_argument("--bootstrap-reps", type=int, default=BOOTSTRAP_REPS)
+    parser.add_argument("--delta", type=float, default=PERSONA_DELTA)
     parser.add_argument("--simulate-only", choices=["A", "B"], default=None,
                         help="only run this group's simulations (e.g. to switch server settings between groups)")
     parser.add_argument("--extraction-recall", type=float, default=None,
@@ -447,7 +672,9 @@ def main(argv: list[str] | None = None) -> int:
     client = get_system_one_client()
     cache: dict[str, dict[str, Any]] = {}
     all_rows = {(name, seed): post_rows(info["dir"]) for name in runs for seed, info in runs[name].items()}
-    score_posts(client, [row["text"] for rows in all_rows.values() for row in rows], cache)
+    prepared_a = json.loads((groups["A"]["work"] / "prepared.json").read_text(encoding="utf-8"))
+    question = args.stance_question or stance_question_for(prepared_a)
+    score_posts(client, [row["text"] for rows in all_rows.values() for row in rows], cache, question=question)
     per_run: dict[str, dict[int, dict[str, Any]]] = {"A": {}, "B": {}}
     for name in runs:
         work = groups[name]["work"]
@@ -475,7 +702,9 @@ def main(argv: list[str] | None = None) -> int:
                 **stance_measures(all_rows[(name, seed)], cache, scheduled),
             }
 
-    gates, recommendation, summary, excluded = evaluate_groups(per_run)
+    gates, recommendation, summary, excluded = evaluate_groups(
+        per_run, reps=args.bootstrap_reps, delta=args.delta
+    )
 
     def strip(rows):
         return {
@@ -489,6 +718,8 @@ def main(argv: list[str] | None = None) -> int:
         "rounds": args.rounds,
         "groups": {name: strip(rows) for name, rows in per_run.items()},
         "summary": {**summary, "extraction_recall": args.extraction_recall},
+        "gate_version": "g4v2",
+        "stance_question": question,
         "gates": gates,
         "runs_with_llm_errors": excluded,
         "recommendation": recommendation,
@@ -505,6 +736,18 @@ def _fmt(value: Any, digits: int = 3) -> str:
     if isinstance(value, float):
         return f"{value:.{digits}f}"
     return str(value)
+
+
+def _ci_text(bounds: Any) -> str:
+    if not isinstance(bounds, (list, tuple)) or len(bounds) != 2:
+        return ""
+    return f" [{_fmt(bounds[0])}, {_fmt(bounds[1])}]"
+
+
+def _gate_mark(gate: dict[str, Any]) -> str:
+    if gate.get("status") == "undecidable":
+        return "無法判讀"
+    return "✅" if gate.get("passed") else "❌"
 
 
 def render(report: dict[str, Any]) -> str:
@@ -533,9 +776,9 @@ def render(report: dict[str, Any]) -> str:
         "| 條件 | 數值 | 門檻 | 結果 |",
         "| --- | --- | --- | --- |",
         f"| B／A 每回合 decode | {_fmt(g['decode_ratio']['value'])} | ≤ 0.10 | {'✅' if g['decode_ratio']['passed'] else '❌'} |",
-        f"| 動作分布 JS（B vs A） | {_fmt(g['action_js']['b_vs_a'])}（A 組間 {_fmt(g['action_js']['a_seed_noise'])}） | ≤ 2 × A 組間 | {'✅' if g['action_js']['passed'] else '❌'} |",
-        f"| 各角色平均立場相關（B vs A） | {_fmt(g['stance_by_persona']['value'])}（A 組間平均 {_fmt(g['stance_by_persona']['a_seed_pairs_mean'])}；共同角色 {g['stance_by_persona'].get('common_personas', '—')}） | ≥ 0.5，共同角色 ≥ 8 且 ≥ 80% | {'✅' if g['stance_by_persona']['passed'] else '❌'} |",
-        f"| 立場分布 JS（B vs A） | {_fmt(g['stance_distribution']['b_vs_a'])}（A 組間 {_fmt(g['stance_distribution']['a_seed_noise'])}） | ≤ 2 × A 組間 | {'✅' if g['stance_distribution']['passed'] else '❌'} |",
+        f"| 動作分布 JS（B vs A） | {_fmt(g['action_js']['b_vs_a'])}{_ci_text(g['action_js'].get('b_vs_a_ci'))}（A 組間 {_fmt(g['action_js']['a_seed_noise'])}{_ci_text(g['action_js'].get('a_seed_noise_ci'))}，p {_fmt(g['action_js'].get('p_value'))}） | 單尾 p < {g['action_js'].get('alpha', ALPHA)} 判失敗 | {_gate_mark(g['action_js'])} |",
+        f"| 各角色平均立場相關（B vs A） | {_fmt(g['stance_by_persona']['value'])}{_ci_text(g['stance_by_persona'].get('ci'))}（中位數 − δ = {_fmt(g['stance_by_persona'].get('threshold'))}；共同角色 {g['stance_by_persona'].get('common_personas', '—')}） | 下界 ≥ 中位數 − δ，共同角色 ≥ {MIN_COMMON_PERSONAS} 且 ≥ 80% | {_gate_mark(g['stance_by_persona'])} |",
+        f"| 立場分布 JS（B vs A） | {_fmt(g['stance_distribution']['b_vs_a'])}{_ci_text(g['stance_distribution'].get('b_vs_a_ci'))}（A 組間 {_fmt(g['stance_distribution']['a_seed_noise'])}{_ci_text(g['stance_distribution'].get('a_seed_noise_ci'))}，p {_fmt(g['stance_distribution'].get('p_value'))}） | 單尾 p < {g['stance_distribution'].get('alpha', ALPHA)} 判失敗 | {_gate_mark(g['stance_distribution'])} |",
         f"| VRAM 峰值（B） | {_fmt(g['vram']['peak_mib'])} MiB（A {_fmt(g['vram'].get('a_peak_mib'))} MiB） | ≤ {g['vram']['budget_mib']} MiB | {'✅' if g['vram']['passed'] else '❌'} |",
         "",
         f"## 建議：{labels[report['recommendation']]}",

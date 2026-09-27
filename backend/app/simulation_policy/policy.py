@@ -110,6 +110,7 @@ class SystemOnePolicy:
         state_store: AgentStateStore | None = None,
         decision_log: DecisionLog | None = None,
         extra_action_rate: float = 0.0,
+        activation_counts: list[float] | None = None,
         stance_prior: dict[int, float] | None = None,
         stance_prior_weight: float = 0.5,
     ) -> None:
@@ -127,6 +128,7 @@ class SystemOnePolicy:
         # Probability of one more action after each action in a round (#26):
         # LLM agents take ~1.6 actions per activation.
         self.extra_action_rate = extra_action_rate
+        self.activation_counts = list(activation_counts) if activation_counts else None
         # Standing stance per agent (0..1, from the sim config) anchoring the
         # per-post stance readout (#41): replying to a post, the readout
         # tended to take that post's stance, so opposition groups wrote
@@ -275,7 +277,7 @@ class SystemOnePolicy:
             agent_name=obs.agent_name,
             persona=obs.persona,
             target_text=target_text,
-            topic=rng.choice(obs.topics) if obs.topics else "",
+            topic=self._topic_choice(obs, rng),
             emotion=dict(emotion),
         )
         record = {
@@ -287,6 +289,15 @@ class SystemOnePolicy:
         }
         return intent, record
 
+    @staticmethod
+    def _topic_choice(obs: Observation, rng: random.Random) -> str:
+        from .tiers import usable_topic
+
+        usable = [topic for topic in obs.topics if usable_topic(topic)]
+        if usable:
+            return rng.choice(usable)
+        return ""
+
     # ------------------------------------------------------------------ main
 
     def decide_round(self, obs: Observation) -> list[Decision]:
@@ -296,12 +307,21 @@ class SystemOnePolicy:
 
         first = self.decide(obs)
         decisions = [first]
-        if first.action == "DO_NOTHING" or self.extra_action_rate <= 0:
+        if first.action == "DO_NOTHING":
             return decisions
+        if self.activation_counts:
+            from .priors import sample_activation_count
+
+            gate = decision_rng(self.seed, f"{obs.platform}+count", obs.round_num, obs.agent_id)
+            limit = sample_activation_count(self.activation_counts, gate)
+        elif self.extra_action_rate <= 0:
+            return decisions
+        else:
+            limit = MAX_ACTIONS_PER_ROUND
         emotion = first.emotion
-        for index in range(1, MAX_ACTIONS_PER_ROUND):
+        for index in range(1, limit):
             gate = decision_rng(self.seed, f"{obs.platform}+more{index}", obs.round_num, obs.agent_id)
-            if gate.random() >= self.extra_action_rate:
+            if not self.activation_counts and gate.random() >= self.extra_action_rate:
                 break
             done = [d.action for d in decisions]
             # The same action on the same target twice fails in OASIS (a
@@ -344,7 +364,10 @@ class SystemOnePolicy:
         state = f"{base}\n目前情緒：{describe(emotion)}"
         if done:
             state += f"\n這一輪已經做了：{'、'.join(done)}（接下來還會做什麼？）"
-        steps = ask_tree(self.client, state, self.taxonomy.tree, rng)
+        steps = ask_tree(
+            self.client, state, self.taxonomy.tree, rng,
+            stance=self.stance_prior.get(obs.agent_id),
+        )
         path = [step.choice for step in steps]
         leaf = self.taxonomy.leaf(path)
         record: dict[str, Any] = {

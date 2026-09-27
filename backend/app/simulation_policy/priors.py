@@ -17,6 +17,7 @@ import copy
 import json
 import math
 import os
+import random
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -47,6 +48,40 @@ def load_action_priors(setting: str | None = None) -> dict[str, dict[str, dict[s
                         or not math.isfinite(weight) or weight < 0:
                     raise ValueError(f"bad prior {platform}/{node}/{option}: {weight!r}")
     return priors
+
+
+def load_activation_counts(setting: str | None = None) -> dict[str, list[float]]:
+    """``{platform: [p(k=1), ..., p(k=5)]}`` from the priors file (#47)."""
+
+    value = (os.environ.get(ENV_VAR, "") if setting is None else setting).strip()
+    if value.lower() == "off":
+        return {}
+    path = PRIORS_PATH if value in ("", "default") else Path(value)
+    if not path.exists():
+        return {}
+    raw = json.loads(path.read_text(encoding="utf-8")).get("activation_counts") or {}
+    counts: dict[str, list[float]] = {}
+    for platform, weights in raw.items():
+        if not isinstance(weights, list) or len(weights) != 5:
+            raise ValueError(f"activation_counts for {platform} must be 5 weights")
+        cleaned = [float(w) for w in weights]
+        if any(w < 0 for w in cleaned) or sum(cleaned) <= 0:
+            raise ValueError(f"bad activation_counts for {platform}: {weights!r}")
+        counts[platform] = cleaned
+    return counts
+
+
+def sample_activation_count(weights: list[float], rng: random.Random) -> int:
+    """Draw how many actions this activation attempts, from 1 to 5."""
+
+    total = sum(weights)
+    draw = rng.random() * total
+    cumulative = 0.0
+    for index, weight in enumerate(weights, start=1):
+        cumulative += weight
+        if draw < cumulative:
+            return index
+    return len(weights)
 
 
 def load_extra_action_rates(setting: str | None = None) -> dict[str, float]:

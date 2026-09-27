@@ -58,7 +58,7 @@ def test_llm_errors_counts_server_errors(tmp_path):
 
 
 def _run(decode, actions, curve, vram=8000, errors=0, posts=3, persona=None, levels=None):
-    persona = persona or {n: i / 9 for i, n in enumerate("甲乙丙丁戊己庚辛壬癸")}
+    persona = persona or {n: i / 11 for i, n in enumerate("甲乙丙丁戊己庚辛壬癸子丑")}
     levels = levels or {"強烈反對": 1, "反對": 2, "中立": 3, "支持": 4, "強烈支持": 1}
     return {
         "stance_curve_windowed": curve[:2],
@@ -152,19 +152,21 @@ def test_stance_measures_and_persona_gates():
     assert m["stance_levels"]["強烈反對"] == 1 and m["stance_levels"]["中立"] == 1
 
     curve = [0.2, 0.4, 0.6, 0.8]
-    flipped = {n: 1 - i / 9 for i, n in enumerate("甲乙丙丁戊己庚辛壬癸")}
+    flipped = {n: 1 - i / 11 for i, n in enumerate("甲乙丙丁戊己庚辛壬癸子丑")}
     per_run = {"A": {1: _run(150, {"like": 1}, curve), 2: _run(150, {"like": 1}, curve)},
                "B": {1: _run(5, {"like": 1}, curve, persona=flipped)}}
     gates, _, summary, _ = ab.evaluate_groups(per_run)
-    assert gates["stance_by_persona"]["value"] < 0 and not gates["stance_by_persona"]["passed"]
-    assert gates["stance_by_persona"]["a_seed_pairs_mean"] == pytest.approx(1.0)
-    assert gates["stance_distribution"]["passed"]  # identical mixes pass via the floor
+    assert gates["stance_by_persona"]["value"] < 0
+    assert gates["stance_by_persona"]["status"] == "fail"
+    assert gates["stance_by_persona"]["passed"] is False
+    assert gates["stance_distribution"]["status"] == "pass"
     assert summary["stance_curve_report"]["per_round"]["a_seed_pairs_mean"] == pytest.approx(1.0)
 
 
 def test_persona_gate_needs_enough_shared_personas():
-    a = {n: i / 9 for i, n in enumerate("甲乙丙丁戊己庚辛壬癸")}
-    assert ab.enough_common_personas(a, a) == (10, True)
+    names = "甲乙丙丁戊己庚辛壬癸子丑"
+    a = {n: i / 11 for i, n in enumerate(names)}
+    assert ab.enough_common_personas(a, a) == (12, True)
     few = {k: a[k] for k in "甲乙丙"}
     assert ab.enough_common_personas(a, few) == (3, False)
     curve = [0.2, 0.4, 0.6, 0.8]
@@ -172,4 +174,145 @@ def test_persona_gate_needs_enough_shared_personas():
                "B": {1: _run(5, {"like": 1}, curve, persona=few)}}
     gates, _, _, _ = ab.evaluate_groups(per_run)
     assert gates["stance_by_persona"]["common_personas"] == 3
-    assert not gates["stance_by_persona"]["passed"]  # r = 1.0 on 3 points is not enough
+    assert gates["stance_by_persona"]["status"] == "undecidable"
+    assert gates["stance_by_persona"]["passed"] is None
+
+
+def _persona(n=12, flip=False):
+    names = list("甲乙丙丁戊己庚辛壬癸子丑")
+    if n > len(names):
+        names = [f"人{i:02d}" for i in range(n)]
+    span = max(n - 1, 1)
+    return {name: (1 - i / span if flip else i / span) for i, name in enumerate(names[:n])}
+
+
+def test_bootstrap_ci_percentiles():
+    values = [float(i) for i in range(1, 1001)]
+    assert ab.bootstrap_ci(values) == (26.0, 975.0)
+
+
+def test_bootstrap_is_reproducible():
+    curve = [0.2, 0.4, 0.6, 0.8]
+    persona = _persona()
+    per_run = {
+        "A": {i: _run(150, {"like": 10, "post": 5}, curve, persona=persona) for i in (1, 2, 3)},
+        "B": {i: _run(5, {"like": 9, "post": 6}, curve, persona=persona) for i in (1, 2)},
+    }
+    first = ab.evaluate_groups(per_run)
+    second = ab.evaluate_groups(per_run)
+    assert first[0] == second[0]
+
+
+def test_persona_relative_threshold_passes():
+    curve = [0.2, 0.4, 0.6, 0.8]
+    persona = _persona()
+    per_run = {
+        "A": {i: _run(150, {"like": 1}, curve, persona=persona) for i in (1, 2, 3)},
+        "B": {i: _run(5, {"like": 1}, curve, persona=persona) for i in (1, 2, 3)},
+    }
+    gates, _, _, _ = ab.evaluate_groups(per_run)
+    assert gates["stance_by_persona"]["ci"][0] == 1.0
+    assert gates["stance_by_persona"]["threshold"] == pytest.approx(0.85)
+    assert gates["stance_by_persona"]["status"] == "pass"
+
+
+def test_persona_relative_threshold_fails():
+    curve = [0.2, 0.4, 0.6, 0.8]
+    per_run = {
+        "A": {i: _run(150, {"like": 1}, curve, persona=_persona()) for i in (1, 2, 3)},
+        "B": {i: _run(5, {"like": 1}, curve, persona=_persona(flip=True)) for i in (1, 2, 3)},
+    }
+    gates, _, _, _ = ab.evaluate_groups(per_run)
+    assert gates["stance_by_persona"]["value"] == pytest.approx(-1.0)
+    assert gates["stance_by_persona"]["status"] == "fail"
+    assert gates["stance_by_persona"]["passed"] is False
+
+
+def test_persona_undecidable_below_12():
+    curve = [0.2, 0.4, 0.6, 0.8]
+    full = _persona(12)
+    shared = {name: full[name] for name in list(full)[:11]}
+    actions = {"like": 10, "post": 5}
+    per_run = {
+        "A": {i: _run(150, actions, curve, persona=full) for i in (1, 2, 3)},
+        "B": {i: _run(5, actions, curve, persona=shared) for i in (1, 2, 3)},
+    }
+    gates, recommendation, _, _ = ab.evaluate_groups(per_run)
+    assert gates["stance_by_persona"]["common_personas"] == 11
+    assert gates["stance_by_persona"]["status"] == "undecidable"
+    assert gates["stance_by_persona"]["passed"] is None
+    assert recommendation == "switch"
+
+
+def test_persona_share_rule_still_fails():
+    curve = [0.2, 0.4, 0.6, 0.8]
+    full = _persona(20)
+    shared = {name: full[name] for name in list(full)[:12]}
+    per_run = {
+        "A": {i: _run(150, {"like": 1}, curve, persona=full) for i in (1, 2, 3)},
+        "B": {i: _run(5, {"like": 1}, curve, persona=shared) for i in (1, 2, 3)},
+    }
+    gates, _, _, _ = ab.evaluate_groups(per_run)
+    assert gates["stance_by_persona"]["status"] == "fail"
+
+
+def test_action_js_one_sided_pass():
+    curve = [0.2, 0.4, 0.6, 0.8]
+    a_actions = ({"like": 10, "post": 5}, {"like": 9, "post": 6}, {"like": 10, "post": 6})
+    per_run = {
+        "A": {i + 1: _run(150, actions, curve) for i, actions in enumerate(a_actions)},
+        "B": {i + 1: _run(5, actions, curve) for i, actions in enumerate(a_actions)},
+    }
+    gates, _, _, _ = ab.evaluate_groups(per_run)
+    assert gates["action_js"]["p_value"] >= 0.05
+    assert gates["action_js"]["status"] == "pass"
+
+
+def test_action_js_one_sided_fail():
+    curve = [0.2, 0.4, 0.6, 0.8]
+    a_actions = ({"like": 10, "post": 5}, {"like": 9, "post": 6}, {"like": 10, "post": 6})
+    per_run = {
+        "A": {i + 1: _run(150, actions, curve) for i, actions in enumerate(a_actions)},
+        "B": {i + 1: _run(5, {"post": 15}, curve) for i in range(3)},
+    }
+    gates, _, _, _ = ab.evaluate_groups(per_run)
+    assert gates["action_js"]["p_value"] == 0.0
+    assert gates["action_js"]["status"] == "fail"
+
+
+def test_stance_distribution_identical_mix_passes():
+    curve = [0.2, 0.4, 0.6, 0.8]
+    levels = {"強烈反對": 1, "反對": 2, "中立": 3, "支持": 4, "強烈支持": 1}
+    per_run = {
+        "A": {i: _run(150, {"like": 1}, curve, levels=levels) for i in (1, 2, 3)},
+        "B": {i: _run(5, {"like": 1}, curve, levels=levels) for i in (1, 2, 3)},
+    }
+    gates, _, _, _ = ab.evaluate_groups(per_run)
+    assert gates["stance_distribution"]["p_value"] == 1.0
+    assert gates["stance_distribution"]["status"] == "pass"
+
+
+def test_within_noise_skips_same_seed_pairs():
+    import random
+    import statistics
+
+    a_runs = [{"actions": {"like": 10, "post": 1}}, {"actions": {"post": 10, "like": 1}}]
+
+    def mean_js(pairs):
+        return statistics.mean(ab.js_divergence(x["actions"], y["actions"]) for x, y in pairs)
+
+    values = ab.bootstrap_within(a_runs, mean_js, 200, random.Random(0))
+    assert values
+    assert all(value > 0 for value in values)
+    assert len(values) <= 200
+
+
+def test_stance_question_from_fixture(tmp_path):
+    fx = tmp_path / "fx"
+    fx.mkdir()
+    question = "這則貼文對「X」的立場是什麼？"
+    (fx / "stance_question.txt").write_text(question, encoding="utf-8")
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    assert ab.stance_question_for({"fixture": str(fx)}) == question
+    assert ab.stance_question_for({"fixture": str(empty)}) == ab.STANCE_QUESTION

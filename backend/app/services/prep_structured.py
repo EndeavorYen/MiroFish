@@ -68,6 +68,13 @@ TOPICS = {
 }
 LEVEL5 = ["非常低", "偏低", "中等", "偏高", "非常高"]
 STANCE5 = ["強烈反對", "反對", "中立", "支持", "強烈支持"]
+ROLES_LABEL = {
+    "beneficiary": "受益者",
+    "harmed": "受損者",
+    "regulator": "監管或決策者",
+    "observer": "評論或觀察者",
+    "media": "媒體",
+}
 ACTIVE_PATTERNS = {
     "office_hours": ("主要在上班時間活動（機構帳號）", list(range(9, 18))),
     "daytime_evening": ("白天與晚上都會上網", [9, 10, 11, 12, 13, 18, 19, 20, 21, 22, 23]),
@@ -193,12 +200,21 @@ def _entity_state(name: str, entity_type: str, summary: str, context: str) -> st
 def _stance_score(client, state: str, name: str, event: str) -> float | None:
     """Stance 0..1 asked on its own with the event in the state, so the other
     readouts (activity, influence ...) keep the state they were calibrated
-    on (#34). None without an event: the caller asks it with the rest."""
+    on (#34). The score is conditioned on a role, then passed through the
+    isotonic map (#46). None without an event: the caller asks it with the rest."""
 
     if not event:
         return None
-    answer = _ask(client, f"{state}\n模擬的事件：{event[:300]}", {"stance": stance_question(name, event)})["stance"]
-    return _level(answer.score, len(STANCE5))
+    from .stance_calibration import apply_calibration, load_knots, role_question
+
+    role = _ask(client, state, {"role": role_question(name)})["role"].choice
+    answer = _ask(
+        client,
+        f"{state}\n角色：{ROLES_LABEL[role]}\n模擬的事件：{event[:300]}",
+        {"stance": stance_question(name, event)},
+    )["stance"]
+    raw = _level(answer.score, len(STANCE5))
+    return apply_calibration(raw, load_knots())
 
 
 def stance_question(name: str, event: str) -> ScoreQuestion:
@@ -258,7 +274,10 @@ def structured_profile(
     answers = _ask(client, state, questions)
     stance = _stance_score(client, state, name, event)
     if stance is None:
-        stance = _level(_ask(client, state, {"stance": stance_question(name, "")})["stance"].score, len(STANCE5))
+        from .stance_calibration import apply_calibration, load_knots
+
+        raw = _level(_ask(client, state, {"stance": stance_question(name, "")})["stance"].score, len(STANCE5))
+        stance = apply_calibration(raw, load_knots())
     risk = _level(answers["risk"].score, len(LEVEL5))
     activity = _level(answers["activity"].score, len(LEVEL5))
     topics = sorted(TOPICS, key=lambda k: -answers[f"topic_{k}"].noul)
@@ -352,7 +371,10 @@ def structured_agent_config(
     influence = _level(answers["influence"].score, len(LEVEL5))
     stance = _stance_score(client, stance_state, name, event)
     if stance is None:
-        stance = _level(_ask(client, state, {"stance": stance_question(name, "")})["stance"].score, len(STANCE5))
+        from .stance_calibration import apply_calibration, load_knots
+
+        raw = _level(_ask(client, state, {"stance": stance_question(name, "")})["stance"].score, len(STANCE5))
+        stance = apply_calibration(raw, load_knots())
     stance_label = "opposing" if stance < 0.35 else "supportive" if stance > 0.65 else "neutral"
     return {
         # activity_level gates whether an agent is a candidate each round.

@@ -57,9 +57,19 @@ def clean_generation(text: str) -> str:
 STRONG = 0.2  # stance below STRONG or above 1 - STRONG: the strong template band
 
 
-def stance_words(stance: float) -> str:
-    """Five-level stance wording for the shared and full prompts (#41)."""
+def stance_words(stance: float, lang: str = "zh") -> str:
+    """Five-level stance wording for the shared and full prompts (#41, #52)."""
 
+    if lang == "en":
+        if stance < STRONG:
+            return "strongly opposed"
+        if stance < 0.4:
+            return "opposed or worried"
+        if stance <= 0.6:
+            return "neutral"
+        if stance <= 1 - STRONG:
+            return "supportive"
+        return "strongly supportive"
     if stance < STRONG:
         return "强烈反对"
     if stance < 0.4:
@@ -92,6 +102,50 @@ def stance_band(stance: float) -> str:
     return "neu"
 
 
+# Shared cache and the post-generation check use five levels (#45). 0.1 and
+# 0.35 no longer share one generation.
+LEVELS = ("neg_strong", "neg", "neu", "pos", "pos_strong")
+_EN_FUNCTION = {
+    "a", "an", "the", "for", "said", "and", "or", "of", "to", "in", "on",
+    "with", "before", "after", "from", "that", "this", "is", "are", "was",
+}
+
+
+def stance_level(stance: float) -> str:
+    if stance < STRONG:
+        return "neg_strong"
+    if stance < 0.4:
+        return "neg"
+    if stance <= 0.6:
+        return "neu"
+    if stance <= 1 - STRONG:
+        return "pos"
+    return "pos_strong"
+
+
+def level_index(stance: float) -> int:
+    return LEVELS.index(stance_level(stance))
+
+
+def detect_content_lang(text: str) -> str:
+    """English when the requirement is mostly Latin letters (#52)."""
+
+    cjk = sum(1 for ch in text if "\u4e00" <= ch <= "\u9fff")
+    latin = sum(1 for ch in text if ch.isascii() and ch.isalpha())
+    if latin >= 40 and latin > cjk * 2:
+        return "en"
+    return "zh"
+
+
+def usable_topic(text: str) -> bool:
+    word = (text or "").strip()
+    if len(word) < 2:
+        return False
+    if word.lower() in _EN_FUNCTION:
+        return False
+    return True
+
+
 def distinct_2(texts: list[str]) -> float:
     """Unique character bigrams / all bigrams over the texts (0 if none)."""
 
@@ -120,6 +174,7 @@ class RoundStats:
     decode_tokens: dict[str, int] = field(default_factory=lambda: {"shared": 0, "full": 0})
     cache_hits: int = 0
     texts: list[str] = field(default_factory=list)
+    stance_check: dict[str, int] = field(default_factory=dict)
 
     def row(self, platform: str) -> dict[str, Any]:
         return {
@@ -131,6 +186,7 @@ class RoundStats:
             "shared_cache_hits": self.cache_hits,
             "posts": len(self.texts),
             "distinct_2": round(distinct_2(self.texts), 4),
+            "stance_check": dict(self.stance_check),
         }
 
 
@@ -147,6 +203,8 @@ class TieredContentProvider:
         metrics_path: str | None = None,
         distinct2_warn: float = 0.4,
         platform: str = "",
+        lang: str = "zh",
+        score_fn: Callable[[str], float] | None = None,
     ) -> None:
         self.templates = templates
         self.llm_fn = llm_fn
@@ -157,6 +215,8 @@ class TieredContentProvider:
         self.metrics_path = metrics_path
         self.distinct2_warn = distinct2_warn
         self.platform = platform
+        self.lang = lang if lang in ("zh", "en") else "zh"
+        self.score_fn = score_fn
         self._lock = threading.Lock()
         self._round: RoundStats | None = None
         self._remaining = self.budget_per_round
@@ -184,11 +244,15 @@ class TieredContentProvider:
         return self.entities[0] if self.entities else (intent.topic or "")
 
     def _topic(self, intent: ContentIntent) -> str:
-        if intent.topic:
-            return intent.topic
+        if usable_topic(intent.topic):
+            return intent.topic.strip()
         if intent.target_text:
-            return intent.target_text[:16]
-        return self.entities[0] if self.entities else "这件事"
+            snippet = intent.target_text[:16].strip()
+            if usable_topic(snippet):
+                return snippet
+        if self.entities:
+            return self.entities[0]
+        return "这件事" if getattr(self, "lang", "zh") == "zh" else "this"
 
     def _vary(self, text: str, rng: random.Random, intent: ContentIntent) -> str:
         for word, options in (self.templates.get("synonyms") or {}).items():
@@ -201,20 +265,34 @@ class TieredContentProvider:
 
     # -------------------------------------------------------------- tiers
 
-    def template_text(self, intent: ContentIntent) -> str:
-        rng = _rng("template", intent.platform, intent.round_num, intent.persona_ref, intent.kind)
+    def template_text(self, intent: ContentIntent, *, skip: str = "") -> str:
+        rng = _rng("template", intent.platform, intent.round_num, intent.persona_ref, intent.kind, skip)
         by_kind = self.templates["templates"].get(intent.kind) or self.templates["templates"]["other"]
-        options = by_kind.get(template_band(intent.stance, by_kind)) or by_kind["neu"]
+        band = template_band(intent.stance, by_kind)
+        # High intensity prefers the strong band when the locale has one (#45).
+        if intent.intensity >= 0.75 and band == "neg" and "neg_strong" in by_kind:
+            band = "neg_strong"
+        if intent.intensity >= 0.75 and band == "pos" and "pos_strong" in by_kind:
+            band = "pos_strong"
+        options = list(by_kind.get(band) or by_kind["neu"])
+        if skip:
+            options = [line for line in options if skip not in line] or options
         text = rng.choice(options).format(
             topic=self._topic(intent), entity=self._entity_for(intent), target=intent.target_text[:30]
         )
         return self._vary(text, rng, intent)
 
     def _shared_prompt(self, intent: ContentIntent) -> str:
-        # Three levels, like the shared cache bucket: agents at 0.1 and 0.35
-        # share one generation, so its wording must fit both.
-        band = {"neg": "反对或担忧", "neu": "中立", "pos": "支持"}[stance_band(intent.stance)]
+        lang = getattr(self, "lang", "zh")
+        band = stance_words(intent.stance, lang)
         target = f"\n回应的贴文：{intent.target_text[:120]}" if intent.target_text else ""
+        if lang == "en":
+            reply = f"\nPost you are replying to: {intent.target_text[:120]}" if intent.target_text else ""
+            return (
+                f"Write one social post (under 40 words) in English, kind \"{intent.kind}\", "
+                f"stance {band}, topic: {self._topic(intent)}, about {self._entity_for(intent)}.{reply}\n"
+                "Output only the post."
+            )
         return (
             f"用一句社群贴文（40字以内）表达「{intent.kind}」类的发言，立场{band}，"
             f"主题：{self._topic(intent)}，相关对象：{self._entity_for(intent)}。{target}\n"
@@ -222,7 +300,17 @@ class TieredContentProvider:
         )
 
     def _full_prompt(self, intent: ContentIntent) -> str:
-        band = stance_words(intent.stance)
+        lang = getattr(self, "lang", "zh")
+        band = stance_words(intent.stance, lang)
+        if lang == "en":
+            reply = f"\nPost you are replying to: {intent.target_text[:160]}" if intent.target_text else ""
+            return (
+                f"You are {intent.agent_name}. Persona: {intent.persona[:300]}\n"
+                f"Write one social post in English (under 60 words), kind \"{intent.kind}\", "
+                f"stance {band}, intensity {intent.intensity:.1f} (0-1), "
+                f"topic: {self._topic(intent)}.{reply}\n"
+                "Keep the real names from the event. Output only the post."
+            )
         target = f"\n你要回应的贴文：{intent.target_text[:160]}" if intent.target_text else ""
         return (
             f"你是{intent.agent_name}。人设：{intent.persona[:300]}\n"
@@ -230,6 +318,26 @@ class TieredContentProvider:
             f"情绪强度{intent.intensity:.1f}（0-1），主题：{self._topic(intent)}。{target}\n"
             "保留事件里的具体人名、机构或数字。只输出贴文本身。"
         )
+
+    def _note_stance(self, intent: ContentIntent, text: str) -> str:
+        """Zero-decode check. One repair when the text is more than one level off (#45)."""
+
+        if self.score_fn is None:
+            return text
+        try:
+            actual = float(self.score_fn(text))
+        except Exception as error:  # noqa: BLE001 - a failed check keeps the text
+            logger.warning("stance check failed: %s", error)
+            return text
+        intended = level_index(intent.stance)
+        got = level_index(actual)
+        key = f"{LEVELS[intended]}->{LEVELS[got]}"
+        with self._lock:
+            if self._round is not None:
+                self._round.stance_check[key] = self._round.stance_check.get(key, 0) + 1
+        if abs(intended - got) <= 1:
+            return text
+        return self.template_text(intent, skip=text)
 
     # ------------------------------------------------------------ metrics
 
@@ -269,7 +377,7 @@ class TieredContentProvider:
         return "template"
 
     def generate(self, intent: ContentIntent) -> str:
-        band = stance_band(intent.stance)
+        band = stance_level(intent.stance)
         bucket = (intent.round_num, intent.kind, band, intent.target_ref)
         waited: threading.Event | None = None
         while True:
@@ -347,6 +455,10 @@ class TieredContentProvider:
                 stats.decode_tokens[generated_tier] += spent
             stats.tiers[tier] += 1
             stats.texts.append(text)
+        text = self._note_stance(intent, text)
+        with self._lock:
+            if self._round is not None and self._round.texts:
+                self._round.texts[-1] = text
         return text
 
 
@@ -395,6 +507,9 @@ def build_tiered_provider(
     """
 
     mode = os.environ.get("CONTENT_MODE", "tiered").strip().lower()
+    lang = os.environ.get("CONTENT_LANG", "").strip().lower()
+    if lang not in ("zh", "en"):
+        lang = detect_content_lang(str(config.get("simulation_requirement") or ""))
     followers = {}
     for agent in config.get("agent_configs", []):
         agent_id = agent.get("agent_id")
@@ -407,7 +522,7 @@ def build_tiered_provider(
     if mode == "tiered" and llm_fn is None:
         llm_fn = openai_llm_fn()
     return TieredContentProvider(
-        templates=load_templates(os.environ.get("CONTENT_LANG", "zh")),
+        templates=load_templates(lang),
         llm_fn=llm_fn if mode == "tiered" else None,
         # Per platform and round, for every CONTENT_MODE=tiered run. With
         # agents active as often as on the LLM path (#34), 600 let content
@@ -419,4 +534,5 @@ def build_tiered_provider(
         entities=entities,
         metrics_path=os.path.join(simulation_dir, f"content_metrics_{platform}.jsonl"),
         platform=platform,
+        lang=lang,
     )

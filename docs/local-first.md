@@ -79,7 +79,15 @@ LLM_MODEL_NAME=SubSir/Qwen3.5-4B-AWQ
 | VRAM（llama-server 8K/slot） | 7.2 GB | 7.2 GB |
 | 有動作回合平均延遲 | 11.0 s | 12.9 s |
 
-### 忠實度（閘門 G4，B = 本機路徑、A = LLM 路徑）
+### 忠實度（閘門 G4 v2，B = 本機路徑、A = LLM 路徑）
+
+現行閘門（#44）用 seed 層級 bootstrap（預設 1,000 次，RNG seed 0）的 95% 信賴區間，不再用固定的 0.5 與「2 × 平均雜訊」：
+
+- 動作 JS、立場分布 JS：B vs A 的 bootstrap 分布對 A 組間分布做單尾檢定，p < 0.05 判失敗。
+- 各角色立場：共同角色少於 12 為「無法判讀」（不算失敗）；否則 B vs A 相關的信賴區間下界要 ≥ A 組間相關的中位數 − 0.15，且共同角色 ≥ A 的 80%。
+- 情境庫彙總：≥ 80% 的情境通過才建議切換，≥ 50% 為有條件切換。單一情境的「通過」含「無法判讀」。
+
+下表是改成 v2 之前、用固定門檻記下的 golden 實測（門檻欄是當時的規則）。
 
 | 條件 | 結果 | 門檻 |
 | --- | --- | --- |
@@ -112,6 +120,21 @@ action priors 只在 golden 上擬合，這裡沒有針對新情境做任何調�
 
 動作行為與成本的結果在新情境上成立。離岸風場只有 9 個角色、多數立場中立，各角色立場相關在同一份程式碼的兩次評估間從 0.527 擺到 0.144（A 自己也只有 0.51），這個指標在小情境上無法判讀；兩個情境一致未通過的是貼文立場分布。
 
+### Phase 2 起點（G4 v2，6 個情境，每組 5 個 seed、24 回合）
+
+2026-09-27，RTX 5080、llama-server `-c 65536 -np 8`（8K/slot，沒有 `--kv-unified`）。總耗時 15825 秒（4.4 小時）。六個情境的 `runs_with_llm_errors` 都是空的。通過 0/6，建議 `keep_llm`。
+
+| 情境 | 結果 | decode B／A | 動作 JS（p） | 各角色立場（下界，門檻，共同角色） | 立場分布 JS（p） | VRAM |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| golden_scenario | 未通過 | 0.061 ✅ | 0.035（0.042）❌ | 0.815（0.601 < 0.736，14）❌ | 0.042（0.000）❌ | 9227 ✅ |
+| qingpu_clinic | 未通過 | 0.074 ✅ | 0.059（0.000）❌ | 0.224（−0.019 < 0.623，26）❌ | 0.033（0.000）❌ | 9295 ✅ |
+| gangwan_curriculum | 未通過 | 0.104 ❌ | 0.061（0.000）❌ | 0.577（0.355 < 0.435，17）❌ | 0.012（0.447）✅ | 8581 ✅ |
+| chengchuan_power | 未通過 | 0.078 ✅ | 0.054（0.000）❌ | 0.443（0.356 < 0.724，30）❌ | 0.086（0.000）❌ | 8761 ✅ |
+| northbridge_measles | 未通過 | 0.043 ✅ | 0.222（0.000）❌ | 0.039（−0.434 < 0.352，16）❌ | 0.131（0.000）❌ | 7938 ✅ |
+| fengqiao_recall | 未通過 | 0.062 ✅ | 0.091（0.001）❌ | 0.516（0.159 < 0.472，17）❌ | 0.051（0.000）❌ | 7938 ✅ |
+
+成本閘門大多通過（港灣課程的 decode B／A 是 0.104，剛過 0.10）。動作 JS 與各角色立場在六個情境都未過 v2：golden 的立場點估計仍是 0.815，但 95% 信賴區間下界 0.601 低於 A 組間中位數 − 0.15（0.736）。沒有情境是「無法判讀」（共同角色都 ≥ 12）。
+
 ## 已知限制
 
 - 立場分布閘門未通過：各角色的立場已對齊（#41：發文立場錨定角色立場、題目帶入事件、五級模板），但強烈反對的貼文仍偏少、強烈支持偏多；結構化準備的立場標籤整體仍偏正面（平均 0.38 對 LLM 準備的 0.22）。
@@ -126,11 +149,15 @@ cd backend
 # 準備（LLM 與模板各一次；--fixture 可換情境）
 uv run python scripts/golden_pipeline.py prepare --work <A> --prep-mode llm
 uv run python scripts/golden_pipeline.py prepare --work <B> --prep-mode template
-# A/B（兩組各 5 個 seed）
+# 單一情境 A/B（兩組各 5 個 seed）
 uv run python scripts/ab_eval.py --work-a <A> --work-b <B> --out <out> --seeds 1 2 3 4 5
+# 情境庫整套（tests/fixtures/scenarios/suite.json；可續跑）
+uv run python scripts/ab_suite.py --out <suite-out>
+# 開發迭代：每組 3 個 seed、12 回合
+uv run python scripts/ab_suite.py --out <suite-out> --quick
 # action priors 重新擬合（calibration seeds，勿用評估 seeds）
 uv run python scripts/fit_action_priors.py --a-runs <A runs> --b-runs <B runs> \
   --out app/simulation_policy/action_priors.json
 ```
 
-相關 issue：#1（epic）、#2–#13、#19、#26–#28、#34–#36。
+相關 issue：#1（epic）、#2–#13、#19、#26–#28、#34–#36、#44。

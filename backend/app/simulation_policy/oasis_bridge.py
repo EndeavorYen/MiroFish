@@ -16,7 +16,7 @@ from typing import Any
 
 from .emotion import DEFAULT_ALPHA, AgentStateStore
 from .policy import DecisionLog, Observation, SystemOnePolicy
-from .priors import load_action_priors, load_extra_action_rates, with_priors
+from .priors import load_action_priors, load_activation_counts, load_extra_action_rates, with_priors
 from .taxonomy import load_taxonomy
 
 DECISION_BACKENDS = ("llm", "system_one")
@@ -80,6 +80,7 @@ def build_policy(
         state_store=_shared(AgentStateStore, os.path.join(simulation_dir, "agent_state.db")),
         decision_log=_shared(DecisionLog, os.path.join(simulation_dir, "decisions.jsonl")),
         extra_action_rate=load_extra_action_rates().get(platform, 0.0),
+        activation_counts=load_activation_counts().get(platform),
         stance_prior=stance_priors(config),
         stance_prior_weight=weight,
     )

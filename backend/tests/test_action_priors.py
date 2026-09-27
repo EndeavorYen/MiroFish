@@ -122,3 +122,30 @@ def test_priors_file_validation(tmp_path):
     path.write_text(json.dumps({"extra_action_rate": {"twitter": 1.2}}), encoding="utf-8")
     with pytest.raises(ValueError):
         load_extra_action_rates(str(path))
+
+
+def test_activation_counts_match_llm_means_and_draw():
+    import random
+
+    from app.simulation_policy.priors import load_activation_counts, sample_activation_count
+
+    counts = load_activation_counts()
+    twitter = counts["twitter"]
+    reddit = counts["reddit"]
+    assert sum(i * w for i, w in enumerate(twitter, start=1)) == pytest.approx(1.25, abs=0.02)
+    assert sum(i * w for i, w in enumerate(reddit, start=1)) == pytest.approx(2.06, abs=0.02)
+    rng = random.Random(0)
+    assert sample_activation_count([1, 0, 0, 0, 0], rng) == 1
+    drawn = [sample_activation_count(twitter, rng) for _ in range(400)]
+    assert min(drawn) >= 1 and max(drawn) <= 5
+
+
+def test_supportive_stance_raises_like_weight():
+    from app.system_one.tree import stance_weights
+
+    base = {"like_post": 1.0, "create_comment": 1.0, "none": 1.0}
+    support = stance_weights(base, 0.9)
+    oppose = stance_weights(base, 0.1)
+    assert support["like_post"] > support["create_comment"]
+    assert oppose["create_comment"] > oppose["like_post"]
+    assert stance_weights(base, 0.5) == base

@@ -381,6 +381,7 @@ class TieredContentProvider:
         bucket = (intent.round_num, intent.kind, band, intent.target_ref)
         waited: threading.Event | None = None
         cached_text: str | None = None
+        cached_slot: int | None = None
         owner: threading.Event | None = None
         while True:
             with self._lock:
@@ -392,14 +393,11 @@ class TieredContentProvider:
                 else:
                     stats = self._round
                     if tier == "shared" and bucket in self._shared_cache:
-                        cached_text = self._vary(
-                            self._shared_cache[bucket],
-                            _rng("shared", intent.persona_ref, *bucket),
-                            intent,
-                        )
+                        cached_text = self._shared_cache[bucket]
                         stats.cache_hits += 1
                         stats.tiers["shared"] += 1
-                        stats.texts.append(cached_text)
+                        cached_slot = len(stats.texts)
+                        stats.texts.append("")
                         break
                     if waiter is not None:
                         tier = "template"  # the owner stalled past the wait
@@ -417,16 +415,17 @@ class TieredContentProvider:
             waited = waiter
 
         if cached_text is not None:
-            text = self._note_stance(intent, cached_text)
+            varied = self._vary(cached_text, _rng("shared", intent.persona_ref, *bucket), intent)
+            text = self._note_stance(intent, varied)
             with self._lock:
-                if self._round is not None and self._round.texts:
-                    self._round.texts[-1] = text
-                self._shared_cache[bucket] = text
+                if self._round is not None and cached_slot is not None and cached_slot < len(self._round.texts):
+                    self._round.texts[cached_slot] = text
             return text
 
         spent = 0
         raw = ""
         text = ""
+        canonical = ""
         generated_tier = tier
         published = False
         try:
@@ -440,28 +439,31 @@ class TieredContentProvider:
                         logger.warning("content generation failed, using template: %s", error)
                         raw, spent = "", 0
                     if raw:
-                        text = (
-                            self._vary(raw, _rng("shared", intent.persona_ref, *bucket), intent)
-                            if tier == "shared"
-                            else raw
-                        )
+                        text = raw
+                canonical = ""
                 if not text:
                     generated_tier = "template"
                     tier = "template"
                     text = self.template_text(intent)
                 else:
                     generated_tier = tier
+                    canonical = self._note_stance(intent, text)
+                    text = (
+                        self._vary(canonical, _rng("shared", intent.persona_ref, *bucket), intent)
+                        if tier == "shared"
+                        else canonical
+                    )
             finally:
                 with self._lock:
                     self._remaining += reserve - spent
 
-            text = self._note_stance(intent, text)
+            if not raw:
+                text = self._note_stance(intent, text)
             with self._lock:
                 if owner is not None:
-                    # Cache the repaired model text. An empty generation stays
-                    # failed so later agents use templates instead of the miss.
-                    if raw and text:
-                        self._shared_cache[bucket] = text
+                    # The bucket keeps the repaired base, never a per-agent variant.
+                    if raw and canonical:
+                        self._shared_cache[bucket] = canonical
                     else:
                         self._failed_buckets.add(bucket)
                     if self._inflight.get(bucket) is owner:

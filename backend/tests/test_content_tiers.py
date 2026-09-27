@@ -367,6 +367,24 @@ def test_stance_check_replaces_a_text_more_than_one_level_off(tmp_path):
     recorded = sum(provider._round.stance_check.values())
     assert recorded == 2
     assert any(key.startswith("neg_strong->") for key in provider._round.stance_check)
+    bucket = (0, "criticism", "neg_strong", "101")
+    assert raw not in provider._shared_cache[bucket]
+
+
+def test_shared_cache_keeps_the_unvaried_base():
+    raw = "UNIQUE_BAD_STANCE_SENTENCE"
+    provider = _provider(
+        llm_fn=lambda prompt, max_tokens: (raw, 5),
+        score_fn=lambda text: 0.1,
+        budget_per_round=1000,
+    )
+    posts = [provider.generate(_intent(agent=i, stance=0.1)) for i in range(1, 4)]
+    bucket = (0, "criticism", "neg_strong", "101")
+    assert provider._shared_cache[bucket] == raw
+    prefixes = ("说真的，", "个人觉得，", "看了一下，", "刚看到消息，")
+    for post in posts:
+        assert post.count(raw) == 1
+        assert sum(prefix in post for prefix in prefixes) <= 1
 
 
 def test_shared_prompt_wording_matches_its_bucket():

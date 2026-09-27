@@ -98,3 +98,32 @@ def test_fit_reports_the_mean_activity_offset():
     b = {"x": {"stance_raw": 0.5, "stakeholder_role": "harmed", "activity_level": 0.3},
          "y": {"stance_raw": 0.5, "stakeholder_role": "harmed", "activity_level": 0.3}}
     assert fit([(a, b)], seeds=[11])["activity_offset"] == pytest.approx(0.2)
+
+
+def test_offset_from_acted_rounds_scales_the_structured_mean():
+    from scripts.fit_prep_calibration import fit
+
+    a = {"x": {"sentiment_bias": 0.0, "activity_level": 0.9}}
+    b = {"x": {"stance_raw": 0.5, "stakeholder_role": "harmed", "activity_level": 0.3}}
+    result = fit([(a, b)], seeds=[11], acted_ratio=0.8)
+    # 25% more activations from a level that sets them proportionally.
+    assert result["activity_offset"] == pytest.approx(0.075)
+    assert result["activity_gap"] == pytest.approx(0.6)
+
+
+def test_acted_rounds_counts_agent_rounds_with_an_action(tmp_path):
+    import json as _json
+
+    from scripts.fit_prep_calibration import acted_rounds
+
+    path = tmp_path / "sim" / "reddit"
+    path.mkdir(parents=True)
+    rows = [
+        {"round": 0, "agent_id": 1, "action_type": "CREATE_POST"},
+        {"round": 1, "agent_id": 1, "action_type": "LIKE_POST"},
+        {"round": 1, "agent_id": 1, "action_type": "CREATE_COMMENT"},
+        {"round": 1, "agent_id": 2, "action_type": "DO_NOTHING"},
+        {"round": 2, "agent_id": 2, "action_type": "LIKE_POST"},
+    ]
+    (path / "actions.jsonl").write_text("\n".join(_json.dumps(r) for r in rows), encoding="utf-8")
+    assert acted_rounds(tmp_path) == 2

@@ -380,6 +380,8 @@ class TieredContentProvider:
         band = stance_level(intent.stance)
         bucket = (intent.round_num, intent.kind, band, intent.target_ref)
         waited: threading.Event | None = None
+        cached_text: str | None = None
+        owner: threading.Event | None = None
         while True:
             with self._lock:
                 self._rollover(intent.round_num)
@@ -390,15 +392,15 @@ class TieredContentProvider:
                 else:
                     stats = self._round
                     if tier == "shared" and bucket in self._shared_cache:
-                        text = self._vary(
+                        cached_text = self._vary(
                             self._shared_cache[bucket],
                             _rng("shared", intent.persona_ref, *bucket),
                             intent,
                         )
                         stats.cache_hits += 1
                         stats.tiers["shared"] += 1
-                        stats.texts.append(text)
-                        return text
+                        stats.texts.append(cached_text)
+                        break
                     if waiter is not None:
                         tier = "template"  # the owner stalled past the wait
                     # Reserve the budget and claim the bucket under the lock.
@@ -409,57 +411,93 @@ class TieredContentProvider:
                         owner = threading.Event()
                         self._inflight[bucket] = owner
                     break
+            if cached_text is not None:
+                break
             waiter.wait(timeout=60)
             waited = waiter
+
+        if cached_text is not None:
+            text = self._note_stance(intent, cached_text)
+            with self._lock:
+                if self._round is not None and self._round.texts:
+                    self._round.texts[-1] = text
+                self._shared_cache[bucket] = text
+            return text
 
         spent = 0
         raw = ""
         text = ""
+        generated_tier = tier
+        published = False
         try:
-            if tier != "template":
-                prompt = self._full_prompt(intent) if tier == "full" else self._shared_prompt(intent)
-                try:
-                    raw, spent = self.llm_fn(prompt, reserve)
-                    raw = clean_generation(raw)
-                except Exception as error:  # noqa: BLE001 - degrade, never fail a round
-                    logger.warning("content generation failed, using template: %s", error)
-                    raw, spent = "", 0
-                if raw:
-                    text = (
-                        self._vary(raw, _rng("shared", intent.persona_ref, *bucket), intent)
-                        if tier == "shared"
-                        else raw
-                    )
-            if not text:
-                generated_tier = tier
-                tier = "template"
-                text = self.template_text(intent)
-            else:
-                generated_tier = tier
-        finally:
+            try:
+                if tier != "template":
+                    prompt = self._full_prompt(intent) if tier == "full" else self._shared_prompt(intent)
+                    try:
+                        raw, spent = self.llm_fn(prompt, reserve)
+                        raw = clean_generation(raw)
+                    except Exception as error:  # noqa: BLE001 - degrade, never fail a round
+                        logger.warning("content generation failed, using template: %s", error)
+                        raw, spent = "", 0
+                    if raw:
+                        text = (
+                            self._vary(raw, _rng("shared", intent.persona_ref, *bucket), intent)
+                            if tier == "shared"
+                            else raw
+                        )
+                if not text:
+                    generated_tier = "template"
+                    tier = "template"
+                    text = self.template_text(intent)
+                else:
+                    generated_tier = tier
+            finally:
+                with self._lock:
+                    self._remaining += reserve - spent
+
+            text = self._note_stance(intent, text)
             with self._lock:
-                self._remaining += reserve - spent
                 if owner is not None:
-                    if raw and bucket not in self._shared_cache:
-                        self._shared_cache[bucket] = raw
-                    elif not raw:
+                    # Cache the repaired model text. An empty generation stays
+                    # failed so later agents use templates instead of the miss.
+                    if raw and text:
+                        self._shared_cache[bucket] = text
+                    else:
                         self._failed_buckets.add(bucket)
                     if self._inflight.get(bucket) is owner:
                         del self._inflight[bucket]
-                    owner.set()  # always wake waiters, even if replaced
+                    owner.set()
+                self._rollover(intent.round_num)
+                stats = self._round
+                if generated_tier in ("shared", "full"):
+                    stats.decode_tokens[generated_tier] += spent
+                stats.tiers[tier] += 1
+                stats.texts.append(text)
+            published = True
+            return text
+        finally:
+            if owner is not None and not published:
+                with self._lock:
+                    self._failed_buckets.add(bucket)
+                    if self._inflight.get(bucket) is owner:
+                        del self._inflight[bucket]
+                    owner.set()
 
-        with self._lock:
-            self._rollover(intent.round_num)
-            stats = self._round
-            if generated_tier in ("shared", "full"):
-                stats.decode_tokens[generated_tier] += spent
-            stats.tiers[tier] += 1
-            stats.texts.append(text)
-        text = self._note_stance(intent, text)
-        with self._lock:
-            if self._round is not None and self._round.texts:
-                self._round.texts[-1] = text
-        return text
+
+def system_one_stance_score(text: str) -> float:
+    """Zero-decode stance in 0..1, the same five labels the prep path uses (#45)."""
+
+    from ..services.prep_structured import STANCE5, _level
+    from ..system_one.client import get_system_one_client
+    from ..system_one.models import ScoreQuestion, SystemOneRequest
+
+    answer = get_system_one_client().ask(
+        SystemOneRequest(
+            state=f"貼文：{text[:300]}",
+            questions={"s": ScoreQuestion(instructions="這則貼文的立場是什麼？", criteria=STANCE5)},
+        )
+    ).answers["s"]
+    return _level(answer.score, len(STANCE5))
 
 
 def openai_llm_fn(stage_note: str = "content") -> LlmFn:
@@ -499,6 +537,7 @@ def build_tiered_provider(
     config: dict[str, Any],
     *,
     llm_fn: LlmFn | None = None,
+    score_fn: Callable[[str], float] | None = None,
 ) -> TieredContentProvider:
     """Provider from env settings and the simulation config.
 
@@ -521,6 +560,8 @@ def build_tiered_provider(
     entities = [a.get("entity_name") for a in config.get("agent_configs", []) if a.get("entity_name")]
     if mode == "tiered" and llm_fn is None:
         llm_fn = openai_llm_fn()
+    if score_fn is None and os.environ.get("CONTENT_STANCE_CHECK", "1") != "0":
+        score_fn = system_one_stance_score
     return TieredContentProvider(
         templates=load_templates(lang),
         llm_fn=llm_fn if mode == "tiered" else None,
@@ -535,4 +576,5 @@ def build_tiered_provider(
         metrics_path=os.path.join(simulation_dir, f"content_metrics_{platform}.jsonl"),
         platform=platform,
         lang=lang,
+        score_fn=score_fn,
     )

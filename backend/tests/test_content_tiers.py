@@ -19,7 +19,7 @@ from app.simulation_policy.tiers import (
 )
 
 
-def _intent(agent=1, round_num=0, kind="criticism", stance=0.1, target="101"):
+def _intent(agent=1, round_num=0, kind="criticism", stance=0.1, target="101", topic="空中計程車票價"):
     return ContentIntent(
         kind=kind,
         stance=stance,
@@ -31,7 +31,7 @@ def _intent(agent=1, round_num=0, kind="criticism", stance=0.1, target="101"):
         agent_name=f"agent{agent}",
         persona="市民",
         target_text="凌雲飛行智能公司票價太貴",
-        topic="空中計程車票價",
+        topic=topic,
     )
 
 
@@ -322,6 +322,39 @@ def test_locales_have_strong_bands_for_every_kind():
     assert not any("I'll back" in line or "did OK" in line for line in en["support"]["neg"])
 
 
+def test_english_requirement_selects_english_templates(tmp_path):
+    from app.simulation_policy.tiers import build_tiered_provider, detect_content_lang
+
+    requirement = (
+        "Simulate discussion of a one-semester measles clinic inside Northbridge public high schools. "
+        "Most roles have not endorsed or rejected the clinic."
+    )
+    assert detect_content_lang(requirement) == "en"
+    assert detect_content_lang("模擬青浦市把河岸社區診所擴成全日服務。") == "zh"
+    provider = build_tiered_provider(
+        "twitter", str(tmp_path), {"simulation_requirement": requirement, "agent_configs": []},
+        llm_fn=lambda prompt, max_tokens: ("x", 1),
+    )
+    assert provider.lang == "en"
+    assert provider._topic(_intent(topic="said")) != "said"
+    text = provider.template_text(_intent(topic="said"))
+    assert "力挺" not in text
+
+
+def test_function_word_is_not_a_topic():
+    provider = _provider()
+    text = provider.template_text(_intent(topic="said"))
+    assert "said" not in text
+
+
+def test_stance_check_replaces_a_text_more_than_one_level_off():
+    provider = _provider(score_fn=lambda text: 0.95)
+    text = provider.generate(_intent(stance=0.1))
+    assert provider._round.stance_check
+    assert any(key.startswith("neg_strong->") for key in provider._round.stance_check)
+    assert text
+
+
 def test_shared_prompt_wording_matches_its_bucket():
     from app.simulation_policy.content import ContentIntent
     from app.simulation_policy.tiers import TieredContentProvider
@@ -335,5 +368,7 @@ def test_shared_prompt_wording_matches_its_bucket():
         return provider._shared_prompt(ContentIntent(kind="opinion", stance=stance, intensity=0.5, target_ref=None,
                                                      persona_ref=1))
 
-    assert prompt(0.1) == prompt(0.35)  # same bucket, same wording
-    assert "强烈" not in prompt(0.1)
+    assert prompt(0.05) == prompt(0.15)  # same strong-oppose bucket
+    assert prompt(0.1) != prompt(0.35)
+    assert "强烈反对" in prompt(0.1)
+    assert "反对" in prompt(0.35)

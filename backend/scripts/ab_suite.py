@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import statistics
 import subprocess
 import sys
 import time
@@ -175,9 +176,62 @@ def render_suite(rows: list[dict[str, Any]], recommendation: str, elapsed_s: flo
     return "\n".join(lines)
 
 
+def paired_difference_interval(
+    baseline: list[float],
+    new: list[float],
+    *,
+    higher_is_better: bool = True,
+    reps: int = 1000,
+    rng_seed: int = 0,
+) -> tuple[float, float]:
+    """95% interval of the mean paired difference, new minus baseline."""
+
+    import random
+
+    diffs = [float(after) - float(before) for before, after in zip(baseline, new)]
+    if not higher_is_better:
+        diffs = [-diff for diff in diffs]
+    rng = random.Random(rng_seed)
+    means = [
+        statistics.mean(rng.choice(diffs) for _ in diffs)
+        for _ in range(reps)
+    ]
+    return ab_eval.bootstrap_ci(means)
+
+
+def screen_decision(lo: float, hi: float) -> str:
+    """One of improve, worsen, inconclusive. Zero inside the interval is inconclusive."""
+
+    if lo > 0:
+        return "improve"
+    if hi < 0:
+        return "worsen"
+    return "inconclusive"
+
+
+def screen_rows(path: Path) -> str:
+    """Decisions for saved per-seed metric rows. One line per row: ``name decision``."""
+
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    lines = []
+    for row in payload["rows"]:
+        lo, hi = paired_difference_interval(
+            row["baseline"],
+            row["new"],
+            higher_is_better=bool(row.get("higher_is_better", True)),
+        )
+        lines.append(f"{row['name']} {screen_decision(lo, hi)}")
+    return "\n".join(lines) + "\n"
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--out", required=True)
+    parser.add_argument("--out", default=None)
+    parser.add_argument(
+        "--screen-rows",
+        default=None,
+        help="JSON of saved baseline/new metric rows; print improve, worsen, or inconclusive",
+    )
     parser.add_argument("--scenarios", nargs="*", default=None)
     parser.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3, 4, 5])
     parser.add_argument("--rounds", type=int, default=24)
@@ -185,6 +239,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--bootstrap-reps", type=int, default=ab_eval.BOOTSTRAP_REPS)
     parser.add_argument("--delta", type=float, default=ab_eval.PERSONA_DELTA)
     args = parser.parse_args(argv)
+    if not args.screen_rows and not args.out:
+        parser.error("--out is required")
     if args.quick:
         args.seeds = [1, 2, 3]
         args.rounds = 12
@@ -207,6 +263,9 @@ def _row_from_report(name: str, report: dict[str, Any], elapsed_s: float) -> dic
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    if args.screen_rows:
+        print(screen_rows(Path(args.screen_rows)), end="")
+        return 0
     out = Path(args.out).resolve()
     out.mkdir(parents=True, exist_ok=True)
     entries = load_manifest()

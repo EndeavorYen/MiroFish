@@ -26,6 +26,36 @@ class TreeStep:
     readout: dict[str, float] | None = None  # the raw readout when priors applied
 
 
+_LIKE = {"like_post", "LIKE_POST"}
+_COMMENT = {"create_comment", "CREATE_COMMENT"}
+
+
+def stance_weights(priors: dict[str, float] | None, stance: float | None) -> dict[str, float] | None:
+    """Support leans toward likes; opposition leans toward comments (#51).
+
+    The packaged priors are one vector for every scenario. The agent's own
+    stance is known before the tree runs, so it can move the mix.
+    """
+
+    if not priors or stance is None:
+        return priors
+    if stance >= 0.6:
+        like, comment = 1.8, 0.55
+    elif stance <= 0.4:
+        like, comment = 0.7, 1.6
+    else:
+        return priors
+    tilted = {}
+    for key, weight in priors.items():
+        if key in _LIKE:
+            tilted[key] = float(weight) * like
+        elif key in _COMMENT:
+            tilted[key] = float(weight) * comment
+        else:
+            tilted[key] = float(weight)
+    return tilted
+
+
 def apply_priors(probabilities: dict[str, float], priors: dict[str, float] | None) -> dict[str, float]:
     """``p_i * w_i`` renormalised; unchanged without priors or if all weights vanish."""
 
@@ -60,6 +90,7 @@ def ask_tree(
     *,
     mode: Literal["sample", "argmax"] = "sample",
     max_depth: int = 8,
+    stance: float | None = None,
 ) -> list[TreeStep]:
     path: list[TreeStep] = []
     node: dict[str, Any] | None = tree
@@ -69,7 +100,7 @@ def ask_tree(
         answer = client.ask(
             SystemOneRequest(state=current_state, questions={node["name"]: question})
         ).answers[node["name"]]
-        priors = node.get("priors")
+        priors = stance_weights(node.get("priors"), stance)
         probabilities = apply_priors(answer.probabilities, priors)
         if mode == "argmax":
             chosen = max(probabilities, key=probabilities.get) if priors else answer.choice

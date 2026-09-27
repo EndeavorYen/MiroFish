@@ -78,6 +78,57 @@ def test_scenario_status_counts_undecidable_as_pass():
     assert suite.scenario_status(failed) == "fail"
 
 
+def test_screen_rows_prints_three_decisions(tmp_path, capsys):
+    path = tmp_path / "rows.json"
+    path.write_text(json.dumps({
+        "rows": [
+            {"name": "target", "higher_is_better": True, "baseline": [0.1, 0.1, 0.1], "new": [0.4, 0.4, 0.4]},
+            {"name": "worse", "higher_is_better": True, "baseline": [0.4, 0.4, 0.4], "new": [0.1, 0.1, 0.1]},
+            {"name": "flat", "higher_is_better": True, "baseline": [0.2, 0.2, 0.2], "new": [0.2, 0.2, 0.2]},
+        ]
+    }), encoding="utf-8")
+    assert suite.main(["--screen-rows", str(path)]) == 0
+    first = capsys.readouterr().out
+    assert suite.main(["--screen-rows", str(path)]) == 0
+    second = capsys.readouterr().out
+    assert first == second
+    assert first.splitlines() == ["target improve", "worse worsen", "flat inconclusive"]
+
+
+def test_calibration_refuses_eval_seeds_and_stays_in_unit_interval(tmp_path, monkeypatch):
+    from app.services.prep_structured import structured_agent_config
+    from app.services.stance_calibration import apply_calibration, fit_isotonic
+    from app.system_one.models import ChoiceAnswer, ScoreAnswer, SystemOneResponse
+
+    with pytest.raises(ValueError):
+        fit_isotonic([(0.2, 0.1), (0.8, 0.9)], [1, 2, 11])
+    knots = fit_isotonic([(0.0, 0.2), (0.5, 0.5), (1.0, 0.8)], [11, 12, 13])
+    assert all(0.0 <= raw <= 1.0 and 0.0 <= target <= 1.0 for raw, target in knots)
+    mapped = apply_calibration(0.0, knots)
+    assert 0.0 <= mapped <= 1.0
+    path = tmp_path / "stance_calibration.json"
+    path.write_text(json.dumps({"seeds": [11, 12, 13], "knots": knots}), encoding="utf-8")
+    monkeypatch.setenv("STANCE_CALIBRATION", str(path))
+
+    class Recorder:
+        def ask(self, request):
+            answers = {}
+            for name, question in request.questions.items():
+                if hasattr(question, "criteria") and isinstance(question.criteria, dict):
+                    key = next(iter(question.criteria))
+                    answers[name] = ChoiceAnswer(choice=key, probabilities={key: 1.0}, confidence=1.0)
+                else:
+                    answers[name] = ScoreAnswer(score=0.0, probabilities={}, confidence=1.0)
+            return SystemOneResponse(answers=answers)
+
+    cfg = structured_agent_config(
+        Recorder(), "工會", "LaborUnion", "司機工會", event="空中計程車試點", context="- 工會要求轉崗基金"
+    )
+    stance = (cfg["sentiment_bias"] + 1) / 2
+    assert stance == pytest.approx(mapped)
+    assert 0.0 <= stance <= 1.0
+
+
 def test_quick_mode_args():
     args = suite.parse_args(["--out", "x", "--quick"])
     assert args.seeds == [1, 2, 3]

@@ -445,6 +445,15 @@ def test_decide_round_takes_extra_actions_and_reuses_emotion(tmp_path):
         SystemOnePolicy(FakeSystemOne(), load_taxonomy("twitter"), extra_action_rate=1.0)
 
 
+def test_activation_count_of_one_stops_the_round(tmp_path):
+    policy = SystemOnePolicy(
+        Pick("engage", "like_post"), load_taxonomy("twitter"), seed=3,
+        extra_action_rate=0.99, activation_counts=[1, 0, 0, 0, 0],
+        decision_log=DecisionLog(str(tmp_path / "d.jsonl")),
+    )
+    assert len(policy.decide_round(_obs())) == 1
+
+
 def test_later_actions_in_a_round_skip_used_targets():
     policy = SystemOnePolicy(Pick("engage", "like_post"), load_taxonomy("twitter"), seed=3, extra_action_rate=0.99)
     decisions = policy.decide_round(_obs())  # the feed has two posts

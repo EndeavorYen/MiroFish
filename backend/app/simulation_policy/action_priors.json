@@ -95,5 +95,9 @@
   "extra_action_rate": {
     "twitter": 0.1991,
     "reddit": 0.6372
+  },
+  "activation_counts": {
+    "twitter": [0.80, 0.16, 0.03, 0.01, 0.00],
+    "reddit": [0.40, 0.30, 0.18, 0.08, 0.04]
   }
 }

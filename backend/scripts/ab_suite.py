@@ -29,6 +29,11 @@ import ab_eval  # noqa: E402
 import golden_pipeline as gp  # noqa: E402
 
 MANIFEST = BACKEND_DIR / "tests" / "fixtures" / "scenarios" / "suite.json"
+# Scenarios for fitting (priors, stance calibration, tone banks). They are not
+# in the evaluation suite and run on calibration seeds only.
+CALIBRATION_MANIFEST = BACKEND_DIR / "tests" / "fixtures" / "calibration" / "calibration.json"
+CALIBRATION_SEEDS = [11, 12, 13]
+EVAL_SEEDS = frozenset({1, 2, 3, 4, 5})
 GATE_KEYS = ("decode_ratio", "action_js", "stance_by_persona", "stance_distribution", "vram")
 
 
@@ -232,8 +237,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help="JSON of saved baseline/new metric rows; print improve, worsen, or inconclusive",
     )
+    parser.add_argument("--manifest", default=str(MANIFEST), help="scenario manifest (default: the evaluation suite)")
     parser.add_argument("--scenarios", nargs="*", default=None)
-    parser.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3, 4, 5])
+    parser.add_argument("--seeds", type=int, nargs="+", default=None)
     parser.add_argument("--rounds", type=int, default=24)
     parser.add_argument("--quick", action="store_true")
     parser.add_argument("--bootstrap-reps", type=int, default=ab_eval.BOOTSTRAP_REPS)
@@ -241,10 +247,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     args = parser.parse_args(argv)
     if not args.screen_rows and not args.out:
         parser.error("--out is required")
+    calibration = is_calibration(Path(args.manifest))
+    if args.seeds is None:
+        args.seeds = list(CALIBRATION_SEEDS) if calibration else [1, 2, 3, 4, 5]
     if args.quick:
         args.seeds = [1, 2, 3]
         args.rounds = 12
     return args
+
+
+def is_calibration(manifest: Path) -> bool:
+    return bool(json.loads(Path(manifest).read_text(encoding="utf-8")).get("calibration"))
 
 
 def _row_from_report(name: str, report: dict[str, Any], elapsed_s: float) -> dict[str, Any]:
@@ -268,7 +281,11 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     out = Path(args.out).resolve()
     out.mkdir(parents=True, exist_ok=True)
-    entries = load_manifest()
+    entries = load_manifest(Path(args.manifest))
+    if is_calibration(Path(args.manifest)):
+        overlap = sorted(set(args.seeds) & EVAL_SEEDS)
+        if overlap:
+            raise SystemExit(f"calibration runs must not use evaluation seeds {overlap}")
     if args.scenarios:
         wanted = set(args.scenarios)
         entries = [entry for entry in entries if entry["name"] in wanted]

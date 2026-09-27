@@ -58,3 +58,6 @@ backend/uploads/
 
 # Docker 数据
 data/
+# Playwright
+tests/e2e/artifacts/
+.playwright-mcp/

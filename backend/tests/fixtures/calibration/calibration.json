@@ -1,0 +1,66 @@
+{
+  "calibration": true,
+  "seeds": [
+    11,
+    12,
+    13
+  ],
+  "scenarios": [
+    {
+      "name": "nanling_food",
+      "path": "tests/fixtures/calibration/nanling_food",
+      "domain": "消費爭議",
+      "language": "zh",
+      "structure": "兩極對立",
+      "digest": "07065a12ba696c035f06871382b3a2bf4865a9aef92ff343439e8b66da95d371"
+    },
+    {
+      "name": "beigang_water",
+      "path": "tests/fixtures/calibration/beigang_water",
+      "domain": "公用事業",
+      "language": "zh",
+      "structure": "兩極對立",
+      "digest": "bebf8d898620d7f3fb64f2c1b0264757852c38802d08d11b0b0401537192820b"
+    },
+    {
+      "name": "nanan_nurses",
+      "path": "tests/fixtures/calibration/nanan_nurses",
+      "domain": "醫療",
+      "language": "zh",
+      "structure": "兩極對立",
+      "digest": "53d61677907306319d9d4e7b2830c3d59ea3f8760ed060129394e03a21c34cfa"
+    },
+    {
+      "name": "xiping_schools",
+      "path": "tests/fixtures/calibration/xiping_schools",
+      "domain": "教育",
+      "language": "zh",
+      "structure": "兩極對立",
+      "digest": "df09475ac617c5fda06a50a47846f546935d4aca7bdf9be2ce3b97de7c48b231"
+    },
+    {
+      "name": "dongbin_wind",
+      "path": "tests/fixtures/calibration/dongbin_wind",
+      "domain": "能源",
+      "language": "zh",
+      "structure": "兩極對立",
+      "digest": "326870a3f1c65fb3aa9592fdb4b91d2628f233ad5ed6ba94a673219bfa4c94b5"
+    },
+    {
+      "name": "ashford_tolls",
+      "path": "tests/fixtures/calibration/ashford_tolls",
+      "domain": "交通",
+      "language": "en",
+      "structure": "兩極對立",
+      "digest": "46248a959a78fcfccbd8fc42953315352ae919082e428c832e54fef0eebb2987"
+    },
+    {
+      "name": "lakemont_library",
+      "path": "tests/fixtures/calibration/lakemont_library",
+      "domain": "公共服務",
+      "language": "en",
+      "structure": "一面倒",
+      "digest": "fc0803e53bbc0401682442b4414300c974a560c543c44af4b887bcb4fa5d8b00"
+    }
+  ]
+}

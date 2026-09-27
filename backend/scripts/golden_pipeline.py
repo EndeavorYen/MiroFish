@@ -73,13 +73,14 @@ SCENARIO_FILES = ("news_seed.txt", "simulation_requirement.txt")
 
 
 def scenario_digest(fixture: Path) -> str:
-    """sha256 over the scenario's seed text and requirement."""
+    """sha256 over the scenario's seed text and requirement, with LF line
+    endings, so a Windows (CRLF) checkout gets the same digest."""
 
     import hashlib
 
     digest = hashlib.sha256()
     for name in SCENARIO_FILES:
-        digest.update((fixture / name).read_bytes())
+        digest.update((fixture / name).read_bytes().replace(b"\r\n", b"\n"))
     return digest.hexdigest()
 
 

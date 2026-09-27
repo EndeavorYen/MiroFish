@@ -31,6 +31,17 @@ def test_manifest_library():
     assert big >= 2
 
 
+def test_digest_ignores_checkout_line_endings(tmp_path):
+    import scripts.golden_pipeline as gp
+
+    lf, crlf = tmp_path / "lf", tmp_path / "crlf"
+    for directory, newline in ((lf, b"\n"), (crlf, b"\r\n")):
+        directory.mkdir()
+        for name in gp.SCENARIO_FILES:
+            (directory / name).write_bytes(newline.join([b"line one", b"line two", b""]))
+    assert gp.scenario_digest(lf) == gp.scenario_digest(crlf)
+
+
 def test_manifest_digest_mismatch_exits(tmp_path):
     fx = tmp_path / "fx"
     fx.mkdir()

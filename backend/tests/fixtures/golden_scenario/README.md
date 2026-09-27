@@ -6,6 +6,6 @@
 - 語言：繁體中文
 - 預期角色數：14（`gold_graph.json` 的具名實體）
 - 預期立場結構：兩極對立（技術樂觀與安全、生計擔憂）
-- fixture digest：`caf5920f731e6de333b39bc7b66a668fc676884c65ed8b5be9c8ee43296a56d1`
+- fixture digest：`770e5674dfb14f526c0f32715506e02c6780fecddd45893fc2ded36887cad5bc`
 
 digest 只涵蓋 `news_seed.txt` 與 `simulation_requirement.txt`。這兩份檔案在第一次模擬前已凍結。

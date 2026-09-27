@@ -265,8 +265,10 @@ class TieredContentProvider:
 
     # -------------------------------------------------------------- tiers
 
-    def template_text(self, intent: ContentIntent, *, skip: str = "") -> str:
-        rng = _rng("template", intent.platform, intent.round_num, intent.persona_ref, intent.kind, skip)
+    def template_base(self, intent: ContentIntent, *, skip: str = "") -> str:
+        """One formatted line, with no prefix, suffix, or hashtag."""
+
+        rng = _rng("template-base", intent.platform, intent.round_num, intent.persona_ref, intent.kind, skip)
         by_kind = self.templates["templates"].get(intent.kind) or self.templates["templates"]["other"]
         band = template_band(intent.stance, by_kind)
         # High intensity prefers the strong band when the locale has one (#45).
@@ -277,10 +279,13 @@ class TieredContentProvider:
         options = list(by_kind.get(band) or by_kind["neu"])
         if skip:
             options = [line for line in options if skip not in line] or options
-        text = rng.choice(options).format(
+        return rng.choice(options).format(
             topic=self._topic(intent), entity=self._entity_for(intent), target=intent.target_text[:30]
         )
-        return self._vary(text, rng, intent)
+
+    def template_text(self, intent: ContentIntent, *, skip: str = "") -> str:
+        rng = _rng("template", intent.platform, intent.round_num, intent.persona_ref, intent.kind, skip)
+        return self._vary(self.template_base(intent, skip=skip), rng, intent)
 
     def _shared_prompt(self, intent: ContentIntent) -> str:
         lang = getattr(self, "lang", "zh")
@@ -337,7 +342,7 @@ class TieredContentProvider:
                 self._round.stance_check[key] = self._round.stance_check.get(key, 0) + 1
         if abs(intended - got) <= 1:
             return text
-        return self.template_text(intent, skip=text)
+        return self.template_base(intent, skip=text)
 
     # ------------------------------------------------------------ metrics
 
@@ -417,8 +422,8 @@ class TieredContentProvider:
             waited = waiter
 
         if cached_text is not None:
-            varied = self._vary(cached_text, _rng("shared", intent.persona_ref, *bucket), intent)
-            text = self._note_stance(intent, varied)
+            repaired = self._note_stance(intent, cached_text)
+            text = self._vary(repaired, _rng("shared", intent.persona_ref, *bucket), intent)
             with self._lock:
                 if cached_stats is not None and cached_slot is not None and cached_slot < len(cached_stats.texts):
                     cached_stats.texts[cached_slot] = text
@@ -446,21 +451,19 @@ class TieredContentProvider:
                 if not text:
                     generated_tier = "template"
                     tier = "template"
-                    text = self.template_text(intent)
+                    text = self.template_base(intent)
                 else:
                     generated_tier = tier
-                    canonical = self._note_stance(intent, text)
-                    text = (
-                        self._vary(canonical, _rng("shared", intent.persona_ref, *bucket), intent)
-                        if tier == "shared"
-                        else canonical
-                    )
+                canonical = self._note_stance(intent, text)
+                text = (
+                    self._vary(canonical, _rng("shared", intent.persona_ref, *bucket), intent)
+                    if tier == "shared"
+                    else canonical
+                )
             finally:
                 with self._lock:
                     self._remaining += reserve - spent
 
-            if not raw:
-                text = self._note_stance(intent, text)
             with self._lock:
                 if owner is not None:
                     # The bucket keeps the repaired base, never a per-agent variant.

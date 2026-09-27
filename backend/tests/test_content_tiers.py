@@ -408,3 +408,37 @@ def test_shared_prompt_wording_matches_its_bucket():
     assert prompt(0.1) != prompt(0.35)
     assert "强烈反对" in prompt(0.1)
     assert "反对" in prompt(0.35)
+
+
+def test_one_level_overshoot_picks_a_closer_template():
+    calls = []
+
+    def score(text):
+        calls.append(text)
+        return 0.95 if text.startswith("GEN") else 0.7
+
+    provider = _provider(score_fn=score)
+    intent = _intent(stance=0.7, kind="opinion")
+    fixed = provider._note_stance(intent, "GEN overly enthusiastic")
+    assert not fixed.startswith("GEN")
+    assert len(calls) == 2  # the text, then one candidate that lands on the level
+
+
+def test_no_closer_candidate_keeps_the_text_and_caps_the_readouts():
+    calls = []
+
+    def score(text):
+        calls.append(text)
+        return 0.95
+
+    provider = _provider(score_fn=score)
+    text = provider._note_stance(_intent(stance=0.7, kind="opinion"), "GEN text")
+    assert text == "GEN text"
+    assert len(calls) == 1 + 3
+
+
+def test_same_level_text_is_not_rescored():
+    calls = []
+    provider = _provider(score_fn=lambda text: calls.append(text) or 0.7)
+    assert provider._note_stance(_intent(stance=0.7, kind="opinion"), "GEN ok") == "GEN ok"
+    assert len(calls) == 1

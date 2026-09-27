@@ -105,6 +105,7 @@ def stance_band(stance: float) -> str:
 # Shared cache and the post-generation check use five levels (#45). 0.1 and
 # 0.35 no longer share one generation.
 LEVELS = ("neg_strong", "neg", "neu", "pos", "pos_strong")
+REPAIR_CANDIDATES = 3  # templates scored when a text misses its level (#45)
 _EN_FUNCTION = {
     "a", "an", "the", "for", "said", "and", "or", "of", "to", "in", "on",
     "with", "before", "after", "from", "that", "this", "is", "are", "was",
@@ -394,9 +395,28 @@ class TieredContentProvider:
         with self._lock:
             if self._round is not None:
                 self._round.stance_check[key] = self._round.stance_check.get(key, 0) + 1
-        if abs(intended - got) <= 1:
+        if got == intended:
             return text
-        return self.template_base(intent, skip=text)
+        # Any level off, not only two: one-level misses were systematic and
+        # all in one direction (support written as strong support, 73/81 on
+        # the mostly neutral gangwan screen; opposition written as neutral).
+        # Up to REPAIR_CANDIDATES same-level templates are scored (zero
+        # decode); the closest replaces the text, and it is kept when none is
+        # closer.
+        best, best_gap = text, abs(intended - got)
+        skip = text
+        for attempt in range(REPAIR_CANDIDATES):
+            candidate = self.template_base(intent, skip=skip if attempt == 0 else f"{skip}#{attempt}")
+            try:
+                gap = abs(intended - level_index(float(self.score_fn(candidate))))
+            except Exception as error:  # noqa: BLE001 - a failed check keeps the best so far
+                logger.warning("stance check failed: %s", error)
+                break
+            if gap < best_gap:
+                best, best_gap = candidate, gap
+                if gap == 0:
+                    break
+        return best
 
     # ------------------------------------------------------------ metrics
 

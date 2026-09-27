@@ -279,7 +279,7 @@ def test_template_errors_still_release_the_bucket(monkeypatch):
     def broken(intent):
         raise KeyError("placeholder")
 
-    monkeypatch.setattr(provider, "template_text", broken)
+    monkeypatch.setattr(provider, "template_base", broken)
     with pytest.raises(KeyError):
         provider.generate(_intent())
     assert not provider._inflight and provider._remaining == 1000
@@ -347,52 +347,48 @@ def test_function_word_is_not_a_topic():
     assert "said" not in text
 
 
-def test_stance_check_replaces_a_text_more_than_one_level_off(tmp_path):
+def test_shared_base_is_varied_once_for_both_score_regimes(tmp_path):
     from app.simulation_policy.tiers import build_tiered_provider, system_one_stance_score
 
     raw = "UNIQUE_BAD_STANCE_SENTENCE"
+    prefixes = ("说真的，", "个人觉得，", "看了一下，", "刚看到消息，")
+    bucket = (0, "criticism", "neg_strong", "101")
     wired = build_tiered_provider(
-        "twitter", str(tmp_path), {"agent_configs": []}, llm_fn=lambda prompt, max_tokens: (raw, 5)
+        "twitter", str(tmp_path / "wire"), {"agent_configs": []},
+        llm_fn=lambda prompt, max_tokens: (raw, 5),
     )
     assert wired.score_fn is system_one_stance_score
-    provider = build_tiered_provider(
-        "twitter", str(tmp_path), {"agent_configs": []},
-        llm_fn=lambda prompt, max_tokens: (raw, 5),
-        score_fn=lambda text: 0.95,
-    )
-    first = provider.generate(_intent(agent=1, stance=0.1))
-    second = provider.generate(_intent(agent=2, stance=0.1))
-    assert first != raw and second != raw
-    assert provider._round.cache_hits == 1
-    recorded = sum(provider._round.stance_check.values())
-    assert recorded == 2
-    assert any(key.startswith("neg_strong->") for key in provider._round.stance_check)
-    bucket = (0, "criticism", "neg_strong", "101")
-    assert raw not in provider._shared_cache[bucket]
 
+    def posts_for(score_fn):
+        provider = build_tiered_provider(
+            "twitter", str(tmp_path / str(id(score_fn))), {"agent_configs": []},
+            llm_fn=lambda prompt, max_tokens: (raw, 5),
+            score_fn=score_fn,
+        )
+        made = [provider.generate(_intent(agent=i, stance=0.1)) for i in range(1, 4)]
+        return provider, made
 
-def test_shared_cache_keeps_the_unvaried_base(tmp_path):
-    from app.simulation_policy.tiers import build_tiered_provider
-
-    raw = "UNIQUE_BAD_STANCE_SENTENCE"
-    provider = build_tiered_provider(
-        "twitter",
-        str(tmp_path),
-        {"agent_configs": []},
-        llm_fn=lambda prompt, max_tokens: (raw, 5),
-        score_fn=lambda text: 0.1,
-    )
-    posts = [provider.generate(_intent(agent=i, stance=0.1)) for i in range(1, 4)]
-    bucket = (0, "criticism", "neg_strong", "101")
-    cached = provider._shared_cache[bucket]
-    prefixes = ("说真的，", "个人觉得，", "看了一下，", "刚看到消息，")
+    steady, steady_posts = posts_for(lambda text: 0.1)
+    cached = steady._shared_cache[bucket]
     assert cached == raw
     assert not any(prefix in cached for prefix in prefixes)
-    third = posts[2]
-    assert third.count(raw) == 1
-    assert sum(prefix in third for prefix in prefixes) <= 1
-    assert "看了一下，说真的，" not in third
-    assert provider._round.texts[2] == third
+    assert steady_posts[2].count(raw) == 1
+    assert sum(prefix in steady_posts[2] for prefix in prefixes) <= 1
+    assert "看了一下，说真的，" not in steady_posts[2]
+    assert steady._round.texts[2] == steady_posts[2]
+
+    def far_only_on_raw(text: str) -> float:
+        return 0.95 if text == raw else 0.1
+
+    repaired, repaired_posts = posts_for(far_only_on_raw)
+    cached = repaired._shared_cache[bucket]
+    assert raw not in cached
+    assert not any(prefix in cached for prefix in prefixes)
+    agent2 = repaired_posts[1]
+    assert cached in agent2 and agent2.count(cached) == 1
+    assert sum(prefix in agent2 for prefix in prefixes) <= 1
+    assert "说真的，个人觉得，" not in agent2
+    assert sum(repaired._round.stance_check.values()) == 3
 
 
 def test_shared_prompt_wording_matches_its_bucket():

@@ -66,6 +66,10 @@ LLM_MODEL_NAME=SubSir/Qwen3.5-4B-AWQ
 | action priors | `SIM_ACTION_PRIORS` | `default` | 校正小模型「偏向發文」的讀出；`off` 關閉 |
 | 報告 | `REPORT_MODE` | `metrics` | 確定性指標報告 + 一段 ≤800 tokens 摘要 |
 | LLM 決策記憶 | `SIM_AGENT_CONTEXT_TOKENS` | `3072`（本機 URL 時的預設） | 只在 `local-llm` 有作用 |
+| 貼文立場檢查 | `CONTENT_STANCE_CHECK` | `1` | 生成後用零 decode 讀出實際立場；與意圖不同級時，改用最多 3 句同級模板中最接近的一句（#45） |
+| 語氣範例庫 | `CONTENT_STANCE_BANK` / `CONTENT_BANK_SHARE` | `1` / `0` | `locales/<lang>_stance_bank.json`（只取自 calibration 情境的 LLM runs）；預設只當共享、完整生成 prompt 的同級語氣參考（#45、#52） |
+| 準備階段校正 | `STANCE_CALIBRATION` | `app/services/stance_calibration.json` | 活躍度位移（readout 平均 0.35 → LLM 準備平均）；立場的保序映射目前留空（#46、#47） |
+| 多模型池 | `MODEL_POOL` / `SYSTEM_ONE_ENSEMBLE` | 未設定（單一模型） | 見下方「多模型池」（#48） |
 
 ## 實測結果（golden scenario，每組 5 個 seed、24 回合）
 
@@ -158,6 +162,35 @@ uv run python scripts/ab_suite.py --out <suite-out> --quick
 # action priors 重新擬合（calibration seeds，勿用評估 seeds）
 uv run python scripts/fit_action_priors.py --a-runs <A runs> --b-runs <B runs> \
   --out app/simulation_policy/action_priors.json
+# calibration 情境庫（tests/fixtures/calibration，與評估庫分開；只跑 seeds 11–13，拒絕 1–5）
+uv run python scripts/ab_suite.py --manifest tests/fixtures/calibration/calibration.json --out <cal-out>
+# 準備階段校正與語氣範例庫（都只讀 calibration 情境）
+uv run python scripts/fit_prep_calibration.py --dirs <cal-out>/<情境> ... --out app/services/stance_calibration.json
+uv run python scripts/build_stance_bank.py --lang zh --dirs <cal-out>/<情境> ... --out ../locales/zh_stance_bank.json
+# 單一模型的讀出準確度、偏誤與溫度（多模型池）
+uv run python scripts/calibrate_model.py --base-url http://127.0.0.1:8002/v1 --model phi-4-mini \
+  --prompt-format plain --out phi.json [--write]
 ```
+
+瀏覽器端到端（需要本機模型服務、`MIROFISH_PROFILE=local` 的後端與前端，不放進預設 CI）：
+
+```bash
+npm install && npx playwright install chromium-headless-shell
+npm run test:e2e        # E2E_ROUNDS 可調回合數（預設 10），截圖在 tests/e2e/artifacts/
+```
+
+## 多模型池（#48）
+
+`MODEL_POOL` 是 OpenAI 相容端點的 JSON 清單；沒設定時就是原本的單一模型，行為不變。
+
+```env
+MODEL_POOL=[{"name":"qwen","base_url":"http://127.0.0.1:8000/v1","model":"qwen3.5-4b","roles":["readout","generate","decide"]},{"name":"phi","base_url":"http://127.0.0.1:8002/v1","model":"phi-4-mini","roles":["readout","generate"],"prompt_format":"plain"}]
+SYSTEM_ONE_ENSEMBLE=all   # 或逗號分隔的題目 key；未設定＝只用第一個讀出模型
+```
+
+- 生成：依 `persona_ref` 的雜湊把每個 agent 固定分派到一個生成模型；呼叫失敗時退回第一個模型。分派記錄在 `decisions.jsonl` 的 `content_model` 與 `content_metrics` 的 `models`。
+- 讀出集成：範圍內的題目由每個讀出模型各答一次，機率取平均後重算答案，仍是零 decode；端點失效時該題改用其餘模型。
+- 各模型溫度：`calibrate_model.py --write` 寫進 `app/system_one/calibration.json` 的 `models.<名稱>`。
+- 非 Qwen 模型的 prompt 格式要實測：Gemma 用 plain 時 score 題的標籤幾乎不在 top-k（覆蓋率 0.0004），要用 chatml；Phi-4-mini 用 plain 較好。
 
 相關 issue：#1（epic）、#2–#13、#19、#26–#28、#34–#36、#44。

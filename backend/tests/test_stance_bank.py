@@ -78,3 +78,12 @@ def test_bank_builder_refuses_eval_seeds(tmp_path):
 
     with pytest.raises(SystemExit):
         main(["--dirs", str(tmp_path), "--lang", "zh", "--seeds", "1", "11", "--out", str(tmp_path / "b.json")])
+
+
+def test_bank_lines_must_be_in_the_bank_language():
+    from scripts.build_stance_bank import usable_length
+
+    assert usable_length("The toll is overdue, build the bike lane", "en")
+    assert not usable_length("学生终于可以拥有一个安静的课后学习空间了", "en")
+    assert usable_length("学生终于可以拥有一个安静的课后学习空间了", "zh")
+    assert not usable_length("The toll is overdue, build the bike lane now", "zh")

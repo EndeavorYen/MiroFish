@@ -395,7 +395,7 @@ def structured_agent_config(
     by_role = load_activity_by_role() if offset is None else None
     if offset is not None:
         activity = min(1.0, max(0.0, activity + offset))
-        activity_level = min(1.0, max(0.0, activity_level + offset))
+        activity_level = min(0.9, max(ACTIVITY_FLOOR, activity_level + offset))
     elif by_role and role in by_role:
         # The readout barely varies across entities (sd 0.06 over the suite);
         # the LLM prep makes aggrieved groups the most active and officials

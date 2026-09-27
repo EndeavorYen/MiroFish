@@ -55,7 +55,20 @@ def deidentify(text: str, names: list[str]) -> str | None:
     return " ".join(text.split())
 
 
+def post_lang(text: str) -> str:
+    """en when Latin letters outnumber CJK characters two to one."""
+
+    cjk = sum(1 for ch in text if "一" <= ch <= "鿿")
+    latin = sum(1 for ch in text if ch.isascii() and ch.isalpha())
+    return "en" if latin > 2 * cjk else "zh"
+
+
 def usable_length(text: str, lang: str) -> bool:
+    """Length in range, and written in the bank's language: LLM agents of an
+    English scenario can still post in Chinese (lakemont did)."""
+
+    if post_lang(text) != lang:
+        return False
     if lang == "en":
         return 5 <= len(text.split()) <= 60
     return 8 <= len(text) <= 120
@@ -66,7 +79,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dirs", nargs="+", required=True, type=Path)
     parser.add_argument("--lang", choices=["zh", "en"], required=True)
     parser.add_argument("--seeds", type=int, nargs="+", default=[11, 12, 13])
-    parser.add_argument("--min-prob", type=float, default=0.6)
+    parser.add_argument("--min-prob", type=float, default=0.5)
     parser.add_argument("--per-level", type=int, default=40)
     parser.add_argument("--out", required=True, type=Path)
     args = parser.parse_args(argv)

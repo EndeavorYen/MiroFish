@@ -44,13 +44,21 @@ MiroFish 原本依賴雲端 LLM 與 Zep Cloud。本機模式讓整條流程都�
 - ReportAgent（`REPORT_MODE=agent`）單一請求會超過 8K；本機建議用 `REPORT_MODE=metrics`（兩個 profile 都已預設）。
 - 若要跑沒有記憶預算的 LLM 決策（`SIM_AGENT_CONTEXT_TOKENS=off`），每個 slot 需要 64K（`-c 262144 -np 4`，實測閒置 VRAM 13.0 GB）。
 
-### Docker compose（未在本機驗證）
+### Docker compose（部分實測，2026-09-28）
 
 `docker compose --profile local up local-llm local-embed` 會啟動 vLLM（`--max-model-len 8192`）與 TEI，port 8000／8001。這時後端請在主機上跑（`npm run dev`）；`mirofish` 容器裡的 `127.0.0.1` 指的是容器自己，要改用 `LLM_BASE_URL=http://host.docker.internal:8000/v1` 等位址。vLLM 以 Hugging Face 模型 ID 作為模型名稱，所以要在 `.env` 設定（System One 會跟著用）：
 
 ```env
 LLM_MODEL_NAME=SubSir/Qwen3.5-4B-AWQ
 ```
+
+實測環境：Docker Desktop 28.4、vLLM v0.30.0、TEI cpu-1.8.1，RTX 5080 16GB，主機 RAM 32 GB。
+
+- 兩個服務都能啟動。`/v1/models` 回傳 `SubSir/Qwen3.5-4B-AWQ`；TEI 的 `/v1/embeddings` 回傳 384 維向量。
+- System One 讀出可以直接接 vLLM 的 logprobs，`cache_prompt` 欄位不會造成錯誤。`system_one_eval.py`（205 題）的結果：choice 0.946、noul 0.877、score 1.00，標籤覆蓋率 ≥ 0.99，G2 通過。
+- 同一支 Playwright 腳本跑到第 1 步（本體與圖譜，使用容器裡的 vLLM 與 TEI）就通過，之後主機記憶體耗盡：WSL VM（`vmmemWSL`）占 15 GB，系統只剩 2.8 GB，後端被結束。完整流程沒有在 Docker 路徑跑完。
+- VRAM：vLLM 預設 `--gpu-memory-utilization 0.90`，會預先占掉整張卡（實測含其他程式共 15.3 GB）。要符合 10 GB 預算，得設 `LOCAL_LLM_GPU_MEMORY_UTILIZATION=0.6` 左右，這個設定尚未實測。
+- 替代方案：在 `%USERPROFILE%\.wslconfig` 限制 WSL 記憶體（例如 `memory=10GB`）；或改用上面的 llama.cpp 路徑，已實測通過，端到端 2.3 分鐘，見「重現實驗」。
 
 ## 各元件與開關
 
@@ -228,6 +236,10 @@ uv run python scripts/calibrate_model.py --base-url http://127.0.0.1:8002/v1 --m
 npm install && npx playwright install chromium-headless-shell
 npm run test:e2e        # E2E_ROUNDS 可調回合數（預設 10），截圖在 tests/e2e/artifacts/
 ```
+
+2026-09-28 實測（llama.cpp 路徑、golden 種子、10 回合）：通過，耗時 2.3 分鐘。報告頁 6/6 章節都有內容，狀態 Completed，完成後停止輪詢。
+
+這次端到端找到一個 bug：兩個平台都跑完後，模擬程序會保留環境給訪談用，不會結束；runner 卻要等程序結束才發布 COMPLETED，所以 UI 一直停在模擬那一步，報告按鈕不會亮。修正後改成兩個平台都結束、圖譜寫入排空之後就發布（#49）。
 
 ## 多模型池（#48）
 

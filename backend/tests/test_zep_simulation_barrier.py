@@ -646,3 +646,67 @@ def test_old_monitor_leaves_a_newer_run_alone(monkeypatch, tmp_path):
         assert SimulationRunner._processes.get(simulation_id) is new
     finally:
         SimulationRunner._processes.pop(simulation_id, None)
+
+
+def _race_to_completion(monkeypatch, simulation_id, action):
+    """A thread holds the finalization lock with the run STOPPING (the drain),
+    then publishes COMPLETED and releases. ``action`` runs meanwhile and first
+    sees STOPPING, then COMPLETED once it has the lock (PR #55 review)."""
+
+    import threading
+
+    state = SimulationRunState(simulation_id=simulation_id, runner_status=RunnerStatus.STOPPING)
+    monkeypatch.setattr(SimulationRunner, "get_run_state", classmethod(lambda _c, _s: state))
+    monkeypatch.setattr(SimulationRunner, "_save_run_state", classmethod(lambda _c, _s: None))
+    monkeypatch.setattr(SimulationRunner, "_sync_simulation_status", classmethod(lambda *_a, **_k: None))
+    ended = []
+    monkeypatch.setattr(
+        SimulationRunner, "_terminate_process",
+        classmethod(lambda _c, proc, sid, **_k: (ended.append(sid), setattr(proc, "alive", False))),
+    )
+    process = _LiveEnv()
+    SimulationRunner._processes[simulation_id] = process
+    lock = SimulationRunner._finalization_lock(simulation_id)
+    lock.acquire()
+    outcome = {}
+
+    def run():
+        try:
+            outcome["result"] = action()
+        except Exception as error:  # noqa: BLE001 - recorded for the assertion
+            outcome["error"] = error
+
+    worker = threading.Thread(target=run)
+    try:
+        worker.start()
+        worker.join(0.3)  # the action now waits on the lock
+        state.runner_status = RunnerStatus.COMPLETED
+    finally:
+        lock.release()
+    worker.join(10)
+    SimulationRunner._processes.pop(simulation_id, None)
+    return outcome, ended, process
+
+
+def test_stop_racing_the_early_completion_ends_the_environment(monkeypatch):
+    outcome, ended, process = _race_to_completion(
+        monkeypatch, "sim-race-stop", lambda: SimulationRunner.stop_simulation("sim-race-stop")
+    )
+    assert "error" not in outcome, outcome
+    assert outcome["result"].runner_status == RunnerStatus.COMPLETED
+    assert ended == ["sim-race-stop"] and not process.alive
+
+
+def test_shutdown_racing_the_early_completion_leaves_no_orphan(monkeypatch):
+    monkeypatch.setattr(runner_module.ZepGraphMemoryManager, "get_simulation_ids", classmethod(lambda _c: []))
+    monkeypatch.setattr(runner_module.ZepGraphMemoryManager, "get_updater", classmethod(lambda _c, _s: None))
+    SimulationRunner._cleanup_done = False
+    try:
+        outcome, ended, process = _race_to_completion(
+            monkeypatch, "sim-race-shutdown", SimulationRunner.cleanup_all_simulations
+        )
+        assert "error" not in outcome, outcome
+        assert ended == ["sim-race-shutdown"] and not process.alive
+        assert SimulationRunner._cleanup_done is True
+    finally:
+        SimulationRunner._cleanup_done = False

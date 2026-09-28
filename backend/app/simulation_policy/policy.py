@@ -50,6 +50,10 @@ MAX_ACTIONS_PER_ROUND = 3
 MAX_TEXT = 120
 STANCE_LEVELS = ["強烈反對", "反對", "中立", "支持", "強烈支持"]
 INTENSITY_LEVELS = ["平和", "有些情緒", "非常激動"]
+# English scenarios ask the per-post readouts in English (#52): with the
+# Chinese question on English states, every Northbridge intent read 0.5.
+STANCE_LEVELS_EN = ["strongly opposed", "opposed", "neutral", "supportive", "strongly supportive"]
+INTENSITY_LEVELS_EN = ["calm", "somewhat emotional", "very agitated"]
 
 
 def decision_rng(seed: int, platform: str, round_num: int, agent_id: int) -> random.Random:
@@ -248,19 +252,26 @@ class SystemOnePolicy:
         target_text = (target or {}).get("content", "")
         intent_state = state + (f"\n要回應的貼文：{_clip(target_text)}" if target_text else "")
         kind, kind_probs = self._choose(intent_state, "這個人這次想說哪一種話？", kinds, rng)
-        response = self.client.ask(
-            SystemOneRequest(
-                state=intent_state,
-                questions={
-                    "stance": ScoreQuestion(
-                        instructions="這個人對目前討論的主要事件持什麼立場？", criteria=STANCE_LEVELS
-                    ),
-                    "intensity": ScoreQuestion(
-                        instructions="這個人這次發言的情緒強度？", criteria=INTENSITY_LEVELS
-                    ),
-                },
-            )
-        )
+        if getattr(self.content, "lang", "zh") == "en":
+            questions = {
+                "stance": ScoreQuestion(
+                    instructions="What stance does this person take on the main event under discussion?",
+                    criteria=STANCE_LEVELS_EN,
+                ),
+                "intensity": ScoreQuestion(
+                    instructions="How emotional is this person's post this time?", criteria=INTENSITY_LEVELS_EN
+                ),
+            }
+        else:
+            questions = {
+                "stance": ScoreQuestion(
+                    instructions="這個人對目前討論的主要事件持什麼立場？", criteria=STANCE_LEVELS
+                ),
+                "intensity": ScoreQuestion(
+                    instructions="這個人這次發言的情緒強度？", criteria=INTENSITY_LEVELS
+                ),
+            }
+        response = self.client.ask(SystemOneRequest(state=intent_state, questions=questions))
         readout_stance = score_to_unit(response.answers["stance"].score, len(STANCE_LEVELS))
         prior = self.stance_prior.get(obs.agent_id)
         w = self.stance_prior_weight if prior is not None else 0.0

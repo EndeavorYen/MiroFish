@@ -451,7 +451,9 @@ class SystemOnePolicy:
             record["intent"] = intent_record
             generator = getattr(self.content, "generator", None)
             if generator is not None:
-                record["content_model"] = generator.name_for(intent.persona_ref)  # #48
+                # The persona's assigned model; a template or fallback text may not
+                # come from it (content_metrics "models" counts actual generations).
+                record["content_model_assigned"] = generator.name_for(intent.persona_ref)  # #48
             args["quote_content" if action == "QUOTE_POST" else "content"] = text
 
         record["action"] = action

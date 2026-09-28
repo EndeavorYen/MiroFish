@@ -127,3 +127,20 @@ def test_acted_rounds_counts_agent_rounds_with_an_action(tmp_path):
     ]
     (path / "actions.jsonl").write_text("\n".join(_json.dumps(r) for r in rows), encoding="utf-8")
     assert acted_rounds(tmp_path) == 2
+
+
+def test_fitting_refuses_non_calibration_scenarios(tmp_path):
+    import scripts.ab_suite as suite
+    from scripts.fit_prep_calibration import require_calibration_dir
+
+    def work(name, digest):
+        d = tmp_path / name / "A"
+        d.mkdir(parents=True)
+        (d / "prepared.json").write_text(json.dumps({"fixture_digest": digest}), encoding="utf-8")
+        return tmp_path / name
+
+    cal = suite.load_manifest(suite.CALIBRATION_MANIFEST)[0]
+    evaluation = suite.load_manifest()[0]
+    require_calibration_dir(work("ok", cal["digest"]))
+    with pytest.raises(SystemExit):
+        require_calibration_dir(work("eval", evaluation["digest"]))

@@ -35,12 +35,14 @@ FILLS = {
 }
 
 
-def audit_line(line: str, band: str, fills: list[tuple[str, str]], level_of: Callable[[str], str]) -> dict:
-    got = [level_of(line.format(entity=entity, topic=topic, target="")) for entity, topic in fills]
+def audit_line(line: str, band: str, fills: list[tuple[str, str]], level_of: Callable[[str, str], str]) -> dict:
+    """``level_of(text, topic)``: the level of a filled line, asked about that topic."""
+
+    got = [level_of(line.format(entity=entity, topic=topic, target=""), topic) for entity, topic in fills]
     return {"line": line, "band": band, "got": got, "passed": sum(g == band for g in got) >= 2}
 
 
-def audit(templates: dict, fills: list[tuple[str, str]], level_of: Callable[[str], str]) -> dict:
+def audit(templates: dict, fills: list[tuple[str, str]], level_of: Callable[[str, str], str]) -> dict:
     rows = []
     for kind, bands in templates.items():
         for band, lines in bands.items():
@@ -65,11 +67,18 @@ def main(argv: list[str] | None = None) -> int:
 
     import golden_pipeline as gp
 
-    gp.force_local_config(BACKEND_DIR)
-    from app.simulation_policy.tiers import level_index, load_templates, system_one_stance_score
+    import tempfile
 
-    def level_of(text: str) -> str:
-        return LEVELS[level_index(system_one_stance_score(text))]
+    # Metrics and graph data go to a temp dir, never into the repo.
+    gp.force_local_config(Path(tempfile.mkdtemp(prefix="mirofish-script-")))
+    from app.simulation_policy.tiers import (
+        level_index, load_templates, stance_check_question, system_one_stance_score,
+    )
+
+    def level_of(text: str, topic: str) -> str:
+        # The same event-conditioned question the content check asks.
+        question = stance_check_question(topic, args.lang)
+        return LEVELS[level_index(system_one_stance_score(text, question=question))]
 
     fills = FILLS[args.lang]
     if args.candidates:

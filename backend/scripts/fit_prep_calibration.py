@@ -36,6 +36,19 @@ sys.path.insert(0, str(BACKEND_DIR))
 from app.services.stance_calibration import fit_isotonic, refuse_eval_seeds  # noqa: E402
 
 
+def require_calibration_dir(scenario: Path) -> None:
+    """Only calibration scenarios may be fitted: the prepared digest must be in
+    tests/fixtures/calibration/calibration.json. Seeds are guarded elsewhere;
+    this guards the scenarios, so an evaluation scenario run on seeds 11-13
+    cannot slip in."""
+
+    manifest = BACKEND_DIR / "tests" / "fixtures" / "calibration" / "calibration.json"
+    digests = {row["digest"] for row in json.loads(manifest.read_text(encoding="utf-8"))["scenarios"]}
+    prepared = json.loads((scenario / "A" / "prepared.json").read_text(encoding="utf-8"))
+    if prepared.get("fixture_digest") not in digests:
+        raise SystemExit(f"{scenario} is not a calibration scenario (digest {prepared.get('fixture_digest')})")
+
+
 def agent_configs(work: Path) -> dict[str, dict[str, Any]]:
     """Entity name -> agent config from a prepared work dir."""
 
@@ -116,6 +129,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--seeds", type=int, nargs="+", default=[11, 12, 13])
     parser.add_argument("--out", required=True, type=Path)
     args = parser.parse_args(argv)
+    for d in args.dirs:
+        require_calibration_dir(d)
     groups = [(agent_configs(d / "A"), agent_configs(d / "B")) for d in args.dirs]
     result = fit(groups, args.seeds, acted_ratio(args.dirs, args.seeds))
     result["fitted_on"] = [str(d) for d in args.dirs]

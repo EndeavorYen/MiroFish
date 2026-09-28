@@ -122,7 +122,7 @@ def main(argv: list[str] | None = None) -> int:
         }
         data = json.loads(CALIBRATION_PATH.read_text(encoding="utf-8")) if CALIBRATION_PATH.exists() else {}
         data.setdefault("models", {})[args.model] = {
-            "temperatures": temps, "prompt_format": args.prompt_format, "fitted_on": ev.DEFAULT_EVAL.name,
+            "temperatures": temps, "prompt_format": args.prompt_format, "fitted_on": args.eval.name,
         }
         CALIBRATION_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return 0

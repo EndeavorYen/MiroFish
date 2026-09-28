@@ -87,9 +87,16 @@ def main(argv: list[str] | None = None) -> int:
     if overlap:
         raise SystemExit(f"the bank must not use evaluation seeds {overlap}")
 
-    gp.force_local_config(args.out.parent)
+    import tempfile
+
+    # Metrics and graph data go to a temp dir, never into the repo.
+    gp.force_local_config(Path(tempfile.mkdtemp(prefix="mirofish-script-")))
     from app.system_one.client import get_system_one_client
 
+    from fit_prep_calibration import require_calibration_dir
+
+    for scenario in args.dirs:
+        require_calibration_dir(scenario)
     client = get_system_one_client()
     per_scenario: list[dict[str, list[str]]] = []
     sources: list[str] = []

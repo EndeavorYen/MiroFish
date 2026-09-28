@@ -1652,6 +1652,12 @@ def start_simulation():
                             "error": "Previous simulation did not reach STOPPED",
                         }), 409
 
+                # A finished run may still hold its interview environment
+                # (the sim dir, database and IPC); end it before logs are
+                # cleaned or a new process starts (#49).
+                if run_state and run_state.runner_status == RunnerStatus.COMPLETED:
+                    SimulationRunner.close_environment(simulation_id)
+
                 # 如果是强制模式，清理运行日志
                 if force:
                     logger.info(f"强制模式：清理模拟日志 {simulation_id}")

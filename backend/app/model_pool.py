@@ -136,15 +136,22 @@ def _mean(dicts: list[dict[str, float]]) -> dict[str, float]:
     return {k: sum(d.get(k, 0.0) for d in dicts) / len(dicts) for k in keys}
 
 
+def _coverage(answers: list) -> float | None:
+    values = [a.coverage for a in answers if getattr(a, "coverage", None) is not None]
+    return min(values) if values else None
+
+
 def combine(question, answers: list) -> object:
-    """Average the models' distributions and rebuild the answer."""
+    """Average the models' distributions and rebuild the answer; coverage is
+    the lowest of the models'."""
 
     if len(answers) == 1:
         return answers[0]
+    coverage = _coverage(answers)
     if isinstance(question, ChoiceQuestion):
         probs = _mean([a.probabilities for a in answers])
         best = max(probs, key=probs.get)
-        return ChoiceAnswer(choice=best, probabilities=probs, confidence=probs[best])
+        return ChoiceAnswer(choice=best, probabilities=probs, confidence=probs[best], coverage=coverage)
     if isinstance(question, ScoreQuestion):
         probs = _mean([a.probabilities for a in answers])
         levels = list(question.criteria)
@@ -153,8 +160,9 @@ def combine(question, answers: list) -> object:
             score=sum(i * p for i, p in enumerate(values)),
             probabilities=probs,
             confidence=max(values),
+            coverage=coverage,
         )
-    return NoulAnswer(noul=sum(a.noul for a in answers) / len(answers))
+    return NoulAnswer(noul=sum(a.noul for a in answers) / len(answers), coverage=coverage)
 
 
 class EnsembleBackend:

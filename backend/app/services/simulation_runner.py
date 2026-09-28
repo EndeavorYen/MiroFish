@@ -421,6 +421,12 @@ class SimulationRunner:
             started_at=datetime.now().isoformat(),
         )
         
+        previous = cls.get_run_state(simulation_id)
+        if previous is not None and previous.runner_status == RunnerStatus.COMPLETED:
+            # The last run's interview environment would otherwise share the
+            # sim dir and IPC with the new process (#49).
+            cls.close_environment(simulation_id)
+
         # Atomically claim this simulation ID. The expensive updater/process
         # startup happens after releasing the lock, while the persisted
         # STARTING state makes every concurrent start fail closed.
@@ -644,7 +650,9 @@ class SimulationRunner:
         monitor_error: Exception | None = None
         exit_code: int | None = None
         try:
-            while process.poll() is None:  # 进程仍在运行
+            # A newer run of the same simulation replaces the registered
+            # process; this monitor then stops reading and writing state.
+            while process.poll() is None and cls._processes.get(simulation_id) is process:
                 # 读取 Twitter 动作日志
                 if os.path.exists(twitter_actions_log):
                     twitter_position = cls._read_action_log(
@@ -669,7 +677,17 @@ class SimulationRunner:
                     and cls._check_all_platforms_completed(state)
                 ):
                     with cls._finalization_lock(simulation_id):
-                        cls._publish_terminal(simulation_id, state, RunnerStatus.COMPLETED, None)
+                        # A stop can take the lock between the check and here.
+                        latest = cls.get_run_state(simulation_id) or state
+                        if (
+                            latest.runner_status == RunnerStatus.RUNNING
+                            and simulation_id not in cls._manual_stop_requests
+                        ):
+                            if latest is not state:
+                                latest.twitter_completed = state.twitter_completed
+                                latest.reddit_completed = state.reddit_completed
+                                state = latest
+                            cls._publish_terminal(simulation_id, state, RunnerStatus.COMPLETED, None)
                 time.sleep(2)
             
             # 进程结束后，最后读取一次日志
@@ -688,12 +706,13 @@ class SimulationRunner:
             # Manual stop and natural completion can observe the same process
             # exit. Serialize terminal state and updater drain so only one path
             # owns the final result.
+            owner = cls._processes.get(simulation_id) in (None, process)
             with cls._finalization_lock(simulation_id):
                 latest_state = cls.get_run_state(simulation_id)
                 if latest_state is not None:
                     state = latest_state
 
-                if state.runner_status not in {
+                if owner and state.runner_status not in {
                     RunnerStatus.STOPPED,
                     RunnerStatus.FAILED,
                     RunnerStatus.COMPLETED,  # published when both platforms ended (#49)
@@ -725,10 +744,11 @@ class SimulationRunner:
                     cls._publish_terminal(simulation_id, state, desired_status, error_message)
                 cls._manual_stop_requests.discard(simulation_id)
             
-            # 清理进程资源
-            cls._processes.pop(simulation_id, None)
-            cls._action_queues.pop(simulation_id, None)
-            cls._monitor_threads.pop(simulation_id, None)
+            # 清理进程资源（a newer run's entries are not this monitor's to drop）
+            if owner:
+                cls._processes.pop(simulation_id, None)
+                cls._action_queues.pop(simulation_id, None)
+                cls._monitor_threads.pop(simulation_id, None)
             
             # 关闭日志文件句柄
             if simulation_id in cls._stdout_files:
@@ -993,8 +1013,35 @@ class SimulationRunner:
                 process.wait(timeout=5)
     
     @classmethod
+    def close_environment(cls, simulation_id: str, timeout: float = 30.0) -> bool:
+        """End the interview environment of a COMPLETED run.
+
+        After both platforms end, the script stays up for interviews and the
+        run is already COMPLETED (#49). Restart, stop and shutdown must still
+        end that process. Called without the finalization lock: the monitor's
+        exit path takes it. Returns whether a live process was ended.
+        """
+
+        process = cls._processes.get(simulation_id)
+        if process is None or process.poll() is not None:
+            return False
+        try:
+            cls._terminate_process(process, simulation_id)
+        except ProcessLookupError:
+            pass
+        monitor = cls._monitor_threads.get(simulation_id)
+        if monitor is not None and monitor is not threading.current_thread():
+            monitor.join(timeout)
+        return True
+
+    @classmethod
     def stop_simulation(cls, simulation_id: str) -> SimulationRunState:
         """停止模拟"""
+        current = cls.get_run_state(simulation_id)
+        if current is not None and current.runner_status == RunnerStatus.COMPLETED:
+            # Finished: only the interview environment may still be up.
+            cls.close_environment(simulation_id)
+            return cls.get_run_state(simulation_id) or current
         with cls._finalization_lock(simulation_id):
             state = cls.get_run_state(simulation_id)
             if not state:
@@ -1534,6 +1581,16 @@ class SimulationRunner:
                             simulation_id,
                             RunnerStatus.STOPPING,
                         )
+
+                if (
+                    state.runner_status == RunnerStatus.COMPLETED
+                    and updater is None
+                    and process is not None
+                    and process.poll() is None
+                ):
+                    # A finished run's interview environment: end it directly.
+                    cls.close_environment(simulation_id)
+                    continue
 
                 needs_finalization = bool(
                     (process is not None and process.poll() is None)

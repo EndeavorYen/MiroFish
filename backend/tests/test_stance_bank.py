@@ -95,7 +95,7 @@ def test_template_audit_passes_on_two_of_three_fills():
     templates = {"opinion": {"pos": ["{topic} ok"], "neu": ["{entity} hm"]}}
     fills = [("E1", "T1"), ("E2", "T2"), ("E3", "T3")]
     reads = {"T1 ok": "pos", "T2 ok": "pos_strong", "T3 ok": "pos", "E1 hm": "pos", "E2 hm": "neu", "E3 hm": "pos"}
-    report = audit(templates, fills, reads.__getitem__)
+    report = audit(templates, fills, lambda text, _topic: reads[text])
     assert report["passed"] == 1 and report["total"] == 2
     assert report["confusion"]["pos"] == {"pos": 2, "pos_strong": 1}
 

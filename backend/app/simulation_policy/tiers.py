@@ -436,9 +436,18 @@ class TieredContentProvider:
         # decode); the closest replaces the text, and it is kept when none is
         # closer.
         best, best_gap = text, abs(intended - got)
-        skip = text
-        for attempt in range(REPAIR_CANDIDATES):
-            candidate = self.template_base(intent, skip=skip if attempt == 0 else f"{skip}#{attempt}")
+        tried = {text}
+        scored = 0
+        # Distinct candidates only: a band may have two lines, and a repeat
+        # costs a readout for nothing.
+        for attempt in range(3 * REPAIR_CANDIDATES):
+            if scored >= REPAIR_CANDIDATES:
+                break
+            candidate = self.template_base(intent, skip=text if attempt == 0 else f"{text}#{attempt}")
+            if candidate in tried:
+                continue
+            tried.add(candidate)
+            scored += 1
             try:
                 gap = abs(intended - level_index(float(self.score_fn(candidate))))
             except Exception as error:  # noqa: BLE001 - a failed check keeps the best so far
@@ -751,14 +760,15 @@ def build_tiered_provider(
 
 
 def pooled_generator():
-    """A PooledGenerator when MODEL_POOL has two or more generate models (#48)."""
+    """A PooledGenerator over MODEL_POOL's generate models (#48); a one-model
+    pool still uses that entry's endpoint, as the readouts do."""
 
     if not os.environ.get("MODEL_POOL", "").strip():
         return None
     from ..model_pool import PooledGenerator, load_pool, models_for
 
     models = models_for(load_pool(), "generate")
-    if len(models) < 2:
+    if not models:
         return None
     return PooledGenerator([
         (m.name, openai_llm_fn(base_url=m.base_url, model=m.model, api_key=m.api_key)) for m in models

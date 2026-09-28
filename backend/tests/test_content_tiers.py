@@ -434,7 +434,9 @@ def test_no_closer_candidate_keeps_the_text_and_caps_the_readouts():
     provider = _provider(score_fn=score)
     text = provider._note_stance(_intent(stance=0.7, kind="opinion"), "GEN text")
     assert text == "GEN text"
-    assert len(calls) == 1 + 3
+    # The text, then at most three distinct candidates.
+    assert 2 <= len(calls) <= 1 + 3
+    assert len(set(calls)) == len(calls)
 
 
 def test_same_level_text_is_not_rescored():

@@ -675,199 +675,231 @@
       "opinion": {
         "neg": [
           "Honestly, I'm not optimistic about {topic}.",
-          "{topic} looks like more trouble than it's worth."
+          "{topic} looks like more trouble than it's worth.",
+          "I have real doubts about {topic}."
         ],
         "neu": [
           "Still watching how {topic} plays out.",
-          "{topic} has pros and cons; need more info."
+          "{topic} has pros and cons; need more info.",
+          "Too early to judge {topic}."
         ],
         "pos": [
-          "On balance {topic} does more good than harm; I lean yes.",
-          "{topic} makes sense to me."
+          "{topic} is a step forward, though not a big one.",
+          "{topic} should be okay, though I still have questions.",
+          "{topic} seems workable, but it's early days."
         ],
         "pos_strong": [
-          "I think {topic} is a good thing, worth a try.",
-          "{topic} is heading the right way. Support."
+          "{topic} is exactly what we needed. Great call!",
+          "Fully behind {topic}. This is the right move!",
+          "{topic} is a fantastic decision, well done {entity}!"
         ],
         "neg_strong": [
-          "I flatly oppose {topic}; it gambles with people's livelihoods!",
-          "Stop {topic} now, {entity}!"
+          "{topic} is an outrage and must be scrapped now!",
+          "Absolutely not. {topic} is a disgrace and {entity} knows it!",
+          "{topic} is a terrible decision. We will fight it all the way!"
         ]
       },
       "support": {
         "neg": [
-          "I back the people pushing back; {topic} can't go ahead like this.",
-          "{entity} should pause {topic} and listen."
+          "I share the worries; {topic} shouldn't go ahead as is.",
+          "{entity} should slow down on {topic} and listen first.",
+          "Count me with the skeptics on {topic}."
         ],
         "neu": [
-          "Let's give {entity} a chance with {topic}.",
-          "Supporting {topic} for now; execution matters."
+          "Waiting to see what {entity} publishes about {topic}.",
+          "Both sides have points on {topic}; let's see the details.",
+          "{topic} will need more discussion before anyone decides."
         ],
         "pos": [
-          "I support {topic}; {entity} did well here.",
-          "{topic} is worth a try."
+          "{topic} could work, but let's see how {entity} runs it.",
+          "{topic} is okay so far, just don't expect miracles.",
+          "{topic} is heading somewhere, slowly."
         ],
         "pos_strong": [
-          "Fully behind {topic}! Go {entity}!",
-          "{topic} is finally here, can't wait!"
+          "Big yes to {topic}! Go {entity}!",
+          "{topic} is finally here and it's great!",
+          "So proud of {entity} for {topic}!"
         ],
         "neg_strong": [
-          "Standing with the protest: withdraw {topic}, {entity}!",
-          "With everyone hurt by this: no to {topic}!"
+          "We will never accept {topic}! {entity} must back down!",
+          "Stop {topic} now or we take to the streets!"
         ]
       },
       "criticism": {
         "neg": [
-          "{entity} rushed {topic}; this is reckless!",
-          "{topic} is full of problems and {entity} must answer."
+          "{topic} has too many holes; {entity} needs to explain.",
+          "{entity}'s handling of {topic} is disappointing.",
+          "{topic} was planned poorly."
         ],
         "neu": [
-          "{entity} still owes us details on {topic}.",
-          "Some questions about {topic}; {entity} should respond."
+          "{entity} says more details on {topic} are coming next week.",
+          "The {topic} draft is still open for comments.",
+          "{entity} will publish the full {topic} plan later."
         ],
         "pos": [
-          "Right direction on {topic}, but {entity} needs sharper execution.",
-          "Support {topic}; the messaging could be better."
+          "{topic} is a step forward, though {entity} communicates poorly.",
+          "{topic} is passable, but the timeline is off."
         ],
         "pos_strong": [
-          "{topic} is absolutely the right call; critics should check the data!",
-          "Fully behind {topic}; {entity}, ignore the noise!"
+          "{topic} is the right call; critics should read the data!",
+          "Ignore the noise, {topic} is excellent!",
+          "{topic} is great policy and {entity} should push ahead!"
         ],
         "neg_strong": [
-          "{entity} ignored every consequence of {topic}. Outrageous!",
-          "{topic} is a disaster and {entity} owns it!"
+          "{entity} is wrecking lives with {topic}. Disgraceful!",
+          "{entity}'s {topic} is an unacceptable catastrophe!",
+          "Disgraceful work from {entity}: {topic} is a disaster!"
         ]
       },
       "question": {
         "neg": [
-          "Who is liable if {topic} goes wrong, {entity}?",
-          "Is {topic} really safe? Any data?"
+          "Who pays if {topic} goes wrong? Seems risky.",
+          "Why push {topic} when the risks look this bad?",
+          "Isn't {topic} going to hurt a lot of families?"
         ],
         "neu": [
-          "When does {topic} start and how do we join?",
-          "Anyone know the details of {topic}?"
+          "When does {topic} start, and how do we join?",
+          "Does anyone know the details of {topic}?",
+          "Is there a timeline for {topic}?"
         ],
         "pos": [
-          "What's next for {topic}? Looking forward to it.",
-          "When will {entity} expand {topic}?"
+          "{topic} could work; what's the next step?",
+          "{topic} is okay so far; will it be adjusted?",
+          "{topic} might work; when will the full plan be out?"
         ],
         "pos_strong": [
-          "When can I try {topic}? I want to be first!",
-          "Will {entity} expand {topic} to more areas?"
+          "When can we get {topic}? Can't wait!",
+          "Will {entity} bring {topic} to more places? It's brilliant!",
+          "{topic} is so good, why didn't we do it sooner?"
         ],
         "neg_strong": [
-          "Who is accountable if {topic} goes wrong? Why is {entity} forcing it?",
-          "Why won't {entity} listen to the opposition before pushing {topic}?"
+          "How dare {entity} force {topic} on us? Who pays when it fails?!",
+          "Why is {entity} ignoring everyone and ramming through {topic}?!"
         ]
       },
       "worry": {
         "neg": [
-          "Worried {topic} will disrupt our lives. Has {entity} thought about it?",
-          "{topic} makes me uneasy. How big is the risk?"
+          "Worried {topic} will hit ordinary people hard.",
+          "{topic} makes me uneasy; how big is the risk?",
+          "I'm concerned about what {topic} does to families."
         ],
         "neu": [
-          "A bit worried about {topic}; hope safeguards are ready.",
-          "Let's be careful with {topic}."
+          "{topic} might change things; worth keeping an eye on.",
+          "The impact of {topic} is still being assessed.",
+          "Not sure yet how {topic} affects daily life."
         ],
         "pos": [
-          "Confident about {topic}, but let's check the safety details.",
-          "Hope {topic} goes well with proper safeguards."
+          "{topic} could work, but watch the details.",
+          "{topic} should be fine, still keep an eye on it.",
+          "{topic} seems manageable, though risks remain."
         ],
         "pos_strong": [
-          "Confident about {topic}, just hope safety keeps improving.",
-          "Looking forward to {topic}; hope nothing goes wrong."
+          "Totally confident {topic} will be a success!",
+          "{topic} is well prepared, nothing to worry about!",
+          "Trust {entity}, {topic} will be great!"
         ],
         "neg_strong": [
-          "{topic} will wreck our lives. Unacceptable!",
-          "Keep pushing {topic} and public anger will only grow, {entity}!"
+          "{topic} is a catastrophe waiting to happen. Stop it!",
+          "{topic} is an unacceptable risk. Stop it now!",
+          "{topic} would be a disaster for families. Disgraceful!"
         ]
       },
       "rumor": {
         "neg": [
-          "Heard there's more behind {topic}; is {entity} hiding something?",
-          "Word is {topic} had an incident that was covered up."
+          "Heard {topic} had problems {entity} kept quiet.",
+          "Heard there are issues with {topic} nobody mentions."
         ],
         "neu": [
-          "Rumor has it {topic} has news; can't confirm.",
-          "Heard {entity} has new plans for {topic}; checking."
+          "Hearing there's news on {topic}; can't confirm.",
+          "Rumor has it {entity} is revising {topic}.",
+          "Something new on {topic} apparently, waiting for official word."
         ],
         "pos": [
-          "Heard {topic} is going well; hope it's true.",
-          "Word is {entity} will speed up {topic}. Good."
+          "Heard {topic} is a step forward, still being adjusted.",
+          "Word is {topic} is going alright so far."
         ],
         "pos_strong": [
-          "Heard {topic} will expand soon, great news!",
-          "Word is {entity} will add subsidies for {topic}."
+          "Heard {topic} is expanding soon, great news!",
+          "Word is {topic} is a huge success!",
+          "Heard everyone loves {topic}. Amazing!"
         ],
         "neg_strong": [
-          "Word is the risks of {topic} were played down. What is {entity} hiding?",
-          "People say {topic} has serious problems; {entity}, explain!"
+          "Insiders say {topic} is a scam and {entity} is covering it up!",
+          "Word is {topic} will devastate families and {entity} knows it!"
         ]
       },
       "clarification": {
         "neg": [
-          "To clarify: {topic} is not as safe as claimed.",
-          "Correction: {entity} never promised {topic} is risk-free."
+          "To clarify, {topic} is not as safe as claimed.",
+          "For the record, {topic} has more problems than stated."
         ],
         "neu": [
-          "To clarify: official info on {topic} is still incomplete.",
-          "Note: rely on {entity}'s notice for {topic} details."
+          "To clarify: the official information on {topic} is incomplete.",
+          "Note: details of {topic} depend on {entity}'s notice.",
+          "Correction: {topic} is still a draft."
         ],
         "pos": [
-          "For the record, {topic} has plenty of positive data.",
-          "Clarifying: {entity}'s account of {topic} holds up."
+          "To clarify, {topic} could work, though details remain.",
+          "Correction: {topic} should be fine, not perfect."
         ],
         "pos_strong": [
-          "To clarify: {topic} went through thorough safety tests.",
-          "Correction: {entity} has explained the safeguards for {topic}."
+          "Fact: {topic} is thoroughly tested and excellent!",
+          "Correction: {topic} is a proven success!",
+          "Let's be clear, {topic} is working brilliantly!"
         ],
         "neg_strong": [
-          "Don't buy it: everything {entity} says about {topic} is false!",
-          "Clarifying: the risks of {topic} are being hidden!"
+          "Let's be clear, {topic} is a fraud!",
+          "To be clear: {topic} is unacceptable and dangerous!",
+          "For the record, {topic} is a disaster. Unacceptable!"
         ]
       },
       "humor": {
         "neg": [
-          "{topic}... I don't know whether to laugh or cry.",
-          "{topic}: I admire {entity}'s imagination."
+          "Watching {topic} unfold, I can only sigh.",
+          "{topic}? I'll just smile and nod."
         ],
         "neu": [
-          "With {topic}, one fewer excuse for being late.",
-          "{topic}: the future is here, just not at my stop."
+          "Everyone's talking about {topic} today.",
+          "Another day, another {topic} update."
         ],
         "pos": [
-          "With {topic} we'll all commute by air, lol.",
-          "{topic}: traffic jams, solved (kind of)."
+          "{topic} could work, fingers crossed nothing breaks.",
+          "{topic}: workable, I guess? (lol)"
         ],
         "pos_strong": [
-          "With {topic} my commute finally has a view, haha.",
-          "{topic} is so cool, feels like sci-fi!"
+          "{topic} is so good I might throw a party!",
+          "{topic}? {entity} nailed it!",
+          "Instant fan of {topic}!"
         ],
         "neg_strong": [
-          "{topic}? {entity} is using the whole city as lab rats!",
-          "{topic} is a joke nobody's laughing at."
+          "{topic}? A disgraceful joke. Unacceptable!",
+          "{topic} is a catastrophe with a logo. Disgraceful!",
+          "Congrats {entity}, {topic} is a fraud in a nice suit. Unacceptable!"
         ]
       },
       "other": {
         "neg": [
-          "Hard to feel good about {topic}.",
-          "{topic}? No thanks."
+          "Not thrilled about {topic}.",
+          "{topic}? No thanks.",
+          "{topic} is disappointing."
         ],
         "neu": [
-          "Everyone is talking about {topic} today.",
-          "{topic} is trending again."
+          "Everyone's talking about {topic}.",
+          "{topic} is trending again.",
+          "News on {topic} is out."
         ],
         "pos": [
-          "I'm for {topic}.",
-          "Positive about {topic}."
+          "{topic} might be fine.",
+          "{topic} is okay-ish."
         ],
         "pos_strong": [
-          "{topic} is great, fully behind it!",
-          "Strongly for {topic}. Go {entity}!"
+          "{topic} is awesome!",
+          "All in on {topic}!",
+          "{topic} is great news!"
         ],
         "neg_strong": [
-          "No to {topic}!",
-          "Strongly against {topic}; {entity} must back down!"
+          "{topic} is unacceptable!",
+          "Disgraceful, {topic}!"
         ]
       }
     },

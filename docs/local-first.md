@@ -44,13 +44,21 @@ MiroFish 原本依賴雲端 LLM 與 Zep Cloud。本機模式讓整條流程都�
 - ReportAgent（`REPORT_MODE=agent`）單一請求會超過 8K；本機建議用 `REPORT_MODE=metrics`（兩個 profile 都已預設）。
 - 若要跑沒有記憶預算的 LLM 決策（`SIM_AGENT_CONTEXT_TOKENS=off`），每個 slot 需要 64K（`-c 262144 -np 4`，實測閒置 VRAM 13.0 GB）。
 
-### Docker compose（未在本機驗證）
+### Docker compose（已實測，2026-09-29）
 
-`docker compose --profile local up local-llm local-embed` 會啟動 vLLM（`--max-model-len 8192`）與 TEI，port 8000／8001。這時後端請在主機上跑（`npm run dev`）；`mirofish` 容器裡的 `127.0.0.1` 指的是容器自己，要改用 `LLM_BASE_URL=http://host.docker.internal:8000/v1` 等位址。vLLM 以 Hugging Face 模型 ID 作為模型名稱，所以要在 `.env` 設定（System One 會跟著用）：
+`docker compose --profile local up local-llm local-embed` 會啟動 vLLM（`--max-model-len 8192`）與 TEI，使用 port 8000／8001。後端請在主機上跑（`npm run dev`）。`mirofish` 容器裡的 `127.0.0.1` 指的是容器自己，所以要改用 `LLM_BASE_URL=http://host.docker.internal:8000/v1` 這類位址。vLLM 以 Hugging Face 模型 ID 當作模型名稱，要在 `.env` 設定（System One 會沿用）：
 
 ```env
 LLM_MODEL_NAME=SubSir/Qwen3.5-4B-AWQ
 ```
+
+實測環境：Docker Desktop 28.4、vLLM v0.30.0、TEI cpu-1.8.1、RTX 5080 16GB、主機 RAM 32 GB，`.wslconfig` 設 `memory=10GB`。
+
+- **端到端通過**：同一支 Playwright 腳本、golden 種子、10 回合，耗時 1.4 分鐘，報告頁 6/6 章節。
+- System One 可以直接讀 vLLM 的 logprobs。`system_one_eval.py`（205 題）的結果：choice 0.946、noul 0.877、score 1.00，標籤覆蓋率 ≥ 0.99，G2 通過。TEI 的 `/v1/embeddings` 回傳 384 維。
+- 主機記憶體：沒有限制時，WSL VM 會長到 15 GB，主機只剩 2.8 GB，後端被結束。限制成 10 GB 後，vLLM 用 3.4 GB、TEI 用 1.5 GB。TEI 在預設設定下（每核心一個 tokenization worker、暖機 batch 很大）會在暖機時被 OOM 結束，compose 已改成 `--max-batch-tokens 2048 --tokenization-workers 4`。
+- VRAM：vLLM 預設 `--gpu-memory-utilization 0.90`，會預先占掉整張卡（實測連同其他程式共 15.4 GB）。要符合 10 GB 預算，請設 `LOCAL_LLM_GPU_MEMORY_UTILIZATION` 約 0.6，這個設定還沒實測。
+- 前端在開發模式（Docker 映像也是）改走 Vite 的 `/api` proxy。直接連 `:5001` 時，瀏覽器會重用開發伺服器已關閉的 keep-alive 連線，`POST /api/simulation/prepare` 因此偶爾出現 `ERR_CONNECTION_RESET`，環境準備那一步就會一直等下去。
 
 ## 各元件與開關
 
@@ -66,6 +74,10 @@ LLM_MODEL_NAME=SubSir/Qwen3.5-4B-AWQ
 | action priors | `SIM_ACTION_PRIORS` | `default` | 校正小模型「偏向發文」的讀出；`off` 關閉 |
 | 報告 | `REPORT_MODE` | `metrics` | 確定性指標報告 + 一段 ≤800 tokens 摘要 |
 | LLM 決策記憶 | `SIM_AGENT_CONTEXT_TOKENS` | `3072`（本機 URL 時的預設） | 只在 `local-llm` 有作用 |
+| 貼文立場檢查 | `CONTENT_STANCE_CHECK` | `1` | 生成後用零 decode 讀出實際立場；與意圖不同級時，改用最多 3 句同級模板中最接近的一句（#45） |
+| 語氣範例庫 | `CONTENT_STANCE_BANK` / `CONTENT_BANK_SHARE` | `1` / `0` | `locales/<lang>_stance_bank.json`（只取自 calibration 情境的 LLM runs）；預設只當共享、完整生成 prompt 的同級語氣參考（#45、#52） |
+| 準備階段校正 | `STANCE_CALIBRATION` | 未附檔（恆等） | `fit_prep_calibration.py` 可擬合立場保序映射與活躍度位移；兩者在評估情境都沒有整體改善，所以預設不附校正檔（#46、#47，見已知限制） |
+| 多模型池 | `MODEL_POOL` / `SYSTEM_ONE_ENSEMBLE` | 未設定（單一模型） | 見下方「多模型池」（#48） |
 
 ## 實測結果（golden scenario，每組 5 個 seed、24 回合）
 
@@ -135,11 +147,61 @@ action priors 只在 golden 上擬合，這裡沒有針對新情境做任何調�
 
 成本閘門大多通過（港灣課程的 decode B／A 是 0.104，剛過 0.10）。動作 JS 與各角色立場在六個情境都未過 v2：golden 的立場點估計仍是 0.815，但 95% 信賴區間下界 0.601 低於 A 組間中位數 − 0.15（0.736）。沒有情境是「無法判讀」（共同角色都 ≥ 12）。
 
+### Phase 2 收尾（G4 v2，同一套情境與 A 組 runs，B 用 #43 收尾分支重跑）
+
+2026-09-28，同樣的硬體與 server 設定。A 組沿用上表的 LLM runs，B 組每組 5 個 seed、24 回合，重新準備並重跑。每個情境都用自己的 `stance_question.txt` 評分。`runs_with_llm_errors` 都是空的。通過 0/6，建議 `keep_llm`。
+
+| 情境 | decode B／A | 動作 JS（p） | 各角色立場（下界，門檻） | 立場分布 JS（p） | 每 run 動作數 B／A | VRAM |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| golden_scenario | 0.046 ✅ | 0.037（0.035）❌ | **0.903（0.809 ≥ 0.737）✅** | 0.030（0.000）❌ | 0.73 | 8032 ✅ |
+| qingpu_clinic | 0.066 ✅ | 0.033（0.004）❌ | 0.026（−0.262 < 0.633）❌ | 0.063（0.000）❌ | 0.90 | 8602 ✅ |
+| gangwan_curriculum | **0.092 ✅** | 0.050（0.001）❌ | 0.280（0.112 < 0.417）❌ | 0.008（0.856）✅ | 0.96 | 7849 ✅ |
+| chengchuan_power | 0.070 ✅ | 0.028（0.019）❌ | 0.517（0.459 < 0.725）❌ | 0.066（0.000）❌ | 1.16 | 7849 ✅ |
+| northbridge_measles | 0.069 ✅ | 0.185（0.000）❌ | 0.169（−0.110 < 0.324）❌ | 0.218（0.000）❌ | 0.62 | 7849 ✅ |
+| fengqiao_recall | 0.056 ✅ | 0.073（0.001）❌ | 0.734（0.505 < 0.508）❌ | 0.072（0.000）❌ | 0.70 | 7849 ✅ |
+
+和起點相比：
+- 動作 JS 在 6 個情境都下降，但只有 golden 的 p 值接近 0.05。
+- 各角色立場在 4 個情境上升，golden 通過；楓橋的下界只差門檻 0.003。
+- 立場分布 JS 在 golden、港灣、澄川下降，在青浦、Northbridge、楓橋上升。
+- decode B／A 全部 ≤ 0.10。
+
+G4 v2 要求 B 和 A 的差距落在 A 組 seed 之間的雜訊內，而 A 的雜訊很小（立場分布組間 JS 0.004–0.008）。B 的差距減小之後，仍然判定失敗。產品方向因此改成「便宜、方向夠準的掃描工具」，重要情境用 `local-llm` 確認。掃描工具用的閘門另開 issue 定義。
+
+### 掃描工具閘門 G5（2026-09-28 寫定，在計算任何 G5 數字之前）
+
+本機路徑的角色改成「便宜、方向夠準的掃描工具」。G5 只檢查掃描使用者會拿來下判斷的方向類結論，並且用絕對容差，不再要求 B 和 A 的差距落在 A 的 seed 雜訊之內。所有值都取 5 個 seed 的平均。
+
+| 閘門 | 量什麼 | 通過條件 |
+| --- | --- | --- |
+| 角色排序 | B、A 各角色平均立場的 Spearman 相關 | ≥ 0.5；共同角色 < 12 時標為「無法判讀」 |
+| 主要陣營 | 各角色依平均立場分成反對（< 0.4）、中立、支持（> 0.6），比較兩邊人數最多的陣營 | B 與 A 相同 |
+| 整體傾向 | 全部貼文的平均立場（0..1） | 兩邊相差 ≤ 0.10 |
+| 走向 | 每 4 回合平均立場，最後一段減第一段 | 兩邊的變化量相差 ≤ 0.10 |
+| 成本 | 沿用 G4：decode B／A、VRAM | ≤ 0.10、≤ 10 GB |
+
+動作 JS 與立場分布 JS 只報告（標出 ≤ 0.05），不列入判定。所有閘門通過或「無法判讀」，該情境就算通過；≥ 80% 的情境通過才算「可以當掃描工具」。計算用 `scripts/scan_gates.py`，直接讀 `ab_report.json`，不需要重跑模擬。走向只比兩組都有貼文的 4 回合區段：B 的第一則貼文可能比 A 早一段，從不同起點相減會高估變化。
+
+G5 結果（和上面兩張表是同一批 runs）：
+
+| 閘門 | #44 起點 | Phase 2 收尾 |
+| --- | --- | --- |
+| 角色排序 ≥ 0.5 | 2/6（golden 0.86、港灣 0.64） | 2/6（golden 0.86、楓橋 0.54） |
+| 主要陣營相同 | 5/6（Northbridge ❌） | **6/6** |
+| 整體傾向相差 ≤ 0.10 | 4/6 | 3/6 |
+| 走向相差 ≤ 0.10 | 3/6 | 3/6 |
+| 成本 | 5/6（港灣 decode 0.104 ❌） | **6/6** |
+| 情境通過 | 0/6 | 0/6，判定 not_ready |
+
+主要陣營六個情境都和 LLM 路徑一致，成本也都在預算內。還不能當掃描工具的原因是角色排序：青浦 0.20、Northbridge 0.15、澄川 0.39、港灣 0.45。走向也有落差，golden 的 B 在最後一段轉向反對（−0.37），A 則幾乎不變（+0.03）。
+
 ## 已知限制
 
-- 立場分布閘門未通過：各角色的立場已對齊（#41：發文立場錨定角色立場、題目帶入事件、五級模板），但強烈反對的貼文仍偏少、強烈支持偏多；結構化準備的立場標籤整體仍偏正面（平均 0.38 對 LLM 準備的 0.22）。
-- action priors 在 golden 的 calibration seeds 上擬合，已在第二情境驗證動作分布，但情境仍只有兩個。
-- 本機路徑每 run 的 agent 動作數約為 LLM 路徑的 80%（LLM agent 每次啟用平均做 1.6–2 個動作）。
+- 立場分布閘門仍未通過（見上表）。golden 的強烈反對從 3% 升到 6%（A 10%）。一面倒支持的情境（青浦、楓橋）則變得更中立或更強烈支持，和 A 的差距變大。
+- Northbridge（英文）的本機貼文仍有 96% 是中立（A 52%）。準備階段的立場與每則貼文的立場讀出幾乎都是中立。英文模板、英文意圖題與語氣範例庫都沒能讓意圖本身帶有立場（#52）。
+- 準備階段的保序立場映射與活躍度位移都擬合過（`fit_prep_calibration.py`），但在評估情境沒有整體改善，所以預設不附校正檔（#46、#47）。活躍度位移能補回動作偏少的情境（golden、楓橋），但會把已經對齊的情境推過頭。
+- 每 run 的動作數 B／A 在各情境差很多（0.62–1.16）。每次啟用的動作數已經和 A 對齊（#47），差距來自每回合的啟用次數，而這在不同情境間的差異無法用單一參數修正。
+- B 的 run 間差異很大：每 run 約 60–90 則貼文，golden 同一版程式的強烈反對可從 1% 到 12%。3 個 seed 的抽樣曾經誤導判斷，決定前要用每組 5 個 seed 的完整基準。
 - 線上執行不是逐位元可重播（OASIS 共用全域亂數、模型伺服器批次不確定）；可重播的是活躍 agent 的選擇與 System One 的取樣。
 
 ## 重現實驗
@@ -158,6 +220,40 @@ uv run python scripts/ab_suite.py --out <suite-out> --quick
 # action priors 重新擬合（calibration seeds，勿用評估 seeds）
 uv run python scripts/fit_action_priors.py --a-runs <A runs> --b-runs <B runs> \
   --out app/simulation_policy/action_priors.json
+# calibration 情境庫（tests/fixtures/calibration，與評估庫分開；只跑 seeds 11–13，拒絕 1–5）
+uv run python scripts/ab_suite.py --manifest tests/fixtures/calibration/calibration.json --out <cal-out>
+# 準備階段校正與語氣範例庫（都只讀 calibration 情境）
+uv run python scripts/fit_prep_calibration.py --dirs <cal-out>/<情境> ... --out app/services/stance_calibration.json
+uv run python scripts/build_stance_bank.py --lang zh --dirs <cal-out>/<情境> ... --out ../locales/zh_stance_bank.json
+# 單一模型的讀出準確度、偏誤與溫度（多模型池）
+uv run python scripts/calibrate_model.py --base-url http://127.0.0.1:8002/v1 --model phi-4-mini \
+  --prompt-format plain --out phi.json [--write]
 ```
 
-相關 issue：#1（epic）、#2–#13、#19、#26–#28、#34–#36、#44。
+瀏覽器端到端（需要本機模型服務、`MIROFISH_PROFILE=local` 的後端與前端，不放進預設 CI）：
+
+```bash
+npm install && npx playwright install chromium-headless-shell
+npm run test:e2e        # E2E_ROUNDS 可調回合數（預設 10），截圖在 tests/e2e/artifacts/
+```
+
+2026-09-28 實測（llama.cpp 路徑、golden 種子、10 回合）：通過，耗時 2.3 分鐘。報告頁 6/6 章節都有內容，狀態 Completed，完成後停止輪詢。
+
+這次端到端找到一個 bug：兩個平台都跑完後，模擬程序會保留環境給訪談用，不會結束；runner 卻要等程序結束才發布 COMPLETED，所以 UI 一直停在模擬那一步，報告按鈕不會亮。修正後改成兩個平台都結束、圖譜寫入排空之後就發布（#49）。
+
+## 多模型池（#48）
+
+`MODEL_POOL` 是 OpenAI 相容端點的 JSON 清單；沒設定時就是原本的單一模型，行為不變。
+
+```env
+MODEL_POOL=[{"name":"qwen","base_url":"http://127.0.0.1:8000/v1","model":"qwen3.5-4b","roles":["readout","generate","decide"]},{"name":"phi","base_url":"http://127.0.0.1:8002/v1","model":"phi-4-mini","roles":["readout","generate"],"prompt_format":"plain"}]
+SYSTEM_ONE_ENSEMBLE=all   # 或逗號分隔的題目 key；未設定＝只用第一個讀出模型
+```
+
+- 生成：依 `persona_ref` 的雜湊把每個 agent 固定分派到一個生成模型；呼叫失敗時退回第一個模型。分派記錄在 `decisions.jsonl` 的 `content_model_assigned` 與 `content_metrics` 的 `models`。
+- 讀出集成：範圍內的題目由每個讀出模型各答一次，機率取平均後重算答案，仍是零 decode；端點失效時該題改用其餘模型。
+- 各模型溫度：`calibrate_model.py --write` 寫進 `app/system_one/calibration.json` 的 `models.<名稱>`。
+- 獨立評分：`ab_eval.py --scorer-base-url http://127.0.0.1:8002/v1 --scorer-model phi-4-mini --scorer-prompt-format plain` 會改用另一個模型評貼文立場，模擬用的模型就不必兼任裁判；報告會記錄 `scorer`。
+- 非 Qwen 模型的 prompt 格式要實測：Gemma 用 plain 時 score 題的標籤幾乎不在 top-k（覆蓋率 0.0004），要用 chatml；Phi-4-mini 用 plain 較好。
+
+相關 issue：#1（epic）、#2–#13、#19、#26–#28、#34–#36、#43–#49、#51、#52。

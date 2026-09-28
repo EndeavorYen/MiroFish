@@ -56,6 +56,12 @@ services:
       - ${LOCAL_EMBED_MODEL:-intfloat/multilingual-e5-small}
       - --port
       - "80"
+      # With the defaults (a worker per core, large warm-up batches) TEI was
+      # OOM-killed at warm-up next to vLLM in a 10 GB WSL VM (#49).
+      - --max-batch-tokens
+      - "2048"
+      - --tokenization-workers
+      - "4"
 
 volumes:
   hf-cache:

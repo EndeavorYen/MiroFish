@@ -1,0 +1,146 @@
+import json
+
+import pytest
+
+from app.system_one.models import ChoiceAnswer, ScoreAnswer, SystemOneResponse
+
+
+class Recorder:
+    """First option of every choice, score 0 (strongly opposed / very low)."""
+
+    def ask(self, request):
+        answers = {}
+        for name, question in request.questions.items():
+            if hasattr(question, "criteria") and isinstance(question.criteria, dict):
+                key = next(iter(question.criteria))
+                answers[name] = ChoiceAnswer(choice=key, probabilities={key: 1.0}, confidence=1.0)
+            else:
+                answers[name] = ScoreAnswer(score=0.0, probabilities={}, confidence=1.0)
+        return SystemOneResponse(answers=answers)
+
+
+def _config(monkeypatch, calibration=None, tmp_path=None):
+    from app.services.prep_structured import structured_agent_config
+
+    if calibration is None:
+        monkeypatch.setenv("STANCE_CALIBRATION", str(tmp_path / "missing.json"))
+    else:
+        path = tmp_path / "cal.json"
+        path.write_text(json.dumps(calibration), encoding="utf-8")
+        monkeypatch.setenv("STANCE_CALIBRATION", str(path))
+    return structured_agent_config(
+        Recorder(), "工會", "LaborUnion", "司機工會", event="空中計程車試點", context="- 工會要求轉崗基金"
+    )
+
+
+def test_agent_config_records_role_and_raw_stance(monkeypatch, tmp_path):
+    cfg = _config(monkeypatch, tmp_path=tmp_path)
+    assert cfg["stakeholder_role"] == "beneficiary"
+    assert cfg["stance_raw"] == 0.0
+    # No calibration file: activity keeps the readout formula (floor at score 0).
+    from app.services.prep_structured import ACTIVITY_FLOOR
+
+    assert cfg["activity_level"] == pytest.approx(ACTIVITY_FLOOR)
+
+
+def test_activity_follows_the_fitted_role_mean(monkeypatch, tmp_path):
+    cfg = _config(
+        monkeypatch,
+        {"seeds": [11, 12, 13], "knots": [], "activity_by_role": {"beneficiary": 0.85, "regulator": 0.2}},
+        tmp_path,
+    )
+    assert cfg["activity_level"] == pytest.approx(0.85)
+    assert cfg["posts_per_hour"] == pytest.approx(0.1 + 0.9 * 0.85)
+
+
+def test_role_activity_refuses_eval_seeds(tmp_path):
+    from app.services.stance_calibration import load_activity_by_role
+
+    path = tmp_path / "cal.json"
+    path.write_text(json.dumps({"seeds": [3, 11], "knots": [], "activity_by_role": {"harmed": 0.9}}), encoding="utf-8")
+    with pytest.raises(ValueError):
+        load_activity_by_role(path)
+
+
+def test_fit_pairs_b_raw_with_a_llm_prep():
+    from scripts.fit_prep_calibration import fit
+
+    a = {"x": {"sentiment_bias": -0.8, "activity_level": 0.9},
+         "y": {"sentiment_bias": 0.6, "activity_level": 0.2},
+         "z": {"sentiment_bias": 0.0, "activity_level": 0.5}}
+    b = {"x": {"stance_raw": 0.2, "stakeholder_role": "harmed"},
+         "y": {"stance_raw": 0.9, "stakeholder_role": "regulator"},
+         "z": {"stance_raw": 0.5, "stakeholder_role": "harmed"},
+         "only_b": {"stance_raw": 0.1, "stakeholder_role": "media"}}
+    result = fit([(a, b)], seeds=[11, 12, 13])
+    assert result["pairs"] == 3
+    assert result["activity_by_role"] == {"harmed": pytest.approx(0.7), "regulator": pytest.approx(0.2)}
+    assert [t for _, t in result["knots"]] == pytest.approx([0.1, 0.5, 0.8])
+    with pytest.raises(ValueError):
+        fit([(a, b)], seeds=[1, 11])
+
+
+def test_activity_offset_keeps_the_readout_order_and_wins_over_roles(monkeypatch, tmp_path):
+    from app.services.prep_structured import ACTIVITY_FLOOR
+
+    cfg = _config(
+        monkeypatch,
+        {"seeds": [11, 12, 13], "knots": [], "activity_offset": 0.16, "activity_by_role": {"beneficiary": 0.85}},
+        tmp_path,
+    )
+    assert cfg["activity_level"] == pytest.approx(ACTIVITY_FLOOR + 0.16)
+
+
+def test_fit_reports_the_mean_activity_offset():
+    from scripts.fit_prep_calibration import fit
+
+    a = {"x": {"sentiment_bias": 0.0, "activity_level": 0.6}, "y": {"sentiment_bias": 0.0, "activity_level": 0.4}}
+    b = {"x": {"stance_raw": 0.5, "stakeholder_role": "harmed", "activity_level": 0.3},
+         "y": {"stance_raw": 0.5, "stakeholder_role": "harmed", "activity_level": 0.3}}
+    assert fit([(a, b)], seeds=[11])["activity_offset"] == pytest.approx(0.2)
+
+
+def test_offset_from_acted_rounds_scales_the_structured_mean():
+    from scripts.fit_prep_calibration import fit
+
+    a = {"x": {"sentiment_bias": 0.0, "activity_level": 0.9}}
+    b = {"x": {"stance_raw": 0.5, "stakeholder_role": "harmed", "activity_level": 0.3}}
+    result = fit([(a, b)], seeds=[11], acted_ratio=0.8)
+    # 25% more activations from a level that sets them proportionally.
+    assert result["activity_offset"] == pytest.approx(0.075)
+    assert result["activity_gap"] == pytest.approx(0.6)
+
+
+def test_acted_rounds_counts_agent_rounds_with_an_action(tmp_path):
+    import json as _json
+
+    from scripts.fit_prep_calibration import acted_rounds
+
+    path = tmp_path / "sim" / "reddit"
+    path.mkdir(parents=True)
+    rows = [
+        {"round": 0, "agent_id": 1, "action_type": "CREATE_POST"},
+        {"round": 1, "agent_id": 1, "action_type": "LIKE_POST"},
+        {"round": 1, "agent_id": 1, "action_type": "CREATE_COMMENT"},
+        {"round": 1, "agent_id": 2, "action_type": "DO_NOTHING"},
+        {"round": 2, "agent_id": 2, "action_type": "LIKE_POST"},
+    ]
+    (path / "actions.jsonl").write_text("\n".join(_json.dumps(r) for r in rows), encoding="utf-8")
+    assert acted_rounds(tmp_path) == 2
+
+
+def test_fitting_refuses_non_calibration_scenarios(tmp_path):
+    import scripts.ab_suite as suite
+    from scripts.fit_prep_calibration import require_calibration_dir
+
+    def work(name, digest):
+        d = tmp_path / name / "A"
+        d.mkdir(parents=True)
+        (d / "prepared.json").write_text(json.dumps({"fixture_digest": digest}), encoding="utf-8")
+        return tmp_path / name
+
+    cal = suite.load_manifest(suite.CALIBRATION_MANIFEST)[0]
+    evaluation = suite.load_manifest()[0]
+    require_calibration_dir(work("ok", cal["digest"]))
+    with pytest.raises(SystemExit):
+        require_calibration_dir(work("eval", evaluation["digest"]))

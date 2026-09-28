@@ -90,14 +90,46 @@ def apply_calibration(raw: float, knots: list[tuple[float, float]] | None) -> fl
     return value
 
 
-def load_knots(path: Path | None = None) -> list[tuple[float, float]] | None:
+def _load(path: Path | None = None) -> dict | None:
     setting = os.environ.get("STANCE_CALIBRATION", "").strip()
     chosen = path if path is not None else (Path(setting) if setting else DEFAULT_PATH)
     if not chosen.exists():
         return None
     data = json.loads(chosen.read_text(encoding="utf-8"))
     refuse_eval_seeds([int(seed) for seed in data.get("seeds", [])])
-    return [(float(raw), float(target)) for raw, target in data["knots"]]
+    return data
+
+
+def load_knots(path: Path | None = None) -> list[tuple[float, float]] | None:
+    data = _load(path)
+    if data is None:
+        return None
+    return [(float(raw), float(target)) for raw, target in data.get("knots") or []]
+
+
+def load_activity_offset(path: Path | None = None) -> float | None:
+    """Mean LLM-prep activity minus mean structured activity on calibration
+    scenarios. Structured agents were active in fewer agent-rounds than LLM
+    ones (#47) because the readout sits near 0.35; the offset lifts the level
+    and keeps the readout's order, which held out of sample better than the
+    per-role means (activity correlation 0.36 vs 0.23 over the suite)."""
+
+    data = _load(path)
+    if data is None or data.get("activity_offset") is None:
+        return None
+    return float(data["activity_offset"])
+
+
+def load_activity_by_role(path: Path | None = None) -> dict[str, float] | None:
+    """Mean LLM-prep activity per stakeholder role, fitted on calibration
+    scenarios. The activity readout alone put almost every entity near 0.35,
+    while the LLM prep makes aggrieved groups the most active and officials
+    the least (#46)."""
+
+    data = _load(path)
+    if data is None or not data.get("activity_by_role"):
+        return None
+    return {role: _clamp(value) for role, value in data["activity_by_role"].items()}
 
 
 def _clamp(value: float) -> float:

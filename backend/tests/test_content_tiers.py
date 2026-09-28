@@ -357,7 +357,7 @@ def test_shared_base_is_varied_once_for_both_score_regimes(tmp_path):
         "twitter", str(tmp_path / "wire"), {"agent_configs": []},
         llm_fn=lambda prompt, max_tokens: (raw, 5),
     )
-    assert wired.score_fn is system_one_stance_score
+    assert wired.score_fn.func is system_one_stance_score
 
     def posts_for(score_fn):
         provider = build_tiered_provider(
@@ -408,3 +408,70 @@ def test_shared_prompt_wording_matches_its_bucket():
     assert prompt(0.1) != prompt(0.35)
     assert "强烈反对" in prompt(0.1)
     assert "反对" in prompt(0.35)
+
+
+def test_one_level_overshoot_picks_a_closer_template():
+    calls = []
+
+    def score(text):
+        calls.append(text)
+        return 0.95 if text.startswith("GEN") else 0.7
+
+    provider = _provider(score_fn=score)
+    intent = _intent(stance=0.7, kind="opinion")
+    fixed = provider._note_stance(intent, "GEN overly enthusiastic")
+    assert not fixed.startswith("GEN")
+    assert len(calls) == 2  # the text, then one candidate that lands on the level
+
+
+def test_no_closer_candidate_keeps_the_text_and_caps_the_readouts():
+    calls = []
+
+    def score(text):
+        calls.append(text)
+        return 0.95
+
+    provider = _provider(score_fn=score)
+    text = provider._note_stance(_intent(stance=0.7, kind="opinion"), "GEN text")
+    assert text == "GEN text"
+    # The text, then at most three distinct candidates.
+    assert 2 <= len(calls) <= 1 + 3
+    assert len(set(calls)) == len(calls)
+
+
+def test_same_level_text_is_not_rescored():
+    calls = []
+    provider = _provider(score_fn=lambda text: calls.append(text) or 0.7)
+    assert provider._note_stance(_intent(stance=0.7, kind="opinion"), "GEN ok") == "GEN ok"
+    assert len(calls) == 1
+
+
+def test_event_phrase_from_the_requirement():
+    from app.simulation_policy.tiers import event_phrase
+
+    assert event_phrase("模擬東海市宣佈啟動無人駕駛空中計程車商業試點後，各方利益相關者……") == "東海市宣佈啟動無人駕駛空中計程車商業試點"
+    assert event_phrase("模擬港灣市在國中試辦每週一節城市讀本時，教育機關……") == "港灣市在國中試辦每週一節城市讀本"
+    assert event_phrase("Simulate discussion of a one-semester measles clinic inside Northbridge public high schools. "
+                        "Expected stance structure: mostly neutral.") == "a one-semester measles clinic inside Northbridge public high schools"
+    assert event_phrase("") == ""
+
+
+def test_stance_check_asks_about_the_event(tmp_path, monkeypatch):
+    from app.simulation_policy import tiers
+
+    asked = []
+
+    class Client:
+        def ask(self, request):
+            from app.system_one.models import ScoreAnswer, SystemOneResponse
+
+            asked.append(request.questions["s"].instructions)
+            return SystemOneResponse(answers={"s": ScoreAnswer(score=2.0, probabilities={}, confidence=1.0)})
+
+    monkeypatch.setattr("app.system_one.client.get_system_one_client", lambda: Client())
+    provider = tiers.build_tiered_provider(
+        "twitter", str(tmp_path), {"agent_configs": [], "simulation_requirement": "模擬青浦市把河岸社區診所擴成全日服務之後，衛生機關……"},
+        llm_fn=lambda p, n: ("x", 1),
+    )
+    assert provider.score_fn("一則貼文") == pytest.approx(0.5)
+    assert asked == ["這則貼文對「青浦市把河岸社區診所擴成全日服務」的立場是什麼？"]

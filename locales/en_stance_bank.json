@@ -1,0 +1,60 @@
+{
+  "lang": "en",
+  "seeds": [
+    11,
+    12,
+    13
+  ],
+  "sources": [
+    "ashford_tolls",
+    "lakemont_library"
+  ],
+  "min_prob": 0.5,
+  "levels": {
+    "neg_strong": [
+      "{entity} and the Ashford Motorists League are calling this a tax on working families. We will collect signatures to block this plan.",
+      "As a former engineer turned community organizer, I share your frustration. This 6-dollar toll is a tax on survival for delivery workers. My own family has faced similar barriers - imagine if a truck driver couldn't make their rounds because of these fees. We need immediate action to exempt essential workers.",
+      "As a nurse working shifts on the Riverside Bridge, I completely agree with the concern for ring-fenced funds and low-income exemptions. Any increase in bridge tolls directly threatens my ability to get to the hospital on time. We cannot afford another barrier for essential workers.",
+      "This toll is a direct tax on working families, many of whom are trapped in a cycle of poverty because they cannot afford the commute costs. We need protected infrastructure and real exemptions, not just vague promises. This is too late, and we must act NOW.",
+      "This resonates deeply with the struggles of small business owners and workers in our community. The toll is a direct threat to livelihoods, and we cannot afford to let this pass without a fight. We need urgent exemptions and alternatives that truly protect those who depend on the bridge for their daily work and family needs.",
+      "Absolutely agree! {entity} is right to voice these concerns. The Bridge Improvement Plan cannot just be another tax on working families. We need to pause this plan immediately and focus on adding protected cycle lanes to ensure safe, affordable transit for everyone.",
+      "This 6-dollar toll on the Riverside Bridge is a nightmare for us delivery guys. I lose a full day's wages every week just from the bridge congestion. The Council needs to reconsider this before it drives our local economy into the ground. How many meals can this actually buy?",
+      "I completely agree with your post, Priya. The toll plan is a tax on working families, and we cannot afford another injustice. We must act immediately to protect low-income commuters and ensure affordable passage for everyone.",
+      "This 6-dollar toll is a nightmare for us delivery guys. I lose a full day's wages every week just from the bridge congestion. The Council needs to reconsider this before it drives our local economy into the ground. How many meals can this actually buy? 😤🚴‍♂️"
+    ],
+    "neg": [
+      "{entity} just proposed a 6-dollar peak-hour toll on the Riverside Bridge. As a trader, I fear this will drive away customers and empty our streets. We need exemptions for local businesses.",
+      "{entity} is right. This isn't about convenience; it's about survival. We cannot let the cost of living become the cost of keeping a family together. My wife and I have seen families tear apart because they can no longer afford to get their children to school. We are joining the fight to stop this bridge tax.",
+      "{entity}'s warning about low-income commuters needing discounts is crucial. The council must demonstrate how revenue will be ring-fenced to prevent regressive impacts, as empirical evidence shows without such safeguards, congestion relief measures can exacerbate social inequity.",
+      "Supporting {entity}'s concern. The council must provide concrete data on revenue ring-fencing before finalizing any toll implementation. Without transparent budget allocation and low-income exemptions, the policy risks becoming regressive.",
+      "As a delivery rider, I feel {entity}'s point resonates deeply. Every penny matters when you're living paycheck to paycheck. We need the council to show exactly how that revenue will help us like you, not just hurt us.",
+      "{entity}'s point about ring-fencing funds is vital. We cannot let this plan become another tax on working families. We need concrete proof that the revenue will protect low-income commuters before any toll is implemented. This is about justice, not just traffic flow.",
+      "{entity} is right. This is about survival, not just convenience. My own family faces impossible choices every time we consider a commute fee. We need concrete exemptions for working families before any vote happens.",
+      "The proposed 6-dollar peak-hour toll on Riverside Bridge poses a significant financial burden on local businesses. We need a balanced approach that supports both commuters and small traders. Please share your concerns in comments.",
+      "As a project coordinator for {entity}, I am deeply concerned about this plan. The toll will disproportionately affect low-income workers and small businesses. We need immediate exemptions and protected infrastructure, not just vague exemptions. This plan ignores the needs of vulnerable communities.",
+      "This hits home. As a delivery rider, every dollar counts. The toll is eating into my margins, and I know what it feels like when your hard-earned income gets squeezed. Let's keep fighting for exemptions and safer routes for everyone.",
+      "This plan is a direct tax on working families, and it ignores the needs of vulnerable communities. We need protected bike lanes and real exemptions, not just vague promises. This is too late, and we must act NOW.",
+      "We stand with the residents in their opposition. While the bridge plan aims to improve infrastructure, the financial burden it places on working families cannot be ignored. Our community cannot afford another tax that threatens the livelihoods of both households and local businesses. We call for a pause and a review of the tax proposal before any further implementation.",
+      "Agreed. The council's proposal unfairly burdens working families without adequate safeguards for low-income commuters.",
+      "As a nurse who rides the Riverside Bridge every day, I worry that a 6-dollar peak-hour toll will make it impossible for me and my colleagues to get to work on time. We need exemptions for healthcare workers, not just for local businesses.",
+      "Right, let's get those signatures moving. Every signature counts in blocking this tax.",
+      "I've been to the traffic hearing, and I'm so worried about my colleagues. If the toll increases, how will we get to work on time? We need to protect working families, especially nurses who can't afford extra costs."
+    ],
+    "neu": [
+      "While the plan aims to improve long-term efficiency, it's crucial to address the immediate concerns of working families. A balanced approach is needed to ensure the benefits are felt by all citizens without imposing undue financial burdens."
+    ],
+    "pos": [
+      "Agreed. Transparency in budget allocation is essential for any public infrastructure project. We need clear data on how the revenue from these tolls will be specifically allocated to support low-income commuters and vulnerable areas.",
+      "{entity}'s proposal aligns with the council's goal of reducing congestion by 33%, but implementation must include equity safeguards—such as discounts for low-income commuters and small businesses—to avoid regressive impacts. Without these measures, even effective congestion relief risks exacerbating social inequity, as comparative city analyses suggest.",
+      "Supportive of the plan's goals but concerned about equitable distribution of benefits. Could the revenue include a dedicated fund for small business exemptions?",
+      "We understand the concern regarding tax on working families. However, the Bridge Improvement Plan is a necessary investment in long-term traffic efficiency and public transit funding. We are committed to establishing discount mechanisms for low-income residents to ensure affordability.",
+      "The concern regarding the financial burden on working families is valid. However, the Bridge Improvement Plan is a necessary investment in long-term traffic efficiency and public transit funding. We are committed to establishing discount mechanisms for low-income residents to ensure affordability.",
+      "As a local resident, I understand the concerns about the toll impact on local businesses. However, the Council has already indicated exemptions for small enterprises, and the revenue will be directly reinvested into public transport infrastructure. I hope the Council can provide more transparency on how these funds will be managed."
+    ],
+    "pos_strong": [
+      "The new congestion toll plan is overdue. {entity} supports it and is urging the council to add protected bike lanes to make this safe for everyone.",
+      "{entity}'s plan to fund forty new buses and cut bridge queues by a third is exactly what we need. This will change my commute.",
+      "While fairness is critical, our bridge improvement plan is not just about revenue—it's about reducing congestion and investing in public transit. Exemptions must be carefully designed to support low-income families without undermining the plan's effectiveness. We're committed to finding a balanced solution that benefits all residents."
+    ]
+  }
+}

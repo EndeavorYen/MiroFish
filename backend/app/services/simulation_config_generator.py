@@ -80,6 +80,10 @@ class AgentActivityConfig:
     # 影响力权重（决定其发言被其他Agent看到的概率）
     influence_weight: float = 1.0
 
+    # 结构化准备的原始立场与利害角色，供校准拟合用 (#46)；LLM 准备为 None
+    stance_raw: Optional[float] = None
+    stakeholder_role: Optional[str] = None
+
 
 @dataclass  
 class TimeSimulationConfig:
@@ -943,7 +947,9 @@ class SimulationConfigGenerator:
                 response_delay_max=cfg.get("response_delay_max", 60),
                 sentiment_bias=cfg.get("sentiment_bias", 0.0),
                 stance=cfg.get("stance", "neutral"),
-                influence_weight=cfg.get("influence_weight", 1.0)
+                influence_weight=cfg.get("influence_weight", 1.0),
+                stance_raw=cfg.get("stance_raw"),
+                stakeholder_role=cfg.get("stakeholder_role"),
             )
             configs.append(config)
         

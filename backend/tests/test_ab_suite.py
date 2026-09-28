@@ -31,6 +31,17 @@ def test_manifest_library():
     assert big >= 2
 
 
+def test_digest_ignores_checkout_line_endings(tmp_path):
+    import scripts.golden_pipeline as gp
+
+    lf, crlf = tmp_path / "lf", tmp_path / "crlf"
+    for directory, newline in ((lf, b"\n"), (crlf, b"\r\n")):
+        directory.mkdir()
+        for name in gp.SCENARIO_FILES:
+            (directory / name).write_bytes(newline.join([b"line one", b"line two", b""]))
+    assert gp.scenario_digest(lf) == gp.scenario_digest(crlf)
+
+
 def test_manifest_digest_mismatch_exits(tmp_path):
     fx = tmp_path / "fx"
     fx.mkdir()
@@ -144,3 +155,26 @@ def test_render_suite_has_ci_and_summary():
     assert text.count("[0.010, 0.030]") >= 2
     assert "1/2" in text
     assert "conditional" in text
+
+
+def test_calibration_library_is_disjoint_from_the_suite():
+    import scripts.golden_pipeline as gp
+
+    calibration = suite.load_manifest(suite.CALIBRATION_MANIFEST)
+    evaluation = suite.load_manifest()
+    assert len(calibration) >= 6
+    assert {row["language"] for row in calibration} >= {"zh", "en"}
+    eval_digests = {row["digest"] for row in evaluation}
+    for row in calibration:
+        directory = suite.fixture_dir(row)
+        for name in ("news_seed.txt", "simulation_requirement.txt", "stance_question.txt", "README.md"):
+            assert (directory / name).is_file(), f"{directory} missing {name}"
+        assert gp.scenario_digest(directory) == row["digest"]
+        assert row["digest"] not in eval_digests
+
+
+def test_calibration_manifest_refuses_eval_seeds(tmp_path):
+    with pytest.raises(SystemExit):
+        suite.main(["--manifest", str(suite.CALIBRATION_MANIFEST), "--out", str(tmp_path), "--seeds", "11", "3"])
+    args = suite.parse_args(["--manifest", str(suite.CALIBRATION_MANIFEST), "--out", "x"])
+    assert args.seeds == [11, 12, 13]

@@ -197,16 +197,20 @@ def _entity_state(name: str, entity_type: str, summary: str, context: str) -> st
     return f"實體：{name}（類型：{entity_type}）\n摘要：{summary[:400]}\n相關資訊：{context[:800]}"
 
 
-def _stance_score(client, state: str, name: str, event: str) -> float | None:
-    """Stance 0..1 asked on its own with the event in the state, so the other
-    readouts (activity, influence ...) keep the state they were calibrated
-    on (#34). The score is conditioned on a role, then passed through the
-    isotonic map (#46). None without an event: the caller asks it with the rest."""
+def _stance_detail(client, state: str, name: str, event: str) -> tuple[float, float, str | None]:
+    """(calibrated stance, raw stance, stakeholder role), stances in 0..1.
 
-    if not event:
-        return None
+    With an event, the stance is asked on its own with the event in the
+    state, so the other readouts (activity, influence ...) keep the state
+    they were calibrated on (#34), and it is conditioned on a role first
+    (#46). Without one, the plain question is asked and there is no role.
+    The raw score goes through the isotonic map (#46)."""
+
     from .stance_calibration import apply_calibration, load_knots, role_question
 
+    if not event:
+        raw = _level(_ask(client, state, {"stance": stance_question(name, "")})["stance"].score, len(STANCE5))
+        return apply_calibration(raw, load_knots()), raw, None
     role = _ask(client, state, {"role": role_question(name)})["role"].choice
     answer = _ask(
         client,
@@ -214,7 +218,16 @@ def _stance_score(client, state: str, name: str, event: str) -> float | None:
         {"stance": stance_question(name, event)},
     )["stance"]
     raw = _level(answer.score, len(STANCE5))
-    return apply_calibration(raw, load_knots())
+    return apply_calibration(raw, load_knots()), raw, role
+
+
+def _stance_score(client, state: str, name: str, event: str) -> float | None:
+    """Calibrated stance with an event; None without one (the caller asks it
+    with the rest)."""
+
+    if not event:
+        return None
+    return _stance_detail(client, state, name, event)[0]
 
 
 def stance_question(name: str, event: str) -> ScoreQuestion:
@@ -369,19 +382,27 @@ def structured_agent_config(
     )
     activity = _level(answers["activity"].score, len(LEVEL5))
     influence = _level(answers["influence"].score, len(LEVEL5))
-    stance = _stance_score(client, stance_state, name, event)
-    if stance is None:
-        from .stance_calibration import apply_calibration, load_knots
-
-        raw = _level(_ask(client, state, {"stance": stance_question(name, "")})["stance"].score, len(STANCE5))
-        stance = apply_calibration(raw, load_knots())
+    stance, raw_stance, role = _stance_detail(client, stance_state if event else state, name, event)
     stance_label = "opposing" if stance < 0.35 else "supportive" if stance > 0.65 else "neutral"
+    # activity_level gates whether an agent is a candidate each round.
+    # The readout places most entities at the low end, and 0.1 + 0.8a gave
+    # a golden mean of 0.18 against 0.44 from the LLM config, so agents
+    # were rarely active; the floor keeps quiet entities participating.
+    activity_level = ACTIVITY_FLOOR + (0.9 - ACTIVITY_FLOOR) * activity
+    from .stance_calibration import load_activity_by_role, load_activity_offset
+
+    offset = load_activity_offset()
+    by_role = load_activity_by_role() if offset is None else None
+    if offset is not None:
+        activity = min(1.0, max(0.0, activity + offset))
+        activity_level = min(0.9, max(ACTIVITY_FLOOR, activity_level + offset))
+    elif by_role and role in by_role:
+        # The readout barely varies across entities (sd 0.06 over the suite);
+        # the LLM prep makes aggrieved groups the most active and officials
+        # the least, and the stakeholder role carries that (#46).
+        activity = activity_level = by_role[role]
     return {
-        # activity_level gates whether an agent is a candidate each round.
-        # The readout places most entities at the low end, and 0.1 + 0.8a gave
-        # a golden mean of 0.18 against 0.44 from the LLM config, so agents
-        # were rarely active; the floor keeps quiet entities participating.
-        "activity_level": round(ACTIVITY_FLOOR + (0.9 - ACTIVITY_FLOOR) * activity, 3),
+        "activity_level": round(activity_level, 3),
         "posts_per_hour": round(0.1 + 0.9 * activity, 3),
         "comments_per_hour": round(0.2 + 1.3 * activity, 3),
         "active_hours": ACTIVE_PATTERNS[answers["hours"].choice][1],
@@ -390,6 +411,9 @@ def structured_agent_config(
         "sentiment_bias": round(stance * 2 - 1, 3),
         "stance": stance_label,
         "influence_weight": round(0.5 + 2.5 * influence, 3),
+        # Kept for fitting the stance map and role activity (#46).
+        "stance_raw": round(raw_stance, 4),
+        "stakeholder_role": role,
     }
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 from .backends import HttpBackend, LocalReadoutBackend, SystemOneBackend
@@ -20,13 +21,24 @@ from .models import (
 CALIBRATION_PATH = Path(__file__).with_name("calibration.json")
 
 
-def load_temperatures(path: Path = CALIBRATION_PATH) -> dict[str, float]:
-    """Per-question-type temperatures fitted by ``scripts/system_one_eval.py``."""
+def load_temperatures(path: Path = CALIBRATION_PATH, model: str | None = None) -> dict[str, float]:
+    """Per-question-type temperatures fitted by ``scripts/system_one_eval.py``.
+
+    With ``model``, the ``models.<name>`` entry written by
+    ``scripts/calibrate_model.py`` (#48); a model without one falls back to
+    the top-level temperatures only when they were fitted on it.
+    """
 
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
         return {}
+    if model is not None:
+        entry = (data.get("models") or {}).get(model)
+        if entry is not None:
+            return {k: float(v) for k, v in (entry.get("temperatures") or {}).items()}
+        if data.get("model") not in (None, model):
+            return {}
     return {k: float(v) for k, v in (data.get("temperatures") or {}).items()}
 
 
@@ -61,6 +73,8 @@ def get_system_one_client() -> SystemOneClient:
     from ..config import Config
 
     backend = (Config.SYSTEM_ONE_BACKEND or "local").strip().lower()
+    if backend == "local" and os.environ.get("MODEL_POOL", "").strip():
+        return _pooled_client(Config)
     if backend == "local":
         if Config.SYSTEM_ONE_PROMPT_FORMAT not in ("chatml", "plain"):
             raise ValueError(
@@ -86,3 +100,28 @@ def get_system_one_client() -> SystemOneClient:
             )
         )
     raise ValueError(f"SYSTEM_ONE_BACKEND must be local or http, got {backend!r}")
+
+
+def _pooled_client(Config) -> SystemOneClient:
+    """Readout models from MODEL_POOL, as one backend or an ensemble (#48)."""
+
+    from ..model_pool import EnsembleBackend, ensemble_scope, load_pool, models_for
+
+    readers = models_for(load_pool(), "readout")
+    if not readers:
+        raise ValueError("MODEL_POOL has no readout model")
+    backends = [
+        LocalReadoutBackend(
+            base_url=model.base_url,
+            model=model.model,
+            api_key=model.api_key or Config.SYSTEM_ONE_API_KEY,
+            top_k=Config.SYSTEM_ONE_TOP_K,
+            prompt_format=model.prompt_format,
+            temperatures=load_temperatures(model=model.model),
+        )
+        for model in readers
+    ]
+    scope = ensemble_scope()
+    if len(backends) == 1 or scope == set():
+        return SystemOneClient(backends[0])
+    return SystemOneClient(EnsembleBackend(backends, scope))

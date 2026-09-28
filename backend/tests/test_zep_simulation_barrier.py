@@ -482,3 +482,231 @@ def test_shutdown_drain_failure_remains_failed_and_retryable(monkeypatch):
         SimulationRunner._cleanup_done = False
         SimulationRunner._graph_memory_enabled.pop(simulation_id, None)
         SimulationRunner._manual_stop_requests.discard(simulation_id)
+
+
+def test_completion_is_published_after_drain_while_the_env_stays_up(monkeypatch, tmp_path):
+    """#49: the script keeps its environment for interviews after both
+    platforms end, so the process does not exit. COMPLETED must still be
+    published, after the graph writes drain, and a later exit (close_env,
+    stop) must not turn it into FAILED."""
+
+    simulation_id = "sim-waiting"
+    for platform in ("twitter", "reddit"):
+        path = tmp_path / simulation_id / platform
+        path.mkdir(parents=True)
+        (path / "actions.jsonl").write_text(
+            '{"event_type":"simulation_end","total_rounds":1,"total_actions":0}\n', encoding="utf-8"
+        )
+    monkeypatch.setattr(SimulationRunner, "RUN_STATE_DIR", str(tmp_path))
+    monkeypatch.setattr(runner_module.time, "sleep", lambda _s: None)
+    state = SimulationRunState(simulation_id=simulation_id, runner_status=RunnerStatus.RUNNING,
+                               twitter_running=True, reddit_running=True)
+    events = []
+    published = []
+
+    class Process:
+        polls = 0
+        returncode = 1  # killed by close_env later
+
+        def poll(self):
+            self.polls += 1
+            if (published and self.polls > 5) or self.polls > 50:  # never hang the test
+                return 1
+            return None
+
+    monkeypatch.setattr(SimulationRunner, "get_run_state", classmethod(lambda _c, _s: state))
+    monkeypatch.setattr(SimulationRunner, "_save_run_state", classmethod(lambda _c, _s: None))
+    monkeypatch.setattr(
+        SimulationRunner, "_sync_simulation_status",
+        classmethod(lambda _c, _sid, status, *_a, **_k: published.append((status, process.polls))),
+    )
+    monkeypatch.setattr(
+        runner_module.ZepGraphMemoryManager, "stop_updater",
+        classmethod(lambda _c, _sid: events.append(("drain", len(published)))),
+    )
+    process = Process()
+    SimulationRunner._processes[simulation_id] = process
+    SimulationRunner._graph_memory_enabled[simulation_id] = True
+    try:
+        SimulationRunner._monitor_simulation(simulation_id)
+    finally:
+        SimulationRunner._processes.pop(simulation_id, None)
+        SimulationRunner._graph_memory_enabled.pop(simulation_id, None)
+
+    completed = [p for p in published if p[0] == RunnerStatus.COMPLETED]
+    assert completed, published
+    assert events and events[0][0] == "drain"
+    # Drained before COMPLETED, and COMPLETED while the process still ran.
+    assert published.index(completed[0]) >= events[0][1]
+    assert completed[0][1] <= 5
+    assert state.runner_status == RunnerStatus.COMPLETED
+    assert RunnerStatus.FAILED not in [p[0] for p in published]
+
+
+class _LiveEnv:
+    """An interview environment still running after COMPLETED."""
+
+    pid = 4242
+
+    def __init__(self):
+        self.alive = True
+
+    def poll(self):
+        return None if self.alive else 0
+
+
+def _completed(monkeypatch, simulation_id):
+    state = SimulationRunState(simulation_id=simulation_id, runner_status=RunnerStatus.COMPLETED)
+    monkeypatch.setattr(SimulationRunner, "get_run_state", classmethod(lambda _c, _s: state))
+    monkeypatch.setattr(SimulationRunner, "_save_run_state", classmethod(lambda _c, _s: None))
+    monkeypatch.setattr(SimulationRunner, "_sync_simulation_status", classmethod(lambda *_a, **_k: None))
+    ended = []
+    monkeypatch.setattr(
+        SimulationRunner, "_terminate_process",
+        classmethod(lambda _c, proc, sid, **_k: (ended.append(sid), setattr(proc, "alive", False))),
+    )
+    return state, ended
+
+
+def test_stop_after_completion_ends_the_environment(monkeypatch):
+    state, ended = _completed(monkeypatch, "sim-stop-done")
+    SimulationRunner._processes["sim-stop-done"] = _LiveEnv()
+    try:
+        result = SimulationRunner.stop_simulation("sim-stop-done")
+    finally:
+        SimulationRunner._processes.pop("sim-stop-done", None)
+    assert ended == ["sim-stop-done"]
+    assert result.runner_status == RunnerStatus.COMPLETED
+
+
+def test_shutdown_ends_a_completed_runs_environment(monkeypatch):
+    state, ended = _completed(monkeypatch, "sim-shutdown-done")
+    monkeypatch.setattr(runner_module.ZepGraphMemoryManager, "get_simulation_ids", classmethod(lambda _c: []))
+    monkeypatch.setattr(runner_module.ZepGraphMemoryManager, "get_updater", classmethod(lambda _c, _s: None))
+    monkeypatch.setattr(
+        SimulationRunner, "stop_simulation",
+        classmethod(lambda _c, _s: (_ for _ in ()).throw(AssertionError("stop must not run"))),
+    )
+    SimulationRunner._cleanup_done = False
+    SimulationRunner._processes["sim-shutdown-done"] = _LiveEnv()
+    try:
+        SimulationRunner.cleanup_all_simulations()
+    finally:
+        SimulationRunner._cleanup_done = False
+        SimulationRunner._processes.pop("sim-shutdown-done", None)
+    assert ended == ["sim-shutdown-done"]
+
+
+def test_restart_ends_the_previous_environment_first(monkeypatch, tmp_path):
+    state, ended = _completed(monkeypatch, "sim-restart")
+    (tmp_path / "sim-restart").mkdir()
+    (tmp_path / "sim-restart" / "simulation_config.json").write_text(
+        json.dumps({"time_config": {"total_simulation_hours": 1, "minutes_per_round": 60}}), encoding="utf-8"
+    )
+    monkeypatch.setattr(SimulationRunner, "RUN_STATE_DIR", str(tmp_path))
+    SimulationRunner._processes["sim-restart"] = _LiveEnv()
+
+    class Stop(Exception):
+        pass
+
+    # Stop right after the claim so no real process is started.
+    monkeypatch.setattr(
+        SimulationRunner, "_finalization_lock",
+        classmethod(lambda _c, _s: (_ for _ in ()).throw(Stop())),
+    )
+    try:
+        with pytest.raises(Stop):
+            SimulationRunner.start_simulation("sim-restart", platform="parallel")
+    finally:
+        SimulationRunner._processes.pop("sim-restart", None)
+    assert ended == ["sim-restart"]
+
+
+def test_old_monitor_leaves_a_newer_run_alone(monkeypatch, tmp_path):
+    simulation_id = "sim-owner"
+    monkeypatch.setattr(SimulationRunner, "RUN_STATE_DIR", str(tmp_path))
+    monkeypatch.setattr(runner_module.time, "sleep", lambda _s: None)
+    state = SimulationRunState(simulation_id=simulation_id, runner_status=RunnerStatus.COMPLETED)
+    saved = []
+    monkeypatch.setattr(SimulationRunner, "get_run_state", classmethod(lambda _c, _s: state))
+    monkeypatch.setattr(SimulationRunner, "_save_run_state", classmethod(lambda _c, s: saved.append(s)))
+    monkeypatch.setattr(SimulationRunner, "_sync_simulation_status", classmethod(lambda *_a, **_k: None))
+    old, new = _LiveEnv(), _LiveEnv()
+    SimulationRunner._processes[simulation_id] = old
+
+    real_poll = old.poll
+
+    def poll():
+        SimulationRunner._processes[simulation_id] = new  # a restart replaces it
+        return real_poll()
+
+    old.poll = poll
+    try:
+        SimulationRunner._monitor_simulation(simulation_id)
+        assert SimulationRunner._processes.get(simulation_id) is new
+    finally:
+        SimulationRunner._processes.pop(simulation_id, None)
+
+
+def _race_to_completion(monkeypatch, simulation_id, action):
+    """A thread holds the finalization lock with the run STOPPING (the drain),
+    then publishes COMPLETED and releases. ``action`` runs meanwhile and first
+    sees STOPPING, then COMPLETED once it has the lock (PR #55 review)."""
+
+    import threading
+
+    state = SimulationRunState(simulation_id=simulation_id, runner_status=RunnerStatus.STOPPING)
+    monkeypatch.setattr(SimulationRunner, "get_run_state", classmethod(lambda _c, _s: state))
+    monkeypatch.setattr(SimulationRunner, "_save_run_state", classmethod(lambda _c, _s: None))
+    monkeypatch.setattr(SimulationRunner, "_sync_simulation_status", classmethod(lambda *_a, **_k: None))
+    ended = []
+    monkeypatch.setattr(
+        SimulationRunner, "_terminate_process",
+        classmethod(lambda _c, proc, sid, **_k: (ended.append(sid), setattr(proc, "alive", False))),
+    )
+    process = _LiveEnv()
+    SimulationRunner._processes[simulation_id] = process
+    lock = SimulationRunner._finalization_lock(simulation_id)
+    lock.acquire()
+    outcome = {}
+
+    def run():
+        try:
+            outcome["result"] = action()
+        except Exception as error:  # noqa: BLE001 - recorded for the assertion
+            outcome["error"] = error
+
+    worker = threading.Thread(target=run)
+    try:
+        worker.start()
+        worker.join(0.3)  # the action now waits on the lock
+        state.runner_status = RunnerStatus.COMPLETED
+    finally:
+        lock.release()
+    worker.join(10)
+    SimulationRunner._processes.pop(simulation_id, None)
+    return outcome, ended, process
+
+
+def test_stop_racing_the_early_completion_ends_the_environment(monkeypatch):
+    outcome, ended, process = _race_to_completion(
+        monkeypatch, "sim-race-stop", lambda: SimulationRunner.stop_simulation("sim-race-stop")
+    )
+    assert "error" not in outcome, outcome
+    assert outcome["result"].runner_status == RunnerStatus.COMPLETED
+    assert ended == ["sim-race-stop"] and not process.alive
+
+
+def test_shutdown_racing_the_early_completion_leaves_no_orphan(monkeypatch):
+    monkeypatch.setattr(runner_module.ZepGraphMemoryManager, "get_simulation_ids", classmethod(lambda _c: []))
+    monkeypatch.setattr(runner_module.ZepGraphMemoryManager, "get_updater", classmethod(lambda _c, _s: None))
+    SimulationRunner._cleanup_done = False
+    try:
+        outcome, ended, process = _race_to_completion(
+            monkeypatch, "sim-race-shutdown", SimulationRunner.cleanup_all_simulations
+        )
+        assert "error" not in outcome, outcome
+        assert ended == ["sim-race-shutdown"] and not process.alive
+        assert SimulationRunner._cleanup_done is True
+    finally:
+        SimulationRunner._cleanup_done = False

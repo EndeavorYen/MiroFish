@@ -513,3 +513,26 @@ def test_stance_prior_anchors_the_intent_stance():
     assert held["stance"] == pytest.approx(0.5 * raw["stance"])  # halfway to the standing stance 0
     with pytest.raises(ValueError):
         SystemOnePolicy(FakeSystemOne(), load_taxonomy("twitter"), stance_prior_weight=1.5)
+
+
+def test_english_content_asks_the_intent_questions_in_english():
+    from app.simulation_policy.tiers import TieredContentProvider, load_templates
+
+    class Recording(Pick):
+        def __init__(self, *prefer):
+            super().__init__(*prefer)
+            self.questions = []
+
+        def ask(self, request):
+            self.questions += [(name, q) for name, q in request.questions.items()]
+            return super().ask(request)
+
+    feed = _feed()
+    for lang, word in (("en", "stance"), ("zh", "立場")):
+        client = Recording("create", "create_post")
+        content = TieredContentProvider(templates=load_templates(lang), lang=lang, entities=["X"])
+        policy = SystemOnePolicy(client, load_taxonomy("twitter"), seed=3, content_provider=content)
+        policy.decide(_obs(feed=feed))
+        stance_q = dict(client.questions)["stance"]
+        assert word in stance_q.instructions
+        assert len(stance_q.criteria) == 5

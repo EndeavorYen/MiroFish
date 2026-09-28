@@ -1029,6 +1029,12 @@ class SimulationRunner:
             cls._terminate_process(process, simulation_id)
         except ProcessLookupError:
             pass
+        except Exception as error:  # e.g. TimeoutExpired on the final wait
+            logger.error(f"关闭模拟环境失败，强制结束: {simulation_id}, error={error}")
+            try:
+                process.kill()
+            except Exception:
+                pass
         monitor = cls._monitor_threads.get(simulation_id)
         if monitor is not None and monitor is not threading.current_thread():
             monitor.join(timeout)

@@ -44,21 +44,21 @@ MiroFish 原本依賴雲端 LLM 與 Zep Cloud。本機模式讓整條流程都�
 - ReportAgent（`REPORT_MODE=agent`）單一請求會超過 8K；本機建議用 `REPORT_MODE=metrics`（兩個 profile 都已預設）。
 - 若要跑沒有記憶預算的 LLM 決策（`SIM_AGENT_CONTEXT_TOKENS=off`），每個 slot 需要 64K（`-c 262144 -np 4`，實測閒置 VRAM 13.0 GB）。
 
-### Docker compose（部分實測，2026-09-28）
+### Docker compose（已實測，2026-09-29）
 
-`docker compose --profile local up local-llm local-embed` 會啟動 vLLM（`--max-model-len 8192`）與 TEI，port 8000／8001。這時後端請在主機上跑（`npm run dev`）；`mirofish` 容器裡的 `127.0.0.1` 指的是容器自己，要改用 `LLM_BASE_URL=http://host.docker.internal:8000/v1` 等位址。vLLM 以 Hugging Face 模型 ID 作為模型名稱，所以要在 `.env` 設定（System One 會跟著用）：
+`docker compose --profile local up local-llm local-embed` 會啟動 vLLM（`--max-model-len 8192`）與 TEI，使用 port 8000／8001。後端請在主機上跑（`npm run dev`）。`mirofish` 容器裡的 `127.0.0.1` 指的是容器自己，所以要改用 `LLM_BASE_URL=http://host.docker.internal:8000/v1` 這類位址。vLLM 以 Hugging Face 模型 ID 當作模型名稱，要在 `.env` 設定（System One 會沿用）：
 
 ```env
 LLM_MODEL_NAME=SubSir/Qwen3.5-4B-AWQ
 ```
 
-實測環境：Docker Desktop 28.4、vLLM v0.30.0、TEI cpu-1.8.1，RTX 5080 16GB，主機 RAM 32 GB。
+實測環境：Docker Desktop 28.4、vLLM v0.30.0、TEI cpu-1.8.1、RTX 5080 16GB、主機 RAM 32 GB，`.wslconfig` 設 `memory=10GB`。
 
-- 兩個服務都能啟動。`/v1/models` 回傳 `SubSir/Qwen3.5-4B-AWQ`；TEI 的 `/v1/embeddings` 回傳 384 維向量。
-- System One 讀出可以直接接 vLLM 的 logprobs，`cache_prompt` 欄位不會造成錯誤。`system_one_eval.py`（205 題）的結果：choice 0.946、noul 0.877、score 1.00，標籤覆蓋率 ≥ 0.99，G2 通過。
-- 同一支 Playwright 腳本跑到第 1 步（本體與圖譜，使用容器裡的 vLLM 與 TEI）就通過，之後主機記憶體耗盡：WSL VM（`vmmemWSL`）占 15 GB，系統只剩 2.8 GB，後端被結束。完整流程沒有在 Docker 路徑跑完。
-- VRAM：vLLM 預設 `--gpu-memory-utilization 0.90`，會預先占掉整張卡（實測含其他程式共 15.3 GB）。要符合 10 GB 預算，得設 `LOCAL_LLM_GPU_MEMORY_UTILIZATION=0.6` 左右，這個設定尚未實測。
-- 替代方案：在 `%USERPROFILE%\.wslconfig` 限制 WSL 記憶體（例如 `memory=10GB`）；或改用上面的 llama.cpp 路徑，已實測通過，端到端 2.3 分鐘，見「重現實驗」。
+- **端到端通過**：同一支 Playwright 腳本、golden 種子、10 回合，耗時 1.4 分鐘，報告頁 6/6 章節。
+- System One 可以直接讀 vLLM 的 logprobs。`system_one_eval.py`（205 題）的結果：choice 0.946、noul 0.877、score 1.00，標籤覆蓋率 ≥ 0.99，G2 通過。TEI 的 `/v1/embeddings` 回傳 384 維。
+- 主機記憶體：沒有限制時，WSL VM 會長到 15 GB，主機只剩 2.8 GB，後端被結束。限制成 10 GB 後，vLLM 用 3.4 GB、TEI 用 1.5 GB。TEI 在預設設定下（每核心一個 tokenization worker、暖機 batch 很大）會在暖機時被 OOM 結束，compose 已改成 `--max-batch-tokens 2048 --tokenization-workers 4`。
+- VRAM：vLLM 預設 `--gpu-memory-utilization 0.90`，會預先占掉整張卡（實測連同其他程式共 15.4 GB）。要符合 10 GB 預算，請設 `LOCAL_LLM_GPU_MEMORY_UTILIZATION` 約 0.6，這個設定還沒實測。
+- 前端在開發模式（Docker 映像也是）改走 Vite 的 `/api` proxy。直接連 `:5001` 時，瀏覽器會重用開發伺服器已關閉的 keep-alive 連線，`POST /api/simulation/prepare` 因此偶爾出現 `ERR_CONNECTION_RESET`，環境準備那一步就會一直等下去。
 
 ## 各元件與開關
 

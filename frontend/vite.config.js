@@ -16,7 +16,9 @@ export default defineConfig({
     open: true,
     proxy: {
       '/api': {
-        target: 'http://localhost:5001',
+        // 127.0.0.1: Node tries ::1 first for "localhost", and the backend
+        // listens on IPv4 only (a 2 s connect timeout on each request here).
+        target: 'http://127.0.0.1:5001',
         changeOrigin: true,
         secure: false
       }

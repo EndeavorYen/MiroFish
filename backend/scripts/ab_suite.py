@@ -82,6 +82,14 @@ def ensure_prepared(work: Path, fixture: Path, mode: str, digest: str) -> dict[s
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def stance_question(fixture: Path) -> str | None:
+    """The manifest fixture's own question, so a moved prepared dir cannot
+    change which question the posts are scored on."""
+
+    path = fixture / "stance_question.txt"
+    return path.read_text(encoding="utf-8").strip() if path.is_file() else None
+
+
 def scenario_status(gates: dict[str, dict]) -> str:
     """``pass`` when every gate is ``pass`` or ``undecidable``."""
 
@@ -310,6 +318,7 @@ def main(argv: list[str] | None = None) -> int:
             "--rounds", str(args.rounds),
             "--bootstrap-reps", str(args.bootstrap_reps),
             "--delta", str(args.delta),
+            *(["--stance-question", question] if (question := stance_question(fixture)) else []),
         ])
         report = json.loads((run_out / "ab_report.json").read_text(encoding="utf-8"))
         rows.append(_row_from_report(name, report, time.perf_counter() - scenario_started))

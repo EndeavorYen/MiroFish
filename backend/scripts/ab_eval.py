@@ -198,12 +198,42 @@ def posts_by_round(run: Path) -> dict[int, list[str]]:
 
 
 def stance_question_for(prepared: dict[str, Any]) -> str:
-    """The scenario's question file, or the golden ``STANCE_QUESTION``."""
+    """The scenario's question file, or the golden ``STANCE_QUESTION``.
 
-    path = Path(prepared["fixture"]) / "stance_question.txt"
+    A prepared dir records the fixture path it was made from; after the
+    checkout moves, that path is gone. The fixture is then found by its
+    digest in the suite and calibration manifests. It used to fall back to
+    the golden question silently, so every non-golden scenario was scored
+    on the air-taxi question; an unknown fixture now stops the run.
+    """
+
+    if not prepared.get("fixture"):
+        return STANCE_QUESTION  # prepared before --fixture: the golden scenario
+    fixture = Path(prepared["fixture"])
+    if not fixture.is_dir():
+        fixture = _fixture_by_digest(prepared.get("fixture_digest"))
+        if fixture is None:
+            raise SystemExit(
+                f"fixture {prepared['fixture']} is gone and digest {prepared.get('fixture_digest')} "
+                "is in no manifest; pass --stance-question"
+            )
+    path = fixture / "stance_question.txt"
     if path.is_file():
         return path.read_text(encoding="utf-8").strip()
     return STANCE_QUESTION
+
+
+def _fixture_by_digest(digest: str | None) -> Path | None:
+    if not digest:
+        return None
+    fixtures = BACKEND_DIR / "tests" / "fixtures"
+    for manifest in (fixtures / "scenarios" / "suite.json", fixtures / "calibration" / "calibration.json"):
+        if not manifest.is_file():
+            continue
+        for row in json.loads(manifest.read_text(encoding="utf-8")).get("scenarios", []):
+            if row.get("digest") == digest:
+                return BACKEND_DIR / row["path"]
+    return None
 
 
 def score_posts(

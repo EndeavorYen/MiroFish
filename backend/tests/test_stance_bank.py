@@ -87,3 +87,14 @@ def test_bank_lines_must_be_in_the_bank_language():
     assert not usable_length("学生终于可以拥有一个安静的课后学习空间了", "en")
     assert usable_length("学生终于可以拥有一个安静的课后学习空间了", "zh")
     assert not usable_length("The toll is overdue, build the bike lane now", "zh")
+
+
+def test_template_audit_passes_on_two_of_three_fills():
+    from scripts.audit_templates import audit
+
+    templates = {"opinion": {"pos": ["{topic} ok"], "neu": ["{entity} hm"]}}
+    fills = [("E1", "T1"), ("E2", "T2"), ("E3", "T3")]
+    reads = {"T1 ok": "pos", "T2 ok": "pos_strong", "T3 ok": "pos", "E1 hm": "pos", "E2 hm": "neu", "E3 hm": "pos"}
+    report = audit(templates, fills, reads.__getitem__)
+    assert report["passed"] == 1 and report["total"] == 2
+    assert report["confusion"]["pos"] == {"pos": 2, "pos_strong": 1}

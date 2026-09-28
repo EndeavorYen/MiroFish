@@ -8,7 +8,8 @@ in docs/local-first.md before any G5 number was computed):
   (undecidable below 12 shared personas);
 * camp: the largest camp (oppose < 0.4 <= neutral <= 0.6 < support) matches;
 * lean: mean post stance within 0.10;
-* trend: last minus first 4-round window, within 0.10;
+* trend: last minus first 4-round window (windows both groups cover),
+  within 0.10;
 * cost: G4's decode ratio and VRAM gates.
 
 Action JS and stance-distribution JS are reported only. Reads
@@ -86,15 +87,26 @@ def _lean(runs: list[dict]) -> float | None:
     return statistics.mean(leans) if leans else None
 
 
-def _trend(runs: list[dict]) -> float | None:
+def _windows(runs: list[dict]) -> list[float | None]:
     curves = [run.get("stance_curve_windowed") or [] for run in runs]
     width = max((len(c) for c in curves), default=0)
     windows = []
     for i in range(width):
         values = [c[i] for c in curves if i < len(c) and c[i] is not None]
         windows.append(statistics.mean(values) if values else None)
-    present = [v for v in windows if v is not None]
-    return present[-1] - present[0] if len(present) >= 2 else None
+    return windows
+
+
+def _trends(a_runs: list[dict], b_runs: list[dict]) -> tuple[float | None, float | None]:
+    """Last minus first window, over the windows both groups have posts in.
+    A group whose first posts land a window earlier would otherwise be
+    compared from a different starting point."""
+
+    wa, wb = _windows(a_runs), _windows(b_runs)
+    both = [i for i in range(min(len(wa), len(wb))) if wa[i] is not None and wb[i] is not None]
+    if len(both) < 2:
+        return None, None
+    return wa[both[-1]] - wa[both[0]], wb[both[-1]] - wb[both[0]]
 
 
 def _status(ok: bool | None) -> str:
@@ -110,7 +122,7 @@ def evaluate(report: dict[str, Any]) -> dict[str, Any]:
     rank_ok = None if len(common) < MIN_PERSONAS or rank is None else rank >= RANK_MIN
     camp_a, camp_b = camp({n: pa[n] for n in common}), camp({n: pb[n] for n in common})
     lean_a, lean_b = _lean(a_runs), _lean(b_runs)
-    trend_a, trend_b = _trend(a_runs), _trend(b_runs)
+    trend_a, trend_b = _trends(a_runs, b_runs)
     g4 = report.get("gates", {})
     cost_ok = bool(g4.get("decode_ratio", {}).get("passed")) and bool(g4.get("vram", {}).get("passed"))
     action_js = (g4.get("action_js") or {}).get("b_vs_a")

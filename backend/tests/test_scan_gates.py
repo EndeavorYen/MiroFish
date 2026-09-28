@@ -68,3 +68,12 @@ def test_few_shared_personas_are_undecidable():
 def test_suite_verdict():
     assert sg.suite_verdict(["pass"] * 5 + ["fail"]) == "scan_ready"
     assert sg.suite_verdict(["pass"] * 4 + ["fail"] * 2) == "not_ready"
+
+
+def test_trend_uses_windows_both_groups_cover():
+    a = [_run({n: i / 11 for i, n in enumerate(NAMES)}, [1, 1, 1, 1, 1], [None, None, 0.6, 0.6])]
+    b = [_run({n: i / 11 for i, n in enumerate(NAMES)}, [1, 1, 1, 1, 1], [None, 0.95, 0.6, 0.62])]
+    gates = sg.evaluate(_report(a, b))
+    # Window 1 exists only in B; comparing from it would read a 0.33 drop.
+    assert gates["trend"]["b"] == pytest.approx(0.02)
+    assert gates["trend"]["status"] == "pass"

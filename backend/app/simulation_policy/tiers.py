@@ -188,6 +188,27 @@ def load_stance_bank(lang: str = "zh", path: Path | None = None) -> dict[str, An
     return data
 
 
+_SENTENCE_END_RE = re.compile(r"(?<=[。！？!?.])")
+
+
+def fit_example(line: str, limit: int, lang: str = "zh") -> str:
+    """The leading whole sentences of ``line`` within ``limit`` characters
+    (words in English), or '' when the first sentence is already longer.
+    Bank lines from LLM runs run up to 120 characters; shown whole, they
+    made the shared posts ~15% longer than the 40-character prompt asks."""
+
+    size = (lambda text: len(text.split())) if lang == "en" else len
+    kept = ""
+    for sentence in _SENTENCE_END_RE.split(line):
+        if not sentence.strip():
+            continue
+        candidate = kept + sentence
+        if size(candidate.strip()) > limit:
+            break
+        kept = candidate
+    return kept.strip()
+
+
 def _rng(*parts: Any) -> random.Random:
     digest = hashlib.sha256(":".join(map(str, parts)).encode("utf-8")).hexdigest()
     return random.Random(int(digest[:16], 16))
@@ -327,14 +348,20 @@ class TieredContentProvider:
             return []
         return list((bank.get("levels") or {}).get(level) or [])
 
-    def _example_line(self, intent: ContentIntent) -> str:
-        """One same-level tone example for the shared and full prompts, or ''."""
+    def _example_line(self, intent: ContentIntent, limit: int = 40) -> str:
+        """One same-level tone example for the shared and full prompts, cut to
+        the prompt's own length limit, or ''."""
 
+        lang = getattr(self, "lang", "zh")
         lines = self._bank_lines(stance_level(intent.stance))
-        if not lines:
+        filled = [
+            fit_example(line.format(topic=self._topic(intent), entity=self._entity_for(intent), target=""), limit, lang)
+            for line in lines
+        ]
+        filled = [text for text in filled if text]
+        if not filled:
             return ""
-        line = _rng("example", intent.platform, intent.round_num, intent.persona_ref).choice(lines)
-        example = line.format(topic=self._topic(intent), entity=self._entity_for(intent), target="")
+        example = _rng("example", intent.platform, intent.round_num, intent.persona_ref).choice(filled)
         if getattr(self, "lang", "zh") == "en":
             return f"Tone example at the same stance (do not copy it): {example}\n"
         return f"同样立场的语气参考（不要照抄）：{example}\n"
@@ -372,7 +399,7 @@ class TieredContentProvider:
                 f"Write one social post in English (under 60 words), kind \"{intent.kind}\", "
                 f"stance {band}, intensity {intent.intensity:.1f} (0-1), "
                 f"topic: {self._topic(intent)}.{reply}\n"
-                f"{self._example_line(intent)}"
+                f"{self._example_line(intent, 60)}"
                 "Keep the real names from the event. Output only the post."
             )
         target = f"\n你要回应的贴文：{intent.target_text[:160]}" if intent.target_text else ""
@@ -380,7 +407,7 @@ class TieredContentProvider:
             f"你是{intent.agent_name}。人设：{intent.persona[:300]}\n"
             f"用你的口吻写一则社群贴文（60字以内），发言类型「{intent.kind}」，立场{band}，"
             f"情绪强度{intent.intensity:.1f}（0-1），主题：{self._topic(intent)}。{target}\n"
-            f"{self._example_line(intent)}"
+            f"{self._example_line(intent, 60)}"
             "保留事件里的具体人名、机构或数字。只输出贴文本身。"
         )
 

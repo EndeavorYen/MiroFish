@@ -98,3 +98,21 @@ def test_template_audit_passes_on_two_of_three_fills():
     report = audit(templates, fills, reads.__getitem__)
     assert report["passed"] == 1 and report["total"] == 2
     assert report["confusion"]["pos"] == {"pos": 2, "pos_strong": 1}
+
+
+def test_examples_fit_the_prompt_length():
+    from app.simulation_policy.tiers import fit_example
+
+    line = "我们坚决反对{entity}！这是第二句，比较长一点点。第三句会超过上限而被丢掉的内容写在这里很多很多字。"
+    assert fit_example(line, 30, "zh") == "我们坚决反对{entity}！这是第二句，比较长一点点。"
+    assert fit_example("这一句本身就超过十个字的上限了。", 10, "zh") == ""
+    assert fit_example("Stop it now. This part makes the example run far too long for us.", 5, "en") == "Stop it now."
+
+
+def test_prompt_example_respects_the_shared_limit():
+    bank = {"lang": "zh", "seeds": [11], "levels": {"pos_strong": [
+        "全力支持{entity}！" + "理由很多很多很多很多很多很多很多很多很多很多很多很多很多很多很多很多。"]}}
+    provider = _provider(bank)
+    prompt = provider._shared_prompt(_intent(0.95))
+    assert "全力支持凌雲公司！" in prompt
+    assert "理由很多" not in prompt

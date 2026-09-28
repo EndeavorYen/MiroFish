@@ -328,3 +328,13 @@ def test_stance_question_survives_a_moved_fixture(tmp_path):
     with pytest.raises(SystemExit):
         ab.stance_question_for({"fixture": str(tmp_path / "gone"), "fixture_digest": "0" * 64})
     assert ab.stance_question_for({}) == ab.STANCE_QUESTION
+
+
+def test_independent_scorer_client():
+    from app.system_one.backends import LocalReadoutBackend
+
+    client = ab.scorer_client("http://127.0.0.1:8002/v1", "phi-4-mini", "plain")
+    assert isinstance(client.backend, LocalReadoutBackend)
+    assert (client.backend.base_url, client.backend.model, client.backend.prompt_format) == (
+        "http://127.0.0.1:8002/v1", "phi-4-mini", "plain")
+    assert ab.scorer_client(None, None, "chatml") is None

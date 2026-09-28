@@ -236,6 +236,23 @@ def _fixture_by_digest(digest: str | None) -> Path | None:
     return None
 
 
+def scorer_client(base_url: str | None, model: str | None, prompt_format: str = "chatml"):
+    """A readout client on another model, so the posts are not judged by the
+    model that wrote and checked them (#48); None keeps the System One client."""
+
+    if not base_url or not model:
+        return None
+    from app.system_one.backends import LocalReadoutBackend
+    from app.system_one.client import SystemOneClient, load_temperatures
+
+    return SystemOneClient(
+        LocalReadoutBackend(
+            base_url=base_url, model=model, prompt_format=prompt_format,
+            temperatures=load_temperatures(model=model),
+        )
+    )
+
+
 def score_posts(
     client,
     texts: list[str],
@@ -671,6 +688,10 @@ def main(argv: list[str] | None = None) -> int:
                         help="only run this group's simulations (e.g. to switch server settings between groups)")
     parser.add_argument("--extraction-recall", type=float, default=None,
                         help="entity recall from #7 (scripts/eval_local_extraction.py)")
+    parser.add_argument("--scorer-base-url", default=None,
+                        help="score posts with another model's readout (an independent judge, #48)")
+    parser.add_argument("--scorer-model", default=None)
+    parser.add_argument("--scorer-prompt-format", default="chatml", choices=["chatml", "plain"])
     args = parser.parse_args(argv)
     if gp.dotenv_files():
         parser.error("a .env file exists; move it aside (see golden_pipeline.py)")
@@ -699,7 +720,9 @@ def main(argv: list[str] | None = None) -> int:
     gp.force_local_config(out)
     from app.system_one.client import get_system_one_client
 
-    client = get_system_one_client()
+    client = scorer_client(args.scorer_base_url, args.scorer_model, args.scorer_prompt_format)
+    scorer = f"{args.scorer_model} @ {args.scorer_base_url}" if client else "system_one"
+    client = client or get_system_one_client()
     cache: dict[str, dict[str, Any]] = {}
     all_rows = {(name, seed): post_rows(info["dir"]) for name in runs for seed, info in runs[name].items()}
     prepared_a = json.loads((groups["A"]["work"] / "prepared.json").read_text(encoding="utf-8"))
@@ -750,6 +773,7 @@ def main(argv: list[str] | None = None) -> int:
         "summary": {**summary, "extraction_recall": args.extraction_recall},
         "gate_version": "g4v2",
         "stance_question": question,
+        "scorer": scorer,
         "gates": gates,
         "runs_with_llm_errors": excluded,
         "recommendation": recommendation,

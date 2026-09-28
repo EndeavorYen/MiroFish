@@ -241,6 +241,7 @@ SYSTEM_ONE_ENSEMBLE=all   # 或逗號分隔的題目 key；未設定＝只用第
 - 生成：依 `persona_ref` 的雜湊把每個 agent 固定分派到一個生成模型；呼叫失敗時退回第一個模型。分派記錄在 `decisions.jsonl` 的 `content_model` 與 `content_metrics` 的 `models`。
 - 讀出集成：範圍內的題目由每個讀出模型各答一次，機率取平均後重算答案，仍是零 decode；端點失效時該題改用其餘模型。
 - 各模型溫度：`calibrate_model.py --write` 寫進 `app/system_one/calibration.json` 的 `models.<名稱>`。
+- 獨立評分：`ab_eval.py --scorer-base-url http://127.0.0.1:8002/v1 --scorer-model phi-4-mini --scorer-prompt-format plain` 會改用另一個模型評貼文立場，模擬用的模型就不必兼任裁判；報告會記錄 `scorer`。
 - 非 Qwen 模型的 prompt 格式要實測：Gemma 用 plain 時 score 題的標籤幾乎不在 top-k（覆蓋率 0.0004），要用 chatml；Phi-4-mini 用 plain 較好。
 
 相關 issue：#1（epic）、#2–#13、#19、#26–#28、#34–#36、#43–#49、#51、#52。

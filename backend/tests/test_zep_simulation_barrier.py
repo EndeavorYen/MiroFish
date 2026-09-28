@@ -482,3 +482,62 @@ def test_shutdown_drain_failure_remains_failed_and_retryable(monkeypatch):
         SimulationRunner._cleanup_done = False
         SimulationRunner._graph_memory_enabled.pop(simulation_id, None)
         SimulationRunner._manual_stop_requests.discard(simulation_id)
+
+
+def test_completion_is_published_after_drain_while_the_env_stays_up(monkeypatch, tmp_path):
+    """#49: the script keeps its environment for interviews after both
+    platforms end, so the process does not exit. COMPLETED must still be
+    published, after the graph writes drain, and a later exit (close_env,
+    stop) must not turn it into FAILED."""
+
+    simulation_id = "sim-waiting"
+    for platform in ("twitter", "reddit"):
+        path = tmp_path / simulation_id / platform
+        path.mkdir(parents=True)
+        (path / "actions.jsonl").write_text(
+            '{"event_type":"simulation_end","total_rounds":1,"total_actions":0}\n', encoding="utf-8"
+        )
+    monkeypatch.setattr(SimulationRunner, "RUN_STATE_DIR", str(tmp_path))
+    monkeypatch.setattr(runner_module.time, "sleep", lambda _s: None)
+    state = SimulationRunState(simulation_id=simulation_id, runner_status=RunnerStatus.RUNNING,
+                               twitter_running=True, reddit_running=True)
+    events = []
+    published = []
+
+    class Process:
+        polls = 0
+        returncode = 1  # killed by close_env later
+
+        def poll(self):
+            self.polls += 1
+            if (published and self.polls > 5) or self.polls > 50:  # never hang the test
+                return 1
+            return None
+
+    monkeypatch.setattr(SimulationRunner, "get_run_state", classmethod(lambda _c, _s: state))
+    monkeypatch.setattr(SimulationRunner, "_save_run_state", classmethod(lambda _c, _s: None))
+    monkeypatch.setattr(
+        SimulationRunner, "_sync_simulation_status",
+        classmethod(lambda _c, _sid, status, *_a, **_k: published.append((status, process.polls))),
+    )
+    monkeypatch.setattr(
+        runner_module.ZepGraphMemoryManager, "stop_updater",
+        classmethod(lambda _c, _sid: events.append(("drain", len(published)))),
+    )
+    process = Process()
+    SimulationRunner._processes[simulation_id] = process
+    SimulationRunner._graph_memory_enabled[simulation_id] = True
+    try:
+        SimulationRunner._monitor_simulation(simulation_id)
+    finally:
+        SimulationRunner._processes.pop(simulation_id, None)
+        SimulationRunner._graph_memory_enabled.pop(simulation_id, None)
+
+    completed = [p for p in published if p[0] == RunnerStatus.COMPLETED]
+    assert completed, published
+    assert events and events[0][0] == "drain"
+    # Drained before COMPLETED, and COMPLETED while the process still ran.
+    assert published.index(completed[0]) >= events[0][1]
+    assert completed[0][1] <= 5
+    assert state.runner_status == RunnerStatus.COMPLETED
+    assert RunnerStatus.FAILED not in [p[0] for p in published]

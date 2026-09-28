@@ -36,9 +36,13 @@ test('local profile reaches a finished metrics report', async ({ page }) => {
   await expect(page).toHaveURL(/\/simulation\/[^/]+$/, { timeout: 60_000 })
   const start = page.locator('.action-btn.primary')
   await expect(start).toBeEnabled({ timeout: 20 * 60_000 })
-  await page.locator('input[type="checkbox"]').first().check()
-  await page.locator('input[type="range"]').first().fill(String(ROUNDS))
-  await expect(page.locator('.val-num').first()).toHaveText(String(ROUNDS))
+  // The rounds switch is a styled label; other checkboxes on the page (graph
+  // panel toggles) come first in document order.
+  const rounds = page.locator('.rounds-config-section')
+  await rounds.locator('.switch-control').click()
+  const slider = rounds.locator('.rounds-content.custom input[type="range"]')
+  await slider.fill(String(ROUNDS))
+  await expect(rounds.locator('.rounds-content.custom .val-num')).toHaveText(String(ROUNDS))
   await page.screenshot({ path: path.join(shots, '2-env.png') })
   await start.click()
 

@@ -603,8 +603,37 @@ class TieredContentProvider:
                     owner.set()
 
 
-def system_one_stance_score(text: str) -> float:
-    """Zero-decode stance in 0..1, the same five labels the prep path uses (#45)."""
+_EVENT_LEAD_RE = re.compile(r"^(?:模擬|模拟|Simulate\s+(?:social media\s+)?discussion\s+(?:of|after|about)\s+)", re.I)
+_EVENT_END_RE = re.compile(r"(?:之後|之后|後|后|時|时)?[，,]|\.\s|。")
+
+
+def event_phrase(requirement: str, limit: int = 80) -> str:
+    """The event a requirement simulates: "模擬X後，..." -> X (#45)."""
+
+    text = _EVENT_LEAD_RE.sub("", (requirement or "").strip())
+    match = _EVENT_END_RE.search(text)
+    if match:
+        text = text[: match.start()]
+    return text.strip().rstrip(".")[:limit]
+
+
+def stance_check_question(event: str, lang: str = "zh") -> str:
+    """The same form as the evaluation's per-scenario question (#45); without an
+    event, the plain question."""
+
+    if not event:
+        return "這則貼文的立場是什麼？"
+    if lang == "en":
+        return f"What is this post's stance on \"{event}\"?"
+    return f"這則貼文對「{event}」的立場是什麼？"
+
+
+def system_one_stance_score(text: str, question: str = "這則貼文的立場是什麼？") -> float:
+    """Zero-decode stance in 0..1, the same five labels the prep path uses (#45).
+
+    Asked without the event, the check judged posts on a different question
+    than the evaluation scores them on; repairs chosen that way moved the
+    mix toward neutral (5 of 6 suite scenarios, #45)."""
 
     from ..services.prep_structured import STANCE5, _level
     from ..system_one.client import get_system_one_client
@@ -613,7 +642,7 @@ def system_one_stance_score(text: str) -> float:
     answer = get_system_one_client().ask(
         SystemOneRequest(
             state=f"貼文：{text[:300]}",
-            questions={"s": ScoreQuestion(instructions="這則貼文的立場是什麼？", criteria=STANCE5)},
+            questions={"s": ScoreQuestion(instructions=question, criteria=STANCE5)},
         )
     ).answers["s"]
     return _level(answer.score, len(STANCE5))
@@ -693,7 +722,10 @@ def build_tiered_provider(
         generator = pooled_generator()
         llm_fn = generator.default if generator else openai_llm_fn()
     if score_fn is None and os.environ.get("CONTENT_STANCE_CHECK", "1") != "0":
-        score_fn = system_one_stance_score
+        import functools
+
+        question = stance_check_question(event_phrase(str(config.get("simulation_requirement") or "")), lang)
+        score_fn = functools.partial(system_one_stance_score, question=question)
     return TieredContentProvider(
         templates=load_templates(lang),
         llm_fn=llm_fn if mode == "tiered" else None,

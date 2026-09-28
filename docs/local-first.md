@@ -68,7 +68,7 @@ LLM_MODEL_NAME=SubSir/Qwen3.5-4B-AWQ
 | LLM 決策記憶 | `SIM_AGENT_CONTEXT_TOKENS` | `3072`（本機 URL 時的預設） | 只在 `local-llm` 有作用 |
 | 貼文立場檢查 | `CONTENT_STANCE_CHECK` | `1` | 生成後用零 decode 讀出實際立場；與意圖不同級時，改用最多 3 句同級模板中最接近的一句（#45） |
 | 語氣範例庫 | `CONTENT_STANCE_BANK` / `CONTENT_BANK_SHARE` | `1` / `0` | `locales/<lang>_stance_bank.json`（只取自 calibration 情境的 LLM runs）；預設只當共享、完整生成 prompt 的同級語氣參考（#45、#52） |
-| 準備階段校正 | `STANCE_CALIBRATION` | `app/services/stance_calibration.json` | 活躍度位移（readout 平均 0.35 → LLM 準備平均）；立場的保序映射目前留空（#46、#47） |
+| 準備階段校正 | `STANCE_CALIBRATION` | 未附檔（恆等） | `fit_prep_calibration.py` 可擬合立場保序映射與活躍度位移；兩者在評估情境都沒有整體改善，所以預設不附校正檔（#46、#47，見已知限制） |
 | 多模型池 | `MODEL_POOL` / `SYSTEM_ONE_ENSEMBLE` | 未設定（單一模型） | 見下方「多模型池」（#48） |
 
 ## 實測結果（golden scenario，每組 5 個 seed、24 回合）

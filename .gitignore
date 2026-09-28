@@ -61,3 +61,4 @@ data/
 # Playwright
 tests/e2e/artifacts/
 .playwright-mcp/
+backend/metrics/

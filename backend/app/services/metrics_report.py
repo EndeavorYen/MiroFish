@@ -352,6 +352,7 @@ def scan_conclusions(sim_dir: str, score_fn: ScoreFn) -> dict[str, Any] | None:
             **evidence("trend"),
         },
         "ranking": ranking,
+        "by_role": {name: _round(value) for name, value in sorted(means.items())},
     }
 
 

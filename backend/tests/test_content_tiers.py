@@ -475,3 +475,31 @@ def test_stance_check_asks_about_the_event(tmp_path, monkeypatch):
     )
     assert provider.score_fn("一則貼文") == pytest.approx(0.5)
     assert asked == ["這則貼文對「青浦市把河岸社區診所擴成全日服務」的立場是什麼？"]
+
+
+def test_posts_follow_the_scenario_script(tmp_path, monkeypatch):
+    from opencc import OpenCC
+
+    monkeypatch.setenv("CONTENT_MODE", "template")
+
+    from app.simulation_policy.tiers import build_tiered_provider, detect_zh_script
+
+    assert detect_zh_script("模擬東海市宣佈啟動無人駕駛空中計程車商業試點後，各方的反應。") == "hant"
+    assert detect_zh_script("模拟东海市宣布启动无人驾驶空中出租车商业试点后，各方的反应。") == "hans"
+    to_trad = OpenCC("s2tw")
+    config = {"simulation_requirement": "模擬東海市宣佈啟動空中計程車試點後，各方的反應。",
+              "agent_configs": [{"agent_id": 1, "entity_name": "凌雲飛行智能公司"}]}
+    provider = build_tiered_provider("twitter", str(tmp_path), config, score_fn=lambda text: 0.5)
+    assert provider.script == "hant"
+    for agent in range(1, 30):
+        text = provider.generate(_intent(agent=agent, round_num=agent, stance=(agent % 5) / 4, target=None))
+        assert text == to_trad.convert(text)  # nothing left to convert
+    assert "凌雲飛行智能公司" in to_trad.convert("凌雲飛行智能公司")  # names are kept, not localised
+
+    simplified = build_tiered_provider(
+        "twitter", str(tmp_path), {"simulation_requirement": "模拟东海市试点后的反应。", "agent_configs": []},
+        score_fn=lambda text: 0.5,
+    )
+    assert simplified.script == "hans"
+    monkeypatch.setenv("CONTENT_SCRIPT", "off")
+    assert build_tiered_provider("twitter", str(tmp_path), config, score_fn=lambda text: 0.5).script == "hans"

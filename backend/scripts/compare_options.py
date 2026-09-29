@@ -130,7 +130,8 @@ def compare(results: dict[str, dict[int, dict[str, Any]]], names: list[str]) -> 
 def _diff_text(block: dict[str, Any], scale: float = 1.0, unit: str = "") -> str:
     if block["mean"] is None:
         return "—"
-    text = f"{block['mean'] * scale:+.2f}{unit}（{block['same_sign']}/{block['seeds']} seed 同向）"
+    digits = 1 if scale != 1.0 else 2
+    text = f"{block['mean'] * scale:+.{digits}f}{unit}（{block['same_sign']}/{block['seeds']} seed 同向）"
     return text if block["distinct"] else text + "，無法區分"
 
 
@@ -167,6 +168,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3])
     parser.add_argument("--rounds", type=int, default=24)
+    parser.add_argument("--path", choices=["local", "llm"], default="local",
+                        help="local: template prep + System One (cheap scan); llm: LLM prep + LLM decisions (confirmation)")
     args = parser.parse_args(argv)
 
     import ab_eval
@@ -181,6 +184,7 @@ def main(argv: list[str] | None = None) -> int:
 
     requirement = (base / "simulation_requirement.txt").read_text(encoding="utf-8").strip()
     question = stance_check_question(event_phrase(requirement), detect_content_lang(requirement))
+    prep_mode, backend, content = ("template", "system_one", "tiered") if args.path == "local" else ("llm", "llm", None)
     results: dict[str, dict[int, dict[str, Any]]] = {}
     for option in options:
         fixture = option_fixture(base, option, out / option["name"] / "fixture")
@@ -188,13 +192,13 @@ def main(argv: list[str] | None = None) -> int:
         if not (work / "prepared.json").exists():
             subprocess.run(
                 [sys.executable, str(BACKEND_DIR / "scripts" / "golden_pipeline.py"), "prepare",
-                 "--work", str(work), "--prep-mode", "template", "--fixture", str(fixture)],
+                 "--work", str(work), "--prep-mode", prep_mode, "--fixture", str(fixture)],
                 cwd=str(BACKEND_DIR), check=True, stdout=subprocess.DEVNULL,
             )
         results[option["name"]] = {}
         for seed in args.seeds:
             run = out / option["name"] / f"seed{seed}"
-            ab_eval.run_simulation(work, run, "system_one", seed, args.rounds, "tiered")
+            ab_eval.run_simulation(work, run, backend, seed, args.rounds, content)
             gp.force_local_config(work)
             from app.services.metrics_report import default_score_fn, scan_conclusions
 
@@ -203,7 +207,7 @@ def main(argv: list[str] | None = None) -> int:
                 results[option["name"]][seed] = scan
     rows = compare(results, [o["name"] for o in options])
     (out / "compare.json").write_text(
-        json.dumps({"question": question, "options": options, "rows": rows}, ensure_ascii=False, indent=2),
+        json.dumps({"question": question, "path": args.path, "options": options, "rows": rows}, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
     text = render(rows, question)

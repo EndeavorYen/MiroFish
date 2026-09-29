@@ -282,15 +282,18 @@ def default_score_fn() -> ScoreFn:
     return lambda text, question: system_one_stance_score(text, question=question)
 
 
-def scan_conclusions(sim_dir: str, score_fn: ScoreFn) -> dict[str, Any] | None:
+def scan_conclusions(sim_dir: str, score_fn: ScoreFn, question: str | None = None) -> dict[str, Any] | None:
     """Directional conclusions from the posts, scored on the simulated event
-    in the same form as the evaluation (gate G5), with their confidence."""
+    in the same form as the evaluation (gate G5), with their confidence.
+
+    ``question`` overrides the one built from the run's requirement, so runs
+    of different options are scored on the same question (#56)."""
 
     from ..simulation_policy.tiers import detect_content_lang, event_phrase, stance_check_question
 
     config = _load_config(sim_dir)
     requirement = str(config.get("simulation_requirement") or "")
-    question = stance_check_question(event_phrase(requirement), detect_content_lang(requirement))
+    question = question or stance_check_question(event_phrase(requirement), detect_content_lang(requirement))
     posts = _posts(sim_dir)
     if not posts:
         return None
@@ -298,6 +301,7 @@ def scan_conclusions(sim_dir: str, score_fn: ScoreFn) -> dict[str, Any] | None:
     for post in posts:
         if post["text"] not in cache:
             cache[post["text"]] = float(score_fn(post["text"], question))
+    scored = [cache[p["text"]] for p in posts]
     by_agent: dict[str, list[float]] = defaultdict(list)
     by_window: dict[int, list[float]] = defaultdict(list)
     for post in posts:
@@ -353,6 +357,11 @@ def scan_conclusions(sim_dir: str, score_fn: ScoreFn) -> dict[str, Any] | None:
         },
         "ranking": ranking,
         "by_role": {name: _round(value) for name, value in sorted(means.items())},
+        "post_shares": {camp: _round(sum(1 for v in scored if _camp(v) == camp) / len(scored)) for camp in ("oppose", "neutral", "support")},
+        "most_opposed_posts": [
+            {"text": t, "stance": _round(cache[t])}
+            for t in sorted({p["text"] for p in posts}, key=lambda t: (cache[t], t))[:3]
+        ],
     }
 
 

@@ -180,6 +180,8 @@ docker compose up -d
 
 在一张消费级 GPU 上本机运行整条流程（知识图谱、准备、模拟、报告），只需在 `.env` 设置 `MIROFISH_PROFILE=local`（或 `local-llm`）并启动本机模型服务。完整步骤、实测数据与限制见 [docs/local-first.md](docs/local-first.md)。
 
+本机路径适合当便宜的扫描工具：报告会标出每个结论的可信度；`scripts/scan.py` 用多个 seed 扫描，并列出需要用 `local-llm` 确认的情境；`scripts/compare_options.py` 在同一情境下配对比较多个方案（公告措辞、定价、政策草案）的反应。
+
 ## 📬 更多交流
 
 <div align="center">

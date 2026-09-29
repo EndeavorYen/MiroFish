@@ -180,6 +180,8 @@ Reads `.env` from root directory by default, maps ports `3000 (frontend) / 5001 
 
 Run the whole pipeline (knowledge graph, preparation, simulation, report) on one consumer GPU: set `MIROFISH_PROFILE=local` (or `local-llm`) in `.env` and start the local model servers. Steps, measured results and limitations (in Traditional Chinese): [docs/local-first.md](docs/local-first.md).
 
+The local path is a cheap scanner: its report marks how far each conclusion can be trusted, `scripts/scan.py` runs several seeds and lists what to confirm with `local-llm`, and `scripts/compare_options.py` compares options (an announcement, a price, a policy draft) on the same scenario, paired by seed.
+
 ## 📬 Join the Conversation
 
 <div align="center">

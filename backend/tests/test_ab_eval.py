@@ -1,3 +1,4 @@
+import json
 import math
 
 import pytest
@@ -338,3 +339,17 @@ def test_independent_scorer_client():
     assert (client.backend.base_url, client.backend.model, client.backend.prompt_format) == (
         "http://127.0.0.1:8002/v1", "phi-4-mini", "plain")
     assert ab.scorer_client(None, None, "chatml") is None
+
+
+def test_scorer_by_pool_name(monkeypatch):
+    pool = [
+        {"name": "qwen", "base_url": "http://127.0.0.1:8000/v1", "model": "qwen3.5-4b"},
+        {"name": "phi", "base_url": "http://127.0.0.1:8002/v1", "model": "phi-4-mini", "prompt_format": "plain"},
+    ]
+    monkeypatch.setenv("MODEL_POOL", json.dumps(pool))
+    assert ab.scorer_endpoint("phi") == ("http://127.0.0.1:8002/v1", "phi-4-mini", "plain")
+    with pytest.raises(SystemExit, match="gemma"):
+        ab.scorer_endpoint("gemma")
+    monkeypatch.delenv("MODEL_POOL")
+    with pytest.raises(SystemExit, match="MODEL_POOL"):
+        ab.scorer_endpoint("phi")

@@ -236,6 +236,21 @@ def _fixture_by_digest(digest: str | None) -> Path | None:
     return None
 
 
+def scorer_endpoint(name: str) -> tuple[str, str, str]:
+    """(base_url, model, prompt_format) of the ``MODEL_POOL`` entry ``name``."""
+
+    import os
+
+    if not os.environ.get("MODEL_POOL", "").strip():
+        raise SystemExit(f"--scorer {name}: MODEL_POOL is not set")
+    from app.model_pool import load_pool
+
+    for entry in load_pool():
+        if entry.name == name:
+            return entry.base_url, entry.model, entry.prompt_format
+    raise SystemExit(f"--scorer {name}: no MODEL_POOL entry named {name}")
+
+
 def scorer_client(base_url: str | None, model: str | None, prompt_format: str = "chatml"):
     """A readout client on another model, so the posts are not judged by the
     model that wrote and checked them (#48); None keeps the System One client."""
@@ -692,7 +707,11 @@ def main(argv: list[str] | None = None) -> int:
                         help="score posts with another model's readout (an independent judge, #48)")
     parser.add_argument("--scorer-model", default=None)
     parser.add_argument("--scorer-prompt-format", default="chatml", choices=["chatml", "plain"])
+    parser.add_argument("--scorer", default=None,
+                        help="MODEL_POOL entry name to score posts with (sets the three --scorer-* options)")
     args = parser.parse_args(argv)
+    if args.scorer:
+        args.scorer_base_url, args.scorer_model, args.scorer_prompt_format = scorer_endpoint(args.scorer)
     if gp.dotenv_files():
         parser.error("a .env file exists; move it aside (see golden_pipeline.py)")
 

@@ -194,3 +194,25 @@ def test_bias_measures():
     ]
     assert polarity_bias(records) == pytest.approx(1.0)
     assert engage_bias(records) == pytest.approx(0.2)
+
+
+def test_calibrate_model_averages_an_ensemble(monkeypatch):
+    from app.system_one.models import ChoiceAnswer
+    from scripts import calibrate_model as cm
+
+    class Fixed:
+        def __init__(self, p_first):
+            self.p_first = p_first
+
+        def _ask_one(self, state, question):
+            keys = list(question.criteria)
+            probs = {k: (self.p_first if i == 0 else (1 - self.p_first) / (len(keys) - 1)) for i, k in enumerate(keys)}
+            return ChoiceAnswer(choice=max(probs, key=probs.get), probabilities=probs, confidence=max(probs.values())), None, None
+
+    assert cm.parse_with("http://127.0.0.1:8002/v1,phi-4-mini,plain") == ("http://127.0.0.1:8002/v1", "phi-4-mini", "plain")
+    assert cm.parse_with("http://h/v1,m")[2] == "chatml"
+    with pytest.raises(ValueError):
+        cm.parse_with("only-a-url")
+    row = {"type": "choice", "instructions": "?", "criteria": {"a": "A", "b": "B"}, "label": "a"}
+    answer = cm.ask_all([Fixed(0.9), Fixed(0.3)], "state", row)
+    assert answer.probabilities["a"] == pytest.approx(0.6)

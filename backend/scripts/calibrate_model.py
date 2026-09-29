@@ -66,6 +66,24 @@ def engage_bias(records: list[dict[str, Any]]) -> float | None:
     return round(statistics.mean(r["probs"][0] for r in rows) - statistics.mean(1.0 if r["label"] else 0.0 for r in rows), 4)
 
 
+def parse_with(spec: str) -> tuple[str, str, str]:
+    """``base_url,model[,prompt_format]`` of one more ensemble member."""
+
+    parts = [p.strip() for p in spec.split(",")]
+    if len(parts) not in (2, 3) or not all(parts):
+        raise ValueError(f"--with wants base_url,model[,prompt_format], got {spec!r}")
+    return parts[0], parts[1], parts[2] if len(parts) == 3 else "chatml"
+
+
+def ask_all(backends: list, state: str, row: dict[str, Any]):
+    """One answer per backend, averaged the way the readout ensemble does (#48)."""
+
+    from app.model_pool import combine
+
+    question = ev.question_for(row)
+    return combine(question, [backend._ask_one(state, question)[0] for backend in backends])
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--base-url", required=True)
@@ -75,17 +93,22 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--eval", type=Path, default=ev.DEFAULT_EVAL)
     parser.add_argument("--out", type=Path)
     parser.add_argument("--write", action="store_true")
+    parser.add_argument("--with", dest="members", action="append", default=[], metavar="URL,MODEL[,FORMAT]",
+                        help="another model; the report is then for the averaged ensemble (no --write)")
     args = parser.parse_args(argv)
+    if args.members and args.write:
+        parser.error("--write stores one model's temperatures; drop --with")
 
     rows = [json.loads(line) for line in args.eval.read_text(encoding="utf-8").splitlines() if line]
-    backend = LocalReadoutBackend(
-        base_url=args.base_url, model=args.model, top_k=args.top_k, prompt_format=args.prompt_format
-    )
+    backends = [
+        LocalReadoutBackend(base_url=url, model=model, top_k=args.top_k, prompt_format=fmt)
+        for url, model, fmt in [(args.base_url, args.model, args.prompt_format), *map(parse_with, args.members)]
+    ]
     by_type: dict[str, list[dict[str, Any]]] = {}
     records: list[dict[str, Any]] = []
     for row in rows:
         started = time.perf_counter()
-        answer, _, _ = backend._ask_one(row["state"], ev.question_for(row))
+        answer = ask_all(backends, row["state"], row)
         latency_ms = (time.perf_counter() - started) * 1000
         probs, gold = ev.distribution(row, answer)
         record = {
@@ -100,6 +123,7 @@ def main(argv: list[str] | None = None) -> int:
         by_category.setdefault(record["category"], []).append(record)
     report = {
         "model": args.model,
+        "ensemble_with": args.members,
         "base_url": args.base_url,
         "prompt_format": args.prompt_format,
         "eval_items": len(rows),
@@ -108,6 +132,7 @@ def main(argv: list[str] | None = None) -> int:
             c: round(sum(max(range(len(r["probs"])), key=r["probs"].__getitem__) == r["gold"] for r in rs) / len(rs), 4)
             for c, rs in sorted(by_category.items())
         },
+        "latency_ms_mean": round(statistics.mean(r["latency_ms"] for r in records), 1),
         "positivity_bias": polarity_bias(records),
         "engage_bias": engage_bias(records),
     }

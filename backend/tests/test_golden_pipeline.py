@@ -85,3 +85,25 @@ def test_requirement_prefers_the_copy_in_the_work_dir(tmp_path):
     (work / "simulation_requirement.txt").write_text("隨工作目錄的需求", encoding="utf-8")
     assert gp.requirement_for(work, {"fixture": str(tmp_path / "gone")}) == "隨工作目錄的需求"
     assert gp.requirement_for(tmp_path / "empty", {}) == (gp.FIXTURE / "simulation_requirement.txt").read_text(encoding="utf-8").strip()
+
+
+def test_reuse_graph_copies_the_graph_and_ontology(tmp_path):
+    import json
+
+    import scripts.golden_pipeline as gp
+
+    source = tmp_path / "base"
+    (source / "graphs").mkdir(parents=True)
+    (source / "graphs" / "mirofish_x.sqlite").write_bytes(b"db")
+    (source / "ontology.json").write_text(json.dumps({"entity_types": [{"name": "Person"}]}), encoding="utf-8")
+    (source / "prepared.json").write_text(json.dumps({"graph_id": "mirofish_x"}), encoding="utf-8")
+    work = tmp_path / "option"
+    graph_id, ontology = gp.reuse_graph(source, work)
+    assert graph_id == "mirofish_x"
+    assert ontology["entity_types"][0]["name"] == "Person"
+    assert (work / "graphs" / "mirofish_x.sqlite").read_bytes() == b"db"
+    assert (work / "ontology.json").exists()
+    import pytest
+
+    with pytest.raises(SystemExit):
+        gp.reuse_graph(tmp_path / "missing", tmp_path / "other")

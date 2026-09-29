@@ -7,9 +7,10 @@ model's own biases largely cancel between options and the per-seed
 differences can be paired.
 
 Each option becomes a scenario of its own: the base seed document plus the
-option text, and a requirement that names the option. It goes through the
-zero-decode template prep, so the option reaches the graph, the prep
-stances and the initial posts, then runs on the local path.
+option text, and a requirement that names the option. Every option reuses
+the baseline's graph (the same entities); the preparation readouts rerun
+with the option's requirement, so the option reaches the prep stances and
+activity, then the options run on the same seeds.
 
 ``options.json``::
 
@@ -186,13 +187,17 @@ def main(argv: list[str] | None = None) -> int:
     question = stance_check_question(event_phrase(requirement), detect_content_lang(requirement))
     prep_mode, backend, content = ("template", "system_one", "tiered") if args.path == "local" else ("llm", "llm", None)
     results: dict[str, dict[int, dict[str, Any]]] = {}
+    baseline_work = out / options[0]["name"] / "work"
     for option in options:
         fixture = option_fixture(base, option, out / option["name"] / "fixture")
         work = out / option["name"] / "work"
         if not (work / "prepared.json").exists():
+            # Every option shares the baseline's graph, so the options differ
+            # in what is announced, not in which entities were extracted.
+            reuse = ["--graph-from", str(baseline_work)] if work != baseline_work else []
             subprocess.run(
                 [sys.executable, str(BACKEND_DIR / "scripts" / "golden_pipeline.py"), "prepare",
-                 "--work", str(work), "--prep-mode", prep_mode, "--fixture", str(fixture)],
+                 "--work", str(work), "--prep-mode", prep_mode, "--fixture", str(fixture), *reuse],
                 cwd=str(BACKEND_DIR), check=True, stdout=subprocess.DEVNULL,
             )
         results[option["name"]] = {}

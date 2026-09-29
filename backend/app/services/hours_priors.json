@@ -1,0 +1,40 @@
+{
+  "weights": {
+    "all_day": 1.0,
+    "daytime_evening": 0.0515,
+    "evening": 0.1385,
+    "night_owl": 0.1275,
+    "office_hours": 0.0698
+  },
+  "target_share": {
+    "office_hours": 0.481,
+    "daytime_evening": 0.0,
+    "evening": 0.2911,
+    "all_day": 0.2278,
+    "night_owl": 0.0
+  },
+  "argmax_share_before": {
+    "office_hours": 0.6265,
+    "daytime_evening": 0.0964,
+    "evening": 0.2169,
+    "all_day": 0.0602,
+    "night_owl": 0.0
+  },
+  "argmax_share_after": {
+    "office_hours": 0.4819,
+    "daytime_evening": 0.0,
+    "evening": 0.2892,
+    "all_day": 0.2289,
+    "night_owl": 0.0
+  },
+  "entities": 83,
+  "scenarios": [
+    "beigang_water",
+    "dongbin_wind",
+    "nanan_nurses",
+    "nanling_food",
+    "xiping_schools",
+    "ashford_tolls",
+    "lakemont_library"
+  ]
+}

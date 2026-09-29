@@ -82,6 +82,36 @@ ACTIVE_PATTERNS = {
     "all_day": ("全天候活動（如媒體）", list(range(7, 24))),
     "night_owl": ("夜貓子，深夜最活躍", [20, 21, 22, 23, 0, 1, 2]),
 }
+# Weights on the hours readout, fitted on calibration scenarios by
+# scripts/fit_hours_priors.py (#53).
+HOURS_PRIORS_PATH = Path(__file__).with_name("hours_priors.json")
+
+
+def load_hours_weights() -> dict[str, float] | None:
+    """PREP_HOURS_PRIORS: unset or 0 = plain argmax, 1 = the shipped file,
+    anything else = a path to a file from fit_hours_priors.py."""
+
+    import os
+
+    setting = os.environ.get("PREP_HOURS_PRIORS", "0").strip()
+    if setting in ("", "0"):
+        return None
+    path = HOURS_PRIORS_PATH if setting == "1" else Path(setting)
+    return {k: float(v) for k, v in json.loads(path.read_text(encoding="utf-8"))["weights"].items()}
+
+
+def pick_hours(probabilities: dict[str, float], fallback: str) -> str:
+    """The hours pattern: the readout's choice, or with priors the pattern with
+    the largest probability x weight. The readout picked office hours for 63%
+    of the calibration entities against 48% in the LLM prep, so few agents
+    were online in the evening (#53)."""
+
+    weights = load_hours_weights()
+    if not weights or not probabilities:
+        return fallback
+    return max(probabilities, key=lambda k: probabilities[k] * weights.get(k, 1.0))
+
+
 MBTI = [
     "INTJ", "INTP", "ENTJ", "ENTP", "INFJ", "INFP", "ENFJ", "ENFP",
     "ISTJ", "ISFJ", "ESTJ", "ESFJ", "ISTP", "ISFP", "ESTP", "ESFP",
@@ -405,7 +435,7 @@ def structured_agent_config(
         "activity_level": round(activity_level, 3),
         "posts_per_hour": round(0.1 + 0.9 * activity, 3),
         "comments_per_hour": round(0.2 + 1.3 * activity, 3),
-        "active_hours": ACTIVE_PATTERNS[answers["hours"].choice][1],
+        "active_hours": ACTIVE_PATTERNS[pick_hours(answers["hours"].probabilities, answers["hours"].choice)][1],
         "response_delay_min": 5,
         "response_delay_max": 60,
         "sentiment_bias": round(stance * 2 - 1, 3),

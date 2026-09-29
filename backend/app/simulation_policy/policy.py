@@ -56,6 +56,21 @@ STANCE_LEVELS_EN = ["strongly opposed", "opposed", "neutral", "supportive", "str
 INTENSITY_LEVELS_EN = ["calm", "somewhat emotional", "very agitated"]
 
 
+def dither_stance(stance: float, rng: random.Random) -> float:
+    """One of the five stance levels (0, 0.25, ... 1), picked so that its
+    expected value is ``stance``.
+
+    Rounding to the nearest level put every intent between 0.8 and 1 on
+    "strongly supportive": in a one-sided scenario (qingpu, prior sd 0.06)
+    agents with different standing stances wrote the same level, and the
+    per-persona order of the intents (0.61 against the LLM path) was gone in
+    the posts (0.20, #53)."""
+
+    stance = min(1.0, max(0.0, stance))
+    lower = min(3, int(stance * 4)) / 4
+    return lower + 0.25 if rng.random() < (stance - lower) * 4 else lower
+
+
 def decision_rng(seed: int, platform: str, round_num: int, agent_id: int) -> random.Random:
     digest = hashlib.sha256(f"{seed}:{platform}:{round_num}:{agent_id}".encode()).hexdigest()
     return random.Random(int(digest[:16], 16))
@@ -117,6 +132,7 @@ class SystemOnePolicy:
         activation_counts: list[float] | None = None,
         stance_prior: dict[int, float] | None = None,
         stance_prior_weight: float = 0.5,
+        stance_dither: bool = False,
     ) -> None:
         if not 0.0 <= stance_prior_weight <= 1.0:
             raise ValueError(f"stance_prior_weight must be within 0..1, got {stance_prior_weight}")
@@ -139,6 +155,7 @@ class SystemOnePolicy:
         # supportive posts.
         self.stance_prior = dict(stance_prior or {})
         self.stance_prior_weight = stance_prior_weight
+        self.stance_dither = stance_dither
         self._memory: dict[tuple[str, int], dict[str, float]] = {}
         self._memory_lock = threading.Lock()
 
@@ -276,6 +293,9 @@ class SystemOnePolicy:
         prior = self.stance_prior.get(obs.agent_id)
         w = self.stance_prior_weight if prior is not None else 0.0
         stance = w * (prior or 0.0) + (1 - w) * readout_stance
+        continuous = stance
+        if self.stance_dither:
+            stance = dither_stance(stance, rng)
         intensity = score_to_unit(response.answers["intensity"].score, len(INTENSITY_LEVELS))
         intent = ContentIntent(
             kind=kind,
@@ -297,6 +317,7 @@ class SystemOnePolicy:
             "stance": round(stance, 4),
             "intensity": round(intensity, 4),
             **({"stance_readout": round(readout_stance, 4), "stance_prior": round(prior, 4)} if w else {}),
+            **({"stance_continuous": round(continuous, 4)} if self.stance_dither else {}),
         }
         return intent, record
 

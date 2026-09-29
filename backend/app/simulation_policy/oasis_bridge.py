@@ -83,6 +83,7 @@ def build_policy(
         activation_counts=load_activation_counts().get(platform),
         stance_prior=stance_priors(config),
         stance_prior_weight=weight,
+        stance_dither=os.environ.get("CONTENT_STANCE_DITHER", "0") == "1",
     )
 
 

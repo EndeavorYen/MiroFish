@@ -515,6 +515,29 @@ def test_stance_prior_anchors_the_intent_stance():
         SystemOnePolicy(FakeSystemOne(), load_taxonomy("twitter"), stance_prior_weight=1.5)
 
 
+def test_dithered_stance_lands_on_a_level_with_the_intent_as_its_mean():
+    import random
+
+    from app.simulation_policy.policy import dither_stance
+
+    rng = random.Random(0)
+    for stance in (0.0, 0.1, 0.3, 0.5, 0.62, 0.8, 0.93, 1.0):
+        draws = [dither_stance(stance, rng) for _ in range(4000)]
+        assert set(draws) <= {0.0, 0.25, 0.5, 0.75, 1.0}
+        assert max(draws) - min(draws) <= 0.25  # only the two levels around the stance
+        assert sum(draws) / len(draws) == pytest.approx(stance, abs=0.01)
+
+    feed = _feed()
+    plain = SystemOnePolicy(Pick("create", "create_post"), load_taxonomy("twitter"), seed=3,
+                            stance_prior={1: 0.9}, stance_prior_weight=1.0)
+    dithered = SystemOnePolicy(Pick("create", "create_post"), load_taxonomy("twitter"), seed=3,
+                               stance_prior={1: 0.9}, stance_prior_weight=1.0, stance_dither=True)
+    assert plain.decide(_obs(feed=feed)).record["intent"]["stance"] == pytest.approx(0.9)
+    held = dithered.decide(_obs(feed=feed)).record["intent"]
+    assert held["stance_continuous"] == pytest.approx(0.9)
+    assert held["stance"] in (0.75, 1.0)
+
+
 def test_english_content_asks_the_intent_questions_in_english():
     from app.simulation_policy.tiers import TieredContentProvider, load_templates
 

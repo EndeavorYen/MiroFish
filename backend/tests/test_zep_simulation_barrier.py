@@ -166,7 +166,7 @@ def test_stop_api_keeps_pending_finalization_out_of_failed_state(monkeypatch):
         ),
     )
     monkeypatch.setattr(
-        simulation_api,
+        simulation_api.run,
         "SimulationManager",
         lambda: SimpleNamespace(
             get_simulation=lambda _simulation_id: simulation,
@@ -214,7 +214,7 @@ def test_force_restart_does_not_continue_while_old_ingestion_is_pending(monkeypa
     )
     cleanup_called = []
     monkeypatch.setattr(
-        simulation_api,
+        simulation_api.run,
         "SimulationManager",
         lambda: SimpleNamespace(
             get_simulation=lambda _simulation_id: simulation,
@@ -222,7 +222,7 @@ def test_force_restart_does_not_continue_while_old_ingestion_is_pending(monkeypa
         ),
     )
     monkeypatch.setattr(
-        simulation_api,
+        simulation_api.run,
         "_check_simulation_prepared",
         lambda _simulation_id: (True, {}),
     )

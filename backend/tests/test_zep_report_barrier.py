@@ -204,7 +204,7 @@ def test_report_reader_lease_blocks_graph_start_and_delete(monkeypatch):
         ),
     )
     monkeypatch.setattr(
-        simulation_api,
+        simulation_api.run,
         "SimulationManager",
         lambda: SimpleNamespace(
             get_simulation=lambda _simulation_id: simulation

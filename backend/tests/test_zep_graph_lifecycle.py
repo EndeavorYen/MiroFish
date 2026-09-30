@@ -367,7 +367,7 @@ def test_graph_reset_and_memory_start_cannot_cross_between_delete_and_clear(
         "save_project",
         classmethod(lambda _cls, _project: None),
     )
-    monkeypatch.setattr(simulation_api, "SimulationManager", Simulations)
+    monkeypatch.setattr(simulation_api.run, "SimulationManager", Simulations)
     monkeypatch.setattr(
         simulation_api.ProjectManager,
         "get_project",

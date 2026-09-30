@@ -32,6 +32,8 @@ import statistics
 from collections import Counter, defaultdict
 from typing import Any, Callable
 
+from ..utils.locale import t
+
 PLATFORMS = ("twitter", "reddit")
 SUMMARY_MAX_TOKENS = 800
 TOP_POSTS = 5
@@ -332,7 +334,9 @@ def scan_conclusions(sim_dir: str, score_fn: ScoreFn, question: str | None = Non
     ordered = sorted(means.items(), key=lambda kv: (-kv[1], kv[0]))
     # System One runs log an intent per decision; LLM runs do not. The
     # structured prep records stance_raw; the LLM prep (hybrid) does not.
-    local = any(isinstance(row.get("intent"), dict) for row in _jsonl(os.path.join(sim_dir, "decisions.jsonl")))
+    # System One writes decisions.jsonl and the LLM path does not; a run whose
+    # decisions all failed has no intents but is still a local run (#62).
+    local = os.path.exists(os.path.join(sim_dir, "decisions.jsonl"))
     structured = any("stance_raw" in a for a in config.get("agent_configs", []))
     path = ("local" if structured else "hybrid") if local else "llm"
 
@@ -368,7 +372,7 @@ def scan_conclusions(sim_dir: str, score_fn: ScoreFn, question: str | None = Non
         "tendency": {"value": _round(statistics.mean(cache[p["text"]] for p in posts)), **evidence("tendency")},
         "trend": {
             "value": _round(trend) if trend is not None else None,
-            "rounds": [windows[0] * TREND_WINDOW, windows[-1] * TREND_WINDOW + TREND_WINDOW - 1],
+            "rounds": [windows[0] * TREND_WINDOW, max(p["round"] for p in posts)],
             **evidence("trend"),
         },
         "ranking": ranking,
@@ -386,7 +390,7 @@ def _scan_markdown(scan: dict[str, Any]) -> list[str]:
         return f"可信度：{CONFIDENCE_LABEL.get(block['confidence'], '參考')}（{block['evidence']}）"
 
     lines = [
-        "## 掃描結論與可信度",
+        f"## {t('metrics.scanConclusion')}",
         "",
         f"由 {scan['posts']} 則貼文的立場讀出計算（題目：{scan['question']}；0 = 強烈反對，1 = 強烈支持）。",
         "",
@@ -433,12 +437,28 @@ def _final_emotions(curve: dict[str, dict[str, float]]) -> tuple[str, dict[str, 
     return last, curve[last]
 
 
+def decision_error_rate(sim_dir: str) -> float | None:
+    """Share of System One decisions that failed (``error`` rows); None when
+    the run logged no decisions (the LLM path)."""
+
+    rows = _jsonl(os.path.join(sim_dir, "decisions.jsonl"))
+    if not rows:
+        return None
+    return sum(1 for row in rows if row.get("error")) / len(rows)
+
+
+ERROR_RATE_WARNING = 0.2
+
+
 def render_markdown(metrics: dict[str, Any], summary: str = "") -> str:
-    lines = ["# 模擬指標報告", ""]
+    lines = [f"# {t('metrics.reportTitle')}", ""]
+    rate = metrics.get("decision_error_rate")
+    if rate is not None and rate > ERROR_RATE_WARNING:
+        lines += [f"> ⚠️ {t('metrics.decisionErrorWarning', rate=f'{rate:.0%}')}", ""]
     if summary:
-        lines += ["## 摘要", "", summary.strip(), ""]
+        lines += [f"## {t('metrics.summary')}", "", summary.strip(), ""]
     lines += [
-        "## 概況",
+        f"## {t('metrics.overview')}",
         "",
         f"- Agent 數：{metrics['agents']}",
         f"- 實體類型：{', '.join(f'{k} {v}' for k, v in metrics['entity_types'].items()) or '—'}",
@@ -447,8 +467,15 @@ def render_markdown(metrics: dict[str, Any], summary: str = "") -> str:
     ]
     if metrics.get("scan"):
         lines += _scan_markdown(metrics["scan"])
+    elif metrics.get("scan_error"):
+        lines += [
+            f"## {t('metrics.scanConclusion')}",
+            "",
+            t("metrics.scanUnavailable", reason=metrics["scan_error"]),
+            "",
+        ]
     lines += [
-        "## 動作分布",
+        f"## {t('metrics.actionDistribution')}",
         "",
     ]
     for platform, data in metrics["actions"].items():
@@ -457,7 +484,7 @@ def render_markdown(metrics: dict[str, Any], summary: str = "") -> str:
             f"{a} {n}（{n / total:.0%}）" for a, n in sorted(data["total"].items(), key=lambda x: -x[1])
         )
         lines.append(f"- **{platform}**（{total} 個動作）：{parts}")
-    lines += ["", "## 情緒曲線", ""]
+    lines += ["", f"## {t('metrics.emotionCurve')}", ""]
     if metrics["emotion"]:
         for platform, data in metrics["emotion"].items():
             final = _final_emotions(data["overall"])
@@ -470,7 +497,7 @@ def render_markdown(metrics: dict[str, Any], summary: str = "") -> str:
                 lines.append(f"- **{platform}** 第 {first_round}→{final[0]} 輪：{change}")
     else:
         lines.append("- 無情緒狀態資料（LLM 決策模式不記錄情緒）。")
-    lines += ["", "## 擴散最廣的貼文", ""]
+    lines += ["", f"## {t('metrics.topPosts')}", ""]
     for platform, posts in metrics["spread"].items():
         for post in posts:
             chain = " → ".join(step["by"] for step in post["chain"][:6])
@@ -479,7 +506,7 @@ def render_markdown(metrics: dict[str, Any], summary: str = "") -> str:
                 f"（轉發／引用 {post['reposts_and_quotes']}，讚 {post['likes']}）"
                 + (f"；擴散路徑：{chain}" if chain else "")
             )
-    lines += ["", "## 立場分群", ""]
+    lines += ["", f"## {t('metrics.stanceClustering')}", ""]
     for etype, group in metrics["stance"].items():
         mean = group["expressed_stance_mean"]
         lines.append(
@@ -551,17 +578,22 @@ def write_metrics_report(
     """Compute metrics, write the two files, return (metrics, markdown).
 
     With ``score_fn`` the posts are scored for the scan conclusions; when that
-    fails (no model server) they are left out, like a failed summary."""
+    fails (no model server) the section states the reason."""
 
     from ..utils.llm_usage import usage_stage
 
     metrics = compute_metrics(sim_dir)
+    metrics["decision_error_rate"] = decision_error_rate(sim_dir)
     if score_fn is not None:
         try:
             metrics["scan"] = scan_conclusions(sim_dir, score_fn)
-        except Exception:  # noqa: BLE001 - the metrics report stands alone
+            if metrics["scan"] is None:
+                metrics["scan_error"] = "這次模擬沒有可評分的貼文"
+        except Exception as error:  # noqa: BLE001 - the metrics report stands alone
             logger.warning("scan conclusions failed", exc_info=True)
             metrics["scan"] = None
+            # Say why instead of leaving the section out (#62).
+            metrics["scan_error"] = f"{type(error).__name__}: {error}"
     os.makedirs(report_dir, exist_ok=True)
     with open(os.path.join(report_dir, "report_metrics.json"), "w", encoding="utf-8") as f:
         json.dump(metrics, f, ensure_ascii=False, indent=2, sort_keys=True)
@@ -652,7 +684,7 @@ def markdown_outline(markdown: str, outline_cls, section_cls):
     """Split a rendered metrics report into a ReportOutline (# title, ## sections)."""
 
     title_match = re.search(r"^# (.+)$", markdown, flags=re.M)
-    title = title_match.group(1).strip() if title_match else "模擬指標報告"
+    title = title_match.group(1).strip() if title_match else t("metrics.reportTitle")
     parts = re.split(r"^## (.+)$", markdown, flags=re.M)
     sections = [
         section_cls(title=parts[i].strip(), content=parts[i + 1].strip())

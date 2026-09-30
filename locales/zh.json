@@ -211,7 +211,8 @@
     "forceStopSuccess": "模拟已强制停止",
     "forceStopFailed": "强制停止失败: {error}",
     "startGenerateReportBtn": "开始生成结果报告",
-    "generatingReportBtn": "启动中..."
+    "generatingReportBtn": "启动中...",
+    "simFailedTitle": "模拟失败，无法生成报告"
   },
   "step4": {
     "generatingSection": "正在生成{title}...",
@@ -617,6 +618,18 @@
     "redirectToQuickSearch": "search_graph 已重定向到 quick_search",
     "redirectToInsightForge": "get_simulation_context 已重定向到 insight_forge"
   },
+  "metrics": {
+    "reportTitle": "模拟指标报告",
+    "summary": "摘要",
+    "overview": "概况",
+    "scanConclusion": "扫描结论与可信度",
+    "actionDistribution": "动作分布",
+    "emotionCurve": "情绪曲线",
+    "topPosts": "扩散最广的帖文",
+    "stanceClustering": "立场分群",
+    "decisionErrorWarning": "这次模拟有 {rate} 的 agent 决策失败（多半是模型服务没有回应），失败的决策都成了「不动作」。以下数字不能代表模拟结果，请修复模型服务后重跑。",
+    "scanUnavailable": "无法产生：{reason}"
+  },
   "console": {
     "zepToolsInitialized": "ZepToolsService 初始化完成",
     "zepRetryAttempt": "Zep {operation} 第 {attempt} 次尝试失败: {error}, {delay}秒后重试...",
@@ -938,6 +951,14 @@
       "期待": [
         "盼望",
         "期盼"
+      ],
+      "擔心": [
+        "担忧",
+        "忧心"
+      ],
+      "問題": [
+        "毛病",
+        "疑点"
       ]
     }
   }

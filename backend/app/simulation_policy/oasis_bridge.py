@@ -83,6 +83,7 @@ def build_policy(
         activation_counts=load_activation_counts().get(platform),
         stance_prior=stance_priors(config),
         stance_prior_weight=weight,
+        health=_shared(_new_health, os.path.join(simulation_dir, "decision_health")),
         stance_dither=os.environ.get("CONTENT_STANCE_DITHER", "0") == "1",
     )
 
@@ -115,6 +116,62 @@ def _shared(factory, path: str):
         if key not in _SHARED:
             _SHARED[key] = factory(path)
         return _SHARED[key]
+
+
+class ModelServiceUnavailable(RuntimeError):
+    """The model server stopped answering; the run's numbers would be empty."""
+
+
+class DecisionHealth:
+    """Stop a run whose decisions keep failing (#62).
+
+    A failed decision becomes DO_NOTHING so one timeout cannot stop a round.
+    When the model server is gone every decision fails, the platforms still
+    finish, and the run used to be published as completed with a report
+    built on nothing. The run stops when one platform has ``fail_rounds``
+    consecutive rounds in which every decision failed, or when more than
+    ``max_ratio`` of at least ``min_decisions`` decisions failed.
+    SIM_FAIL_ROUNDS / SIM_FAIL_RATIO / SIM_FAIL_MIN_DECISIONS tune it.
+    """
+
+    def __init__(self, fail_rounds: int | None = None, max_ratio: float | None = None,
+                 min_decisions: int | None = None) -> None:
+        self.fail_rounds = fail_rounds or int(os.environ.get("SIM_FAIL_ROUNDS", "2"))
+        self.max_ratio = max_ratio if max_ratio is not None else float(os.environ.get("SIM_FAIL_RATIO", "0.2"))
+        self.min_decisions = min_decisions or int(os.environ.get("SIM_FAIL_MIN_DECISIONS", "20"))
+        self._streak: dict[str, int] = {}
+        self._total = 0
+        self._failed = 0
+        self._lock = threading.Lock()
+
+    def record_round(self, platform: str, total: int, failed: int, first_error: str | None) -> None:
+        if total <= 0:
+            return
+        with self._lock:
+            self._total += total
+            self._failed += failed
+            self._streak[platform] = self._streak.get(platform, 0) + 1 if failed == total else 0
+            streak, ratio = self._streak[platform], self._failed / self._total
+            enough = self._total >= self.min_decisions
+        if streak >= self.fail_rounds:
+            raise ModelServiceUnavailable(
+                f"{platform}: every decision failed in {streak} consecutive rounds; last error: {first_error}"
+            )
+        if enough and ratio > self.max_ratio:
+            raise ModelServiceUnavailable(
+                f"{ratio:.0%} of {self._total} decisions failed; last error: {first_error}"
+            )
+
+
+def record_failure(simulation_dir: str, error: BaseException) -> None:
+    """failure.json: why the simulation process stopped, for the runner (#62)."""
+
+    with open(os.path.join(simulation_dir, "failure.json"), "w", encoding="utf-8") as f:
+        json.dump({"reason": str(error), "type": type(error).__name__}, f, ensure_ascii=False)
+
+
+def _new_health(_path: str) -> DecisionHealth:
+    return DecisionHealth()
 
 
 def decision_concurrency() -> int:
@@ -196,6 +253,7 @@ async def system_one_actions(
     # Bound concurrent agents so the model server's slots are not flooded
     # (each decision already issues several parallel readouts).
     limit = asyncio.Semaphore(decision_concurrency())
+    errors: list[str | None] = []
 
     async def decide(obs: Observation):
         async with limit:
@@ -206,6 +264,7 @@ async def system_one_actions(
                     "System One decision failed for agent %s round %s: %s",
                     obs.agent_id, obs.round_num, error,
                 )
+                errors.append(f"{type(error).__name__}: {error}")
                 policy.log.write(
                     {
                         "round": obs.round_num,
@@ -219,6 +278,10 @@ async def system_one_actions(
                 return None
 
     decisions = await asyncio.gather(*(decide(obs) for _, obs in observations))
+    health = getattr(policy, "health", None)
+    if health is not None:
+        failed = [e for e in errors if e]
+        health.record_round(platform, len(observations), len(failed), failed[-1] if failed else None)
     # One call is one platform round: close its content metrics row.
     flush = getattr(policy.content, "flush", None)
     if callable(flush):

@@ -1054,8 +1054,10 @@ def edit_roles(graph_id: str):
     with graph_lifecycle_lock(graph_id):
         if any(_project_has_active_build(p) for p in ProjectManager.find_projects_by_graph_id(graph_id)):
             return jsonify({"success": False, "error": t('api.graphBuilding')}), 409
-        # A running simulation writes agents back into the graph by name.
-        running = [c for c in _active_graph_consumers(graph_id) if not c.startswith("report:")]
+        # A simulation that still owns an updater (running, or failed with
+        # writes to retry) writes agents back into the graph by name. Read
+        # only: _active_graph_consumers would discard a failed run's updater.
+        running = ZepGraphMemoryManager.get_simulation_ids_for_graph(graph_id)
         if running:
             return jsonify({"success": False, "error": f"simulations are using this graph: {', '.join(running)}"}), 409
         for index, op in enumerate(ops):

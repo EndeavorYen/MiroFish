@@ -1132,6 +1132,11 @@ class LocalGraphStore:
                 self._store_vectors(graph, vectors)
         except Exception as error:
             logger.warning("role edit: vectors not refreshed (%s); run reembed_graphs.py", error)
+            try:  # so embedding_state() and --check report it
+                with graph.use() as conn, _transaction(conn):
+                    conn.execute("INSERT OR REPLACE INTO meta VALUES ('vectors_incomplete', '1')")
+            except Exception as flag_error:
+                logger.warning("role edit: could not flag vectors_incomplete (%s)", flag_error)
 
     @staticmethod
     def _delete_edge(conn: sqlite3.Connection, graph: _Graph, rowid: int) -> None:

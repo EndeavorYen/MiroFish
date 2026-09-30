@@ -148,6 +148,15 @@ def test_a_vector_failure_does_not_undo_or_fail_an_edit(store, monkeypatch):
     node = _roles(store)["師林書瑤"]
     store.rename_node("g1", node.uuid, "林書瑤二")  # does not raise
     assert "林書瑤二" in _roles(store)
+    assert store.embedding_state("g1") == "incomplete"  # --check says to re-embed
+
+
+def test_edits_wait_while_a_simulation_owns_the_graph(client, monkeypatch):
+    from app.services.zep_graph_memory_updater import ZepGraphMemoryManager
+
+    monkeypatch.setattr(ZepGraphMemoryManager, "get_simulation_ids_for_graph", classmethod(lambda cls, g: ["sim_1"]))
+    response = client.post("/api/graph/g1/roles", json={"ops": [{"op": "add", "name": "X", "type": "Company"}]})
+    assert response.status_code == 409 and "sim_1" in response.get_json()["error"]
 
 
 def test_the_api_rejects_non_string_fields(client):

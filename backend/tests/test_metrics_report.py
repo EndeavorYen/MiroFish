@@ -180,13 +180,17 @@ def test_missing_emotion_table_and_bad_stance_are_ignored(sim_dir):
     assert metrics["emotion"] is None
 
 
-def _scan_dir(tmp_path, stances, texts_by_round):
-    """agent_id -> configured stance 0..1; texts_by_round: [(round, agent_id, text)]."""
+def _scan_dir(tmp_path, stances, texts_by_round, structured=True):
+    """agent_id -> configured stance 0..1; texts_by_round: [(round, agent_id, text)].
+
+    ``structured`` writes the stance_raw field the structured prep records;
+    the LLM prep (the hybrid profile) has none."""
 
     config = {
         "simulation_requirement": "模擬空中計程車試點後，各方的反應。",
         "agent_configs": [
-            {"agent_id": a, "entity_name": f"角色{a}", "entity_type": "Person", "sentiment_bias": s * 2 - 1}
+            {"agent_id": a, "entity_name": f"角色{a}", "entity_type": "Person", "sentiment_bias": s * 2 - 1,
+             **({"stance_raw": s} if structured else {})}
             for a, s in stances.items()
         ],
     }
@@ -245,3 +249,16 @@ def test_scan_is_skipped_when_scoring_fails(sim_dir, tmp_path):
     metrics, markdown = write_metrics_report(str(sim_dir), str(tmp_path), "req", score_fn=broken)
     assert metrics["scan"] is None
     assert "## 掃描結論與可信度" not in markdown
+
+
+def test_hybrid_runs_cite_their_own_evidence(tmp_path):
+    from app.services.metrics_report import HYBRID_EVIDENCE, scan_conclusions
+
+    sim = _scan_dir(tmp_path, {1: 0.5, 2: 0.5, 3: 0.5}, [(1, 1, "a"), (1, 2, "b"), (5, 3, "c")], structured=False)
+    scan = scan_conclusions(str(sim), score_fn=lambda text, question: 0.5)
+    assert scan["path"] == "hybrid"
+    # Flat LLM-prep stances do not mean indistinct roles: the LLM agents' own
+    # reading of the persona orders them (#53), so the flag is structured-only.
+    assert scan["ranking"]["indistinct"] is False
+    assert scan["ranking"]["confidence"] == HYBRID_EVIDENCE["ranking"][0]
+    assert "混合" in scan["ranking"]["evidence"]

@@ -244,6 +244,15 @@ SCAN_EVIDENCE = {
     "trend": ("low", "3/6"),
     "ranking": ("low", "2/6"),
 }
+# The same for MIROFISH_PROFILE=local-hybrid (LLM prep, local simulation);
+# A and B share the prep there, so it measures whether the cheap simulation
+# reproduces the LLM simulation's conclusions from one preparation (#58).
+HYBRID_EVIDENCE = {
+    "main_camp": ("medium", "4/6"),
+    "tendency": ("high", "6/6"),
+    "trend": ("high", "5/6"),
+    "ranking": ("medium", "3/6"),
+}
 CONFIDENCE_LABEL = {"high": "高", "medium": "中", "low": "低", "none": "無法判讀"}
 CAMP_LABEL = {"oppose": "反對", "neutral": "中立", "support": "支持"}
 # Configured stances (0..1) spread less than this: the readout did not tell
@@ -321,16 +330,22 @@ def scan_conclusions(sim_dir: str, score_fn: ScoreFn, question: str | None = Non
     ]
     spread = statistics.pstdev(configured) if len(configured) > 1 else None
     ordered = sorted(means.items(), key=lambda kv: (-kv[1], kv[0]))
-    # System One runs log an intent per decision; LLM runs do not.
+    # System One runs log an intent per decision; LLM runs do not. The
+    # structured prep records stance_raw; the LLM prep (hybrid) does not.
     local = any(isinstance(row.get("intent"), dict) for row in _jsonl(os.path.join(sim_dir, "decisions.jsonl")))
+    structured = any("stance_raw" in a for a in config.get("agent_configs", []))
+    path = ("local" if structured else "hybrid") if local else "llm"
 
     def evidence(key: str) -> dict[str, str]:
-        if not local:
+        if path == "llm":
             return {"confidence": "reference", "evidence": "LLM 路徑，評估時的參考路徑"}
-        level, record = SCAN_EVIDENCE[key]
-        return {"confidence": level, "evidence": f"評估庫 {record} 個情境與 LLM 路徑一致"}
+        table, label = (SCAN_EVIDENCE, "本機路徑") if path == "local" else (HYBRID_EVIDENCE, "混合模式")
+        level, record = table[key]
+        return {"confidence": level, "evidence": f"{label}在評估庫 {record} 個情境與 LLM 路徑一致"}
 
-    indistinct = local and spread is not None and spread < INDISTINCT_SD
+    # Flat LLM-prep stances do not make the roles indistinct: the order comes
+    # from the persona text there, so the flag is for the structured prep only.
+    indistinct = path == "local" and spread is not None and spread < INDISTINCT_SD
     ranking = {
         "most_supportive": [{"name": n, "stance": _round(v)} for n, v in ordered[:3]],
         "most_opposed": [{"name": n, "stance": _round(v)} for n, v in reversed(ordered[-3:])],
@@ -344,6 +359,7 @@ def scan_conclusions(sim_dir: str, score_fn: ScoreFn, question: str | None = Non
         "question": question,
         "posts": len(posts),
         "local_path": local,
+        "path": path,
         "main_camp": {
             "value": max(camps, key=lambda c: camps[c]),
             "counts": camps,
@@ -392,11 +408,17 @@ def _scan_markdown(scan: dict[str, Any]) -> list[str]:
         top = "、".join(f"{r['name']} {r['stance']:.2f}" for r in ranking["most_supportive"])
         bottom = "、".join(f"{r['name']} {r['stance']:.2f}" for r in ranking["most_opposed"])
         lines.append(f"- **角色排序**：最支持 {top}；最反對 {bottom}。{conf(ranking)}")
-    if scan["local_path"]:
+    if scan.get("path", "local" if scan["local_path"] else "llm") == "local":
         lines += [
             "",
             "本機路徑的主要陣營可信；走向與角色排序在評估中只有約一半的情境和 LLM 路徑一致。"
-            "要依這兩項下判斷，請用 `MIROFISH_PROFILE=local-llm` 重跑確認。",
+            "要依這兩項下判斷，請用 `MIROFISH_PROFILE=local-hybrid` 或 `local-llm` 重跑確認。",
+        ]
+    elif scan.get("path") == "hybrid":
+        lines += [
+            "",
+            "混合模式（LLM 準備、本機模擬）的整體傾向與走向在評估中大多和 LLM 路徑一致，角色排序約一半；"
+            "主要陣營在「多數中立」的情境會偏中立（LLM 路徑偏支持）。重要的判斷請用 `MIROFISH_PROFILE=local-llm` 重跑確認。",
         ]
     return lines + [""]
 

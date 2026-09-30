@@ -1,6 +1,6 @@
 # 設定（環境變數）
 
-後端從環境變數與 `.env` 讀設定（`backend/app/config.py` 在啟動時載入專案根目錄的 `.env`）。多數人只需要設一個 profile：
+後端從環境變數與 `.env` 讀設定：`backend/app/config.py` 在啟動時載入專案根目錄的 `.env`，而且 **`.env` 的值會蓋過 shell 裡 export 的同名變數**（`load_dotenv(override=True)`）；要臨時改設定，請改 `.env`。多數人只需要設一個 profile：
 
 ```env
 MIROFISH_PROFILE=local        # 全本機、零 decode 的路徑
@@ -8,7 +8,7 @@ MIROFISH_PROFILE=local        # 全本機、零 decode 的路徑
 # MIROFISH_PROFILE=local-llm     # 本機 LLM 決定 agent 行動
 ```
 
-profile 只會填「還沒設定」的模式設定，所以 `.env` 裡明確寫的值優先；服務位址例外：本機 profile 會把雲端的 `LLM_BASE_URL`／`EMBED_BASE_URL` 換成本機服務（見 `backend/app/profiles.py`）。
+profile 只會填「還沒設定」的模式設定，所以 `.env` 裡明確寫的值優先；服務位址例外：本機 profile 會把雲端的 `LLM_BASE_URL`／`EMBED_BASE_URL` 換成本機服務，`SYSTEM_ONE_BASE_URL` 若不是本機位址也會改成 `LLM_BASE_URL`，並移除 `LLM_BOOST_*`（見 `backend/app/profiles.py`）。
 
 `backend/tests/test_env_documented.py` 會掃描程式讀取的每個環境變數，沒有寫在這份文件裡的測試就會失敗。
 
@@ -31,7 +31,7 @@ profile 只會填「還沒設定」的模式設定，所以 `.env` 裡明確寫�
 | `OPENAI_API_KEY` | 由 `LLM_API_KEY` 設定 | 模擬程序在啟動時依 `LLM_*` 設定給 CAMEL／OASIS 使用，不需要自己設。 |
 | `OPENAI_API_BASE_URL` | 由 `LLM_BASE_URL` 設定 | 同上。 |
 | `SYSTEM_ONE_BACKEND` | `local` | System One 讀出：`local`＝在本機模型服務讀 logprobs；`http`＝POST `{base}/v1/systemone`。 |
-| `SYSTEM_ONE_BASE_URL` | `http://localhost:8000/v1` | System One 讀出用的模型服務。 |
+| `SYSTEM_ONE_BASE_URL` | `http://localhost:8000/v1` | System One 讀出用的模型服務；使用本機 profile 時，非本機位址會被改成 `LLM_BASE_URL`。 |
 | `SYSTEM_ONE_MODEL` | `LLM_MODEL_NAME`，否則 `qwen3.5-4b` | System One 讀出用的模型名稱。 |
 | `SYSTEM_ONE_API_KEY` | 無 | System One 端點的 API key。 |
 | `SYSTEM_ONE_TOP_K` | `20` | 讀出時取的 logprobs 數量。 |
@@ -89,7 +89,7 @@ profile 只會填「還沒設定」的模式設定，所以 `.env` 裡明確寫�
 | 變數 | 預設 | 說明 |
 | --- | --- | --- |
 | `CONTENT_MODE` | `tiered` | `tiered`（分層：模板、共享生成、少量完整生成）或 `template`（只用模板，不 decode）。 |
-| `CONTENT_DECODE_BUDGET_PER_ROUND` | 完整生成的上限 | 每回合可用於生成貼文的 decode token 預算。 |
+| `CONTENT_DECODE_BUDGET_PER_ROUND` | `120` | 每個平台每回合可用於生成貼文的 decode token 預算（剛好一則完整生成或一次共享生成）。 |
 | `CONTENT_TOP_K_PERCENT` | `10` | 每回合最重要的前百分之幾的貼文可以完整生成。 |
 | `CONTENT_BANK_SHARE` | `0` | 模板貼文改用立場句庫句子的比例；預設句庫只用來引導共享與完整生成的語氣。 |
 | `CONTENT_STANCE_BANK` | `1` | `0`＝不用立場句庫。 |
@@ -113,7 +113,7 @@ profile 只會填「還沒設定」的模式設定，所以 `.env` 裡明確寫�
 | --- | --- | --- |
 | `FLASK_HOST` | `0.0.0.0` | 後端監聽位址。 |
 | `FLASK_PORT` | `5001` | 後端埠號。 |
-| `FLASK_DEBUG` | `False` | `True` 開啟 debug（不要用在正式環境）。 |
+| `FLASK_DEBUG` | `False` | `true`（不分大小寫）開啟 debug；`1` 不會開啟。不要用在正式環境。 |
 | `SECRET_KEY` | `mirofish-secret-key` | Flask secret key；對外服務時請改掉。 |
 | `WERKZEUG_RUN_MAIN` | 由 Flask 設定 | debug reloader 的子程序標記，不需要自己設。 |
 | `PYTHONIOENCODING` | 由後端設定 | 模擬子程序的輸出編碼（`utf-8`），不需要自己設。 |
@@ -125,3 +125,17 @@ profile 只會填「還沒設定」的模式設定，所以 `.env` 裡明確寫�
 | --- | --- | --- |
 | `MIROFISH_METRICS_DIR` | 依呼叫者 | LLM 使用量紀錄（`llm_usage.jsonl`）的資料夾。 |
 | `AB_MIN_FREE_GB` | `2.5` | 批次評估時，可用記憶體低於這個值就不啟動下一個模擬。 |
+| `HF_HOME` | `~/.cache/huggingface` | `convert_e5_gguf.py` 找 Hugging Face cache 的位置。 |
+| `HF_HUB_CACHE` | `$HF_HOME/hub` | 同上，直接指定 hub cache。 |
+
+## Docker compose 與前端
+
+這些變數不是後端讀的，但寫在同一個 `.env`：
+
+| 變數 | 預設 | 說明 |
+| --- | --- | --- |
+| `LOCAL_LLM_MODEL` | `SubSir/Qwen3.5-4B-AWQ` | `docker compose --profile local` 的 vLLM 模型（16 GB 可改 `Qwen/Qwen3.5-4B`）。 |
+| `LOCAL_LLM_GPU_MEMORY_UTILIZATION` | `0.90` | vLLM 預先占用的 VRAM 比例。 |
+| `LOCAL_EMBED_MODEL` | `intfloat/multilingual-e5-small` | compose 的 TEI embedding 模型。 |
+| `HF_TOKEN` | 無 | 下載需要授權的 Hugging Face 模型時使用。 |
+| `VITE_API_BASE_URL` | 開發：同源（Vite proxy）；建置：`http://localhost:5001` | 前端呼叫後端 API 的位址（建置時讀取）。 |

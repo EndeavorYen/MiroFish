@@ -14,7 +14,8 @@ before OASIS is imported. It provides the four names the platform uses:
   tokens between a user's bio plus latest post and each candidate post,
   weighted by OASIS's own recency score; users are not recommended their own
   posts while others are available.
-- ``rec_sys_personalized_with_trace``: the same ranking.
+- ``rec_sys_personalized_with_trace``: the same ranking without recency
+  (OASIS passes it no clock).
 - ``rec_sys_reddit`` and ``rec_sys_random``: OASIS's pure-Python versions.
 
 ``SIM_RECSYS=light`` (set by the local profiles) selects it; unset or
@@ -74,7 +75,7 @@ def similarity(a: frozenset[str], b: frozenset[str]) -> float:
     return len(a & b) / math.sqrt(len(a) * len(b))
 
 
-def recency(created_at: Any, current_time: int) -> float:
+def recency(created_at: Any, current_time: int | None) -> float:
     """OASIS's twhin recency weight, kept positive past its 171-step horizon."""
 
     try:
@@ -137,8 +138,9 @@ def rec_sys_personalized_with_trace(
     max_rec_post_len: int,
     swap_rate: float = 0.1,
 ) -> List[List]:
+    # No clock is passed here, so every post gets the same recency weight.
     return rec_sys_personalized_twh(
-        user_table, post_table, len(post_table), trace_table, rec_matrix, max_rec_post_len, 0)
+        user_table, post_table, len(post_table), trace_table, rec_matrix, max_rec_post_len, None)
 
 
 # --- OASIS's pure-Python recommenders, unchanged ---------------------------------

@@ -9,6 +9,7 @@ the igraph backend. ``defer_neo4j()`` installs a stand-in whose
 from __future__ import annotations
 
 import importlib
+import importlib.util
 import sys
 import types
 
@@ -36,6 +37,11 @@ def defer_neo4j() -> None:
 
     if "neo4j" in sys.modules:
         return
+    spec = importlib.util.find_spec("neo4j")
+    if spec is None:
+        return
     stand_in = _StandIn("neo4j")
+    # A package, so `from neo4j.exceptions import ...` still finds submodules.
+    stand_in.__path__ = list(spec.submodule_search_locations or [])
     stand_in.GraphDatabase = _DeferredGraphDatabase()
     sys.modules["neo4j"] = stand_in

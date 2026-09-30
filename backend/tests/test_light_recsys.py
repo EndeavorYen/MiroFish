@@ -106,6 +106,7 @@ def test_neo4j_loads_only_when_a_graph_database_is_opened():
         "defer_neo4j()\n"
         "import oasis\n"
         "before = 'neo4j._async' in sys.modules\n"
+        "from neo4j.exceptions import ClientError\n"
         "from neo4j import GraphDatabase\n"
         "try:\n"
         "    GraphDatabase.driver('bolt://127.0.0.1:1', auth=('a', 'b'))\n"
@@ -114,3 +115,11 @@ def test_neo4j_loads_only_when_a_graph_database_is_opened():
         "print(json.dumps([before, 'neo4j._async' in sys.modules]))\n"
     )
     assert loaded == [False, True]
+
+
+def test_the_trace_ranking_ignores_time_it_is_not_given():
+    users = [_user(0, "市場"), _user(1, "x")]
+    posts = [_post(1, 1, "市場反應", 0), _post(2, 1, "市場反應", 50), _post(3, 1, "無關", 50)]
+    light_recsys.reset_globals()
+    rec = light_recsys.rec_sys_personalized_with_trace(users, posts, [], [[], []], 2)
+    assert sorted(rec[0]) == [1, 2]  # both matching posts, whatever their age

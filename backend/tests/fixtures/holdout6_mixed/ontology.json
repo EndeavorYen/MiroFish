@@ -1,0 +1,114 @@
+{
+  "entity_types": [
+    {
+      "name": "Company",
+      "description": "企業或新創公司",
+      "attributes": []
+    },
+    {
+      "name": "MediaOutlet",
+      "description": "新聞媒體或專欄",
+      "attributes": []
+    },
+    {
+      "name": "ConsumerGroup",
+      "description": "消費者保護或權益團體",
+      "attributes": []
+    },
+    {
+      "name": "OnlineCommunity",
+      "description": "網路社群或論壇",
+      "attributes": []
+    },
+    {
+      "name": "CorporateExecutive",
+      "description": "企業主管或執行長",
+      "attributes": []
+    },
+    {
+      "name": "Analyst",
+      "description": "產業分析師",
+      "attributes": []
+    },
+    {
+      "name": "Journalist",
+      "description": "記者",
+      "attributes": []
+    },
+    {
+      "name": "Academic",
+      "description": "大學教授或研究人員",
+      "attributes": []
+    },
+    {
+      "name": "GroupLeader",
+      "description": "社群或團體的負責人、版主",
+      "attributes": []
+    },
+    {
+      "name": "Person",
+      "description": "個人使用者，例如開發者、學生、創作者",
+      "attributes": []
+    },
+    {
+      "name": "Organization",
+      "description": "其他組織",
+      "attributes": []
+    }
+  ],
+  "edge_types": [
+    {
+      "name": "WORKS_FOR",
+      "description": "任職於或為其撰稿",
+      "source_targets": [
+        {
+          "source": "Journalist",
+          "target": "MediaOutlet"
+        },
+        {
+          "source": "CorporateExecutive",
+          "target": "Company"
+        },
+        {
+          "source": "Analyst",
+          "target": "Organization"
+        },
+        {
+          "source": "Person",
+          "target": "Organization"
+        }
+      ],
+      "attributes": []
+    },
+    {
+      "name": "LEADS",
+      "description": "擔任負責人、執行長或版主",
+      "source_targets": [
+        {
+          "source": "CorporateExecutive",
+          "target": "Company"
+        },
+        {
+          "source": "GroupLeader",
+          "target": "OnlineCommunity"
+        },
+        {
+          "source": "GroupLeader",
+          "target": "ConsumerGroup"
+        }
+      ],
+      "attributes": []
+    },
+    {
+      "name": "COMPETES_WITH",
+      "description": "彼此競爭",
+      "source_targets": [
+        {
+          "source": "Company",
+          "target": "Company"
+        }
+      ],
+      "attributes": []
+    }
+  ]
+}

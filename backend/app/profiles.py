@@ -4,7 +4,8 @@
 the zero-decode paths (System One decisions, tiered content, structured
 prep, metrics report). ``MIROFISH_PROFILE=local-llm`` keeps everything
 local but lets the local LLM decide agent actions (closer to the hosted
-behaviour, ~15x the decode of ``local``).
+behaviour, ~15x the decode of ``local``). ``MIROFISH_PROFILE=local-hybrid``
+prepares with the local LLM and simulates like ``local``.
 
 Mode settings (decisions, content, prep, report ...) are only filled when
 unset, so ``.env`` can still change them. Service endpoints are different:
@@ -54,6 +55,18 @@ PROFILES: dict[str, dict[str, str]] = {
         "ONTOLOGY_MODE": "template",
         "PROFILE_MODE": "structured",
         "SIM_CONFIG_MODE": "structured",
+        "REPORT_MODE": "metrics",
+    },
+    # Preparation with the local LLM (one pass of decode), then the
+    # zero-decode simulation: the LLM prep carries the per-role stances the
+    # structured readout could not tell apart (#53).
+    "local-hybrid": {
+        **_LOCAL_MODES,
+        "SIM_DECISION_BACKEND": "system_one",
+        "CONTENT_MODE": "tiered",
+        "ONTOLOGY_MODE": "llm",
+        "PROFILE_MODE": "llm",
+        "SIM_CONFIG_MODE": "llm",
         "REPORT_MODE": "metrics",
     },
     "local-llm": {

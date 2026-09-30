@@ -41,13 +41,15 @@ class VectorsMixin:
             dim, stored = graph.current_dim(), graph.stored_probe()
         if dim is None:
             return "no vectors"
-        if stored is None:
-            return "no fingerprint"
         try:
             current = self._probe()
         except Exception as error:
             logger.warning("embedding fingerprint check failed: %s", error)
             return "unknown"
+        if stored is None:
+            # Built before fingerprints: at least the vector size must fit, or
+            # sqlite-vec rejects every query and write.
+            return "no fingerprint" if len(current) == dim else "other embedder"
         if not self._same_probe(current, stored):
             return "other embedder"
         with graph.use():
@@ -140,7 +142,12 @@ class VectorsMixin:
         self, graph: _Graph, vectors: dict[str, dict[int, tuple[str, list[float]]]]
     ) -> None:
         stored = graph.stored_probe()
-        if stored is not None and vectors and not self._same_probe(self._probe(), stored):
+        dim = graph.current_dim()
+        mismatch = vectors and (
+            (stored is not None and not self._same_probe(self._probe(), stored))
+            or (stored is None and dim is not None and len(self._probe()) != dim)
+        )
+        if mismatch:
             # Keyword search still finds the new rows; reembed restores vectors,
             # and --check reports the graph as incomplete until then.
             graph.conn.execute("INSERT OR REPLACE INTO meta VALUES ('vectors_incomplete', '1')")

@@ -173,3 +173,21 @@ def test_an_unavailable_embedder_is_unknown_and_search_uses_keywords(tmp_path, w
     assert store.embedding_state("g1") == "unknown"
     assert store.search("g1", "凌雲飛行", scope="nodes", limit=5).nodes
     store.close()
+
+
+def test_a_graph_without_a_fingerprint_and_another_dimension_uses_keywords(tmp_path, warnings):
+    """A pre-#61 graph (no fingerprint) searched by an embedder of another
+    size raised sqlite-vec's dimension mismatch; writes failed the same way."""
+
+    store = _seed(tmp_path, HashEmbedder(dim=256))
+    with store._graph("g1").use() as conn:
+        conn.execute("DELETE FROM meta WHERE key = 'embedding_probe'")
+    store.close()
+    store = _store(tmp_path, HashEmbedder(dim=128))
+    assert store.embedding_state("g1") == "other embedder"
+    assert store.search("g1", "凌雲飛行", scope="nodes", limit=5).nodes  # keywords, no error
+    store.add_text_episodes("g1", [TextEpisode("凌雲飛行下月載客。")], durable=True)  # no dimension error
+    assert store.embedding_state("g1") == "other embedder"
+    store.reembed("g1")
+    assert store.embedding_state("g1") == "matches"
+    store.close()

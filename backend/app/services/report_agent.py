@@ -159,7 +159,7 @@ class ReportAgent(ReportToolsMixin):
             progress_callback("planning", 0, t('progress.analyzingRequirements'))
         
         # 首先获取模拟上下文
-        context = self.graph_tools.get_simulation_context(
+        context = self.zep_tools.get_simulation_context(
             graph_id=self.graph_id,
             simulation_requirement=self.simulation_requirement
         )

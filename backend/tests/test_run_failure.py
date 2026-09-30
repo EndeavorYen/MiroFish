@@ -72,7 +72,7 @@ def test_start_refuses_when_the_model_service_is_down(monkeypatch):
         status = None
 
     monkeypatch.setattr(simulation_api.SimulationManager, "get_simulation", lambda self, sid: State())
-    monkeypatch.setattr(simulation_api, "check_model_service", lambda url: "模型服務無回應：http://127.0.0.1:8000/v1（ConnectError）")
+    monkeypatch.setattr(simulation_api._shared, "check_model_service", lambda url: "模型服務無回應：http://127.0.0.1:8000/v1（ConnectError）")
     cleaned = []
     monkeypatch.setattr(simulation_api.SimulationRunner, "cleanup_simulation_logs",
                         classmethod(lambda cls, sid: cleaned.append(sid)))
@@ -95,7 +95,7 @@ def test_the_check_probes_the_services_the_step_uses(monkeypatch):
     from app.api import simulation as simulation_api
 
     probed = []
-    monkeypatch.setattr(simulation_api, "check_model_service", lambda url: probed.append(url))
+    monkeypatch.setattr(simulation_api._shared, "check_model_service", lambda url: probed.append(url))
     monkeypatch.setattr(simulation_api.Config, "LLM_BASE_URL", "https://api.example.com/v1")
     monkeypatch.setattr(simulation_api.Config, "SYSTEM_ONE_BASE_URL", "http://localhost:8000/v1")
 

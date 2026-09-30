@@ -1,0 +1,105 @@
+{
+  "source": "news_seed.txt",
+  "label_source": "Held-out set for #64 (mixed Chinese/English): the OpenAI hypothetical seed used in the UI run on 2026-10-01, hand-annotated by the implementer (Claude Opus 5.5) and committed before any #64 extractor change; each extractor version is run once on it, no tuning afterwards. Products (ChatGPT Pro, Pro Max, Plus) are not entities: the ontology has no product type.",
+  "entities": [
+    {
+      "name": "OpenAI",
+      "type": "Company",
+      "aliases": []
+    },
+    {
+      "name": "雲梯科技",
+      "type": "Company",
+      "aliases": [
+        "雲梯"
+      ]
+    },
+    {
+      "name": "Anthropic",
+      "type": "Company",
+      "aliases": []
+    },
+    {
+      "name": "Google",
+      "type": "Company",
+      "aliases": []
+    },
+    {
+      "name": "數位前線",
+      "type": "MediaOutlet",
+      "aliases": []
+    },
+    {
+      "name": "數位消費者聯盟",
+      "type": "ConsumerGroup",
+      "aliases": []
+    },
+    {
+      "name": "台灣開發者社群",
+      "type": "OnlineCommunity",
+      "aliases": []
+    },
+    {
+      "name": "周明遠",
+      "type": "CorporateExecutive",
+      "aliases": []
+    },
+    {
+      "name": "林書瑤",
+      "type": "Analyst",
+      "aliases": []
+    },
+    {
+      "name": "高子恆",
+      "type": "CorporateExecutive",
+      "aliases": []
+    },
+    {
+      "name": "陳柏宇",
+      "type": "Person",
+      "aliases": []
+    },
+    {
+      "name": "王怡君",
+      "type": "Person",
+      "aliases": []
+    },
+    {
+      "name": "黃詩涵",
+      "type": "Person",
+      "aliases": []
+    },
+    {
+      "name": "劉家豪",
+      "type": "GroupLeader",
+      "aliases": []
+    },
+    {
+      "name": "吳承恩",
+      "type": "Journalist",
+      "aliases": []
+    },
+    {
+      "name": "蔡文彬",
+      "type": "Academic",
+      "aliases": []
+    }
+  ],
+  "relations": [
+    {
+      "source": "高子恆",
+      "target": "雲梯科技",
+      "type": "LEADS"
+    },
+    {
+      "source": "劉家豪",
+      "target": "台灣開發者社群",
+      "type": "LEADS"
+    },
+    {
+      "source": "吳承恩",
+      "target": "數位前線",
+      "type": "WORKS_FOR"
+    }
+  ]
+}

@@ -285,7 +285,7 @@ def test_monitor_start_failure_terminates_the_spawned_process(monkeypatch, tmp_p
         }),
         encoding="utf-8",
     )
-    (scripts_dir / "run_twitter_simulation.py").write_text("pass\n", encoding="utf-8")
+    (scripts_dir / "run_parallel_simulation.py").write_text("pass\n", encoding="utf-8")
 
     class Process:
         pid = 123
@@ -710,3 +710,50 @@ def test_shutdown_racing_the_early_completion_leaves_no_orphan(monkeypatch):
         assert SimulationRunner._cleanup_done is True
     finally:
         SimulationRunner._cleanup_done = False
+
+
+@pytest.mark.parametrize("platform, flag", [("twitter", "--twitter-only"), ("reddit", "--reddit-only"), ("parallel", None)])
+def test_one_platform_runs_the_parallel_script_with_its_flag(monkeypatch, tmp_path, platform, flag):
+    """#68: the single-platform scripts are gone; one entry point for all."""
+
+    simulation_id = f"sim-one-{platform}"
+    sim_dir = tmp_path / "runs" / simulation_id
+    scripts_dir = tmp_path / "scripts"
+    sim_dir.mkdir(parents=True)
+    scripts_dir.mkdir()
+    (sim_dir / "simulation_config.json").write_text(
+        json.dumps({"time_config": {"total_simulation_hours": 1, "minutes_per_round": 60}}), encoding="utf-8"
+    )
+    (scripts_dir / "run_parallel_simulation.py").write_text("pass\n", encoding="utf-8")
+    commands = []
+
+    class Process:
+        pid = 123
+
+        def poll(self):
+            return None
+
+    class IdleThread:
+        def __init__(self, **_kwargs):
+            pass
+
+        def start(self):
+            pass
+
+    monkeypatch.setattr(SimulationRunner, "RUN_STATE_DIR", str(tmp_path / "runs"))
+    monkeypatch.setattr(SimulationRunner, "SCRIPTS_DIR", str(scripts_dir))
+    monkeypatch.setattr(runner_module.subprocess, "Popen", lambda cmd, **_kw: commands.append(cmd) or Process())
+    monkeypatch.setattr(runner_module.threading, "Thread", IdleThread)
+    monkeypatch.setattr(SimulationRunner, "_sync_simulation_status", classmethod(lambda _cls, *_a, **_k: None))
+    try:
+        state = SimulationRunner.start_simulation(simulation_id, platform=platform)
+        cmd = commands[0]
+        assert cmd[1].endswith("run_parallel_simulation.py")
+        assert (flag in cmd) if flag else not {"--twitter-only", "--reddit-only"} & set(cmd)
+        assert state.twitter_running == (platform != "reddit")
+        assert state.reddit_running == (platform != "twitter")
+    finally:
+        for registry in (SimulationRunner._processes, SimulationRunner._action_queues,
+                         SimulationRunner._stdout_files, SimulationRunner._run_states,
+                         SimulationRunner._graph_memory_enabled):
+            registry.pop(simulation_id, None)

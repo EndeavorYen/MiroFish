@@ -133,6 +133,7 @@ class SystemOnePolicy:
         stance_prior: dict[int, float] | None = None,
         stance_prior_weight: float = 0.5,
         stance_dither: bool = False,
+        health: Any = None,
     ) -> None:
         if not 0.0 <= stance_prior_weight <= 1.0:
             raise ValueError(f"stance_prior_weight must be within 0..1, got {stance_prior_weight}")
@@ -156,6 +157,8 @@ class SystemOnePolicy:
         self.stance_prior = dict(stance_prior or {})
         self.stance_prior_weight = stance_prior_weight
         self.stance_dither = stance_dither
+        # oasis_bridge.DecisionHealth, shared by both platforms of a run (#62).
+        self.health = health
         self._memory: dict[tuple[str, int], dict[str, float]] = {}
         self._memory_lock = threading.Lock()
 

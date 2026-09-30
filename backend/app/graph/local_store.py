@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
+import math
 import os
 import re
 import sqlite3
@@ -35,6 +37,13 @@ from typing import Any, Literal
 import sqlite_vec
 
 from .embedding import Embedder, make_embedder
+
+logger = logging.getLogger("mirofish.graph")
+
+# A fixed text whose vector identifies the embedder that wrote a graph's
+# vectors (#61): a mis-converted and a correct e5-small GGUF are both 384-d.
+PROBE_TEXT = "embedding fingerprint: 東海市宣佈啟動無人駕駛計程車 / Taxi drivers oppose the air taxi pilot"
+PROBE_MATCH = 0.99  # cosine; the two e5-small GGUFs differ at 0.78-0.95
 from .extractor import ExtractedEntity, ExtractedRelation, Extraction, Extractor, StubExtractor
 from .store import (
     EpisodeHandle,
@@ -54,6 +63,10 @@ RRF_K = 60
 MAX_SUMMARY_CHARS = 1200
 MAX_ALIASES = 50
 _GRAPH_ID_RE = re.compile(r"^[A-Za-z0-9_\-]{1,128}$")
+# Role editing (#64): node_keys rows for names renamed or merged away, and
+# the attribute marking a role the user excluded from preparation.
+_ALIAS_KEY = "name:"
+ROLE_EXCLUDED = "role_excluded"
 
 _GRAPH_SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -124,6 +137,12 @@ def normalize_name(name: str) -> str:
     return re.sub(r"\s+", "", unicodedata.normalize("NFKC", name or "")).casefold()
 
 
+def _cosine(a: list[float], b: list[float]) -> float:
+    dot = sum(x * y for x, y in zip(a, b))
+    norm = math.sqrt(sum(x * x for x in a)) * math.sqrt(sum(y * y for y in b))
+    return dot / norm if norm else 0.0
+
+
 def _connect(path: str) -> sqlite3.Connection:
     conn = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
     conn.execute("PRAGMA journal_mode=WAL")
@@ -180,6 +199,24 @@ class _Graph:
         ).fetchone()
         return int(row[0]) if row else None
 
+    def stored_probe(self) -> list[float] | None:
+        row = self.conn.execute(
+            "SELECT value FROM meta WHERE key = 'embedding_probe'"
+        ).fetchone()
+        return json.loads(row[0]) if row else None
+
+    def set_probe(self, vector: list[float]) -> None:
+        self.conn.execute(
+            "INSERT OR REPLACE INTO meta VALUES ('embedding_probe', ?)", (json.dumps(vector),)
+        )
+
+    def drop_vectors(self) -> None:
+        for table in ("vec_nodes", "vec_edges"):
+            self.conn.execute(f"DROP TABLE IF EXISTS {table}")
+        self.conn.execute(
+            "DELETE FROM meta WHERE key IN ('embedding_dim', 'embedding_probe', 'vectors_incomplete')"
+        )
+
     def ensure_vec_tables(self, dim: int) -> None:
         current = self.current_dim()
         if current is None:
@@ -213,6 +250,8 @@ class LocalGraphStore:
         os.makedirs(self.data_dir, exist_ok=True)
         self.embedder = embedder
         self.extractor = extractor
+        self._probe_vector: list[float] | None = None
+        self._warned: set[str] = set()
         self._registry_lock = threading.RLock()
         self._registry = _connect(os.path.join(self.data_dir, "registry.sqlite"))
         self._registry.executescript(_REGISTRY_SCHEMA)
@@ -227,6 +266,11 @@ class LocalGraphStore:
         if not _GRAPH_ID_RE.match(graph_id or ""):
             raise ValueError(f"invalid graph_id: {graph_id!r}")
         return os.path.join(self.data_dir, f"{graph_id}.sqlite")
+
+    def graph_ids(self) -> list[str]:
+        with self._registry_lock:
+            rows = self._registry.execute("SELECT graph_id FROM graphs ORDER BY graph_id").fetchall()
+        return [row[0] for row in rows]
 
     def _exists(self, graph_id: str) -> bool:
         with self._registry_lock:
@@ -454,7 +498,16 @@ class LocalGraphStore:
             "SELECT rowid, uuid, labels, summary, attributes, name FROM nodes WHERE name_key = ?",
             (key,),
         ).fetchone()
+        if row is None:
+            # A name the user renamed or merged away (#64).
+            row = conn.execute(
+                "SELECT n.rowid, n.uuid, n.labels, n.summary, n.attributes, n.name FROM node_keys k "
+                "JOIN nodes n ON n.uuid = k.node_uuid WHERE k.key = ?",
+                (_ALIAS_KEY + key,),
+            ).fetchone()
         type_labels = [entity.entity_type] if entity.entity_type else []
+        if row is not None and json.loads(row[4]).get(ROLE_EXCLUDED):
+            type_labels = []  # the user excluded this role
         if row is None:
             node_uuid = uuidlib.uuid4().hex
             labels = ["Entity", *[t for t in type_labels if t != "Entity"]]
@@ -567,10 +620,114 @@ class LocalGraphStore:
             )
         return edge_uuid, rowid, text
 
+    def _probe(self) -> list[float]:
+        if self._probe_vector is None:
+            self._probe_vector = self.embedder.embed_documents([PROBE_TEXT])[0]
+        return self._probe_vector
+
+    def _warn_once(self, graph_id: str, message: str, *args: Any) -> None:
+        if graph_id not in self._warned:
+            self._warned.add(graph_id)
+            logger.warning(message, *args)
+
+    def embedding_state(self, graph_id: str) -> str:
+        """``matches``, ``other embedder``, ``no fingerprint``, ``no vectors`` or
+        ``unknown`` (the embedder did not answer), or ``incomplete`` (this
+        embedder's vectors, but rows written while another one ran have none) (#61)."""
+
+        graph = self._graph(graph_id)
+        with graph.use():
+            dim, stored = graph.current_dim(), graph.stored_probe()
+        if dim is None:
+            return "no vectors"
+        if stored is None:
+            return "no fingerprint"
+        try:
+            current = self._probe()
+        except Exception as error:
+            logger.warning("embedding fingerprint check failed: %s", error)
+            return "unknown"
+        if not self._same_probe(current, stored):
+            return "other embedder"
+        with graph.use():
+            incomplete = graph.conn.execute(
+                "SELECT 1 FROM meta WHERE key = 'vectors_incomplete'"
+            ).fetchone()
+        return "incomplete" if incomplete else "matches"
+
+    @staticmethod
+    def _same_probe(current: list[float], stored: list[float]) -> bool:
+        return len(current) == len(stored) and _cosine(current, stored) >= PROBE_MATCH
+
+    def vectors_usable(self, graph_id: str) -> bool:
+        """Whether this store's embedder wrote the graph's vectors."""
+
+        state = self.embedding_state(graph_id)
+        if state == "no fingerprint":
+            # Built before fingerprints: keep using its vectors, but say so.
+            self._warn_once(
+                graph_id,
+                "graph %s has no embedding fingerprint; if the embedding model (or its GGUF) "
+                "changed since it was built, run backend/scripts/reembed_graphs.py",
+                graph_id,
+            )
+        elif state == "other embedder":
+            self._warn_once(
+                graph_id,
+                "graph %s was embedded by another embedder; searching it by keywords only "
+                "until backend/scripts/reembed_graphs.py re-embeds it",
+                graph_id,
+            )
+        elif state == "incomplete":
+            self._warn_once(
+                graph_id,
+                "graph %s has rows without vectors (written by another embedder); "
+                "run backend/scripts/reembed_graphs.py",
+                graph_id,
+            )
+        elif state == "unknown":
+            # The query embedding would fail the same way: answer by keywords.
+            self._warn_once(
+                graph_id, "embedding service unavailable; searching graph %s by keywords only", graph_id
+            )
+        return state in ("matches", "no fingerprint", "incomplete")
+
+    def reembed(self, graph_id: str) -> dict[str, int]:
+        """Recompute every vector with this store's embedder.
+
+        A maintenance step: run it while nothing else writes to the graph.
+        """
+
+        graph = self._graph(graph_id)
+        with graph.use() as conn:
+            nodes = conn.execute("SELECT rowid, name, labels, summary FROM nodes").fetchall()
+            edges = conn.execute(
+                "SELECT e.rowid, e.name, e.fact, e.dedupe_key, s.name, t.name FROM edges e "
+                "LEFT JOIN nodes s ON s.uuid = e.source_uuid "
+                "LEFT JOIN nodes t ON t.uuid = e.target_uuid"
+            ).fetchall()
+        node_texts = {row[0]: self._node_text(row[1], json.loads(row[2]), row[3]) for row in nodes}
+        # The texts ingestion embeds: structured facts (_upsert_fact_edge) use
+        # "relation fact", extracted relations (_upsert_edge) name both ends.
+        edge_texts = {
+            row[0]: f"{row[1]} {row[2]}" if row[3].startswith("fact:")
+            else f"{row[4] or ''} {row[1]} {row[5] or ''} {row[2]}"
+            for row in edges
+        }
+        vectors = self._embed(node_texts, edge_texts)
+        with graph.use() as conn, _transaction(conn):
+            graph.drop_vectors()
+            if vectors:
+                self._store_vectors(graph, vectors)
+        self._warned.discard(graph_id)
+        return {"nodes": len(node_texts), "edges": len(edge_texts)}
+
     def _embed(
         self, node_texts: dict[int, str], edge_texts: dict[int, str]
     ) -> dict[str, dict[int, tuple[str, list[float]]]]:
         result: dict[str, dict[int, tuple[str, list[float]]]] = {}
+        if node_texts or edge_texts:
+            self._probe()  # outside the graph lock; _store_vectors records it
         for table, texts in (("vec_nodes", node_texts), ("vec_edges", edge_texts)):
             if texts:
                 rowids = list(texts)
@@ -581,8 +738,22 @@ class LocalGraphStore:
     def _store_vectors(
         self, graph: _Graph, vectors: dict[str, dict[int, tuple[str, list[float]]]]
     ) -> None:
+        stored = graph.stored_probe()
+        if stored is not None and vectors and not self._same_probe(self._probe(), stored):
+            # Keyword search still finds the new rows; reembed restores vectors,
+            # and --check reports the graph as incomplete until then.
+            graph.conn.execute("INSERT OR REPLACE INTO meta VALUES ('vectors_incomplete', '1')")
+            logger.warning(
+                "not storing vectors in %s: another embedder wrote its vectors; "
+                "run backend/scripts/reembed_graphs.py",
+                os.path.basename(graph.path),
+            )
+            return
         for table, by_rowid in vectors.items():
+            new = graph.current_dim() is None
             graph.ensure_vec_tables(len(next(iter(by_rowid.values()))[1]))
+            if new:
+                graph.set_probe(self._probe())
             for rowid, (text, vector) in by_rowid.items():
                 if (
                     table == "vec_nodes"
@@ -902,6 +1073,212 @@ class LocalGraphStore:
             ).fetchall()
         return [self._edge(r) for r in rows]
 
+    # ------------------------------------------------------------ role editing
+
+    def _entity_types(self, conn: sqlite3.Connection) -> set[str]:
+        row = conn.execute("SELECT body FROM ontology WHERE id = 1").fetchone()
+        ontology = json.loads(row[0]) if row else {}
+        return {t.get("name") for t in ontology.get("entity_types", [])}
+
+    def _role_row(self, conn: sqlite3.Connection, node_uuid: str) -> tuple:
+        row = conn.execute(
+            "SELECT rowid, name, labels, summary, attributes FROM nodes WHERE uuid = ?", (node_uuid,)
+        ).fetchone()
+        if row is None or "Entity" not in json.loads(row[2]):
+            raise GraphNotFoundError(f"role not found: {node_uuid}")
+        return row
+
+    @staticmethod
+    def _add_alias(conn: sqlite3.Connection, attributes: dict, alias: str, node_uuid: str) -> None:
+        aliases = [a for a in attributes.get("aliases", []) if a != alias]
+        attributes["aliases"] = [alias, *aliases][:MAX_ALIASES]
+        conn.execute(
+            "INSERT OR REPLACE INTO node_keys VALUES (?, ?)", (_ALIAS_KEY + normalize_name(alias), node_uuid)
+        )
+
+    def _refresh_role_texts(self, graph: _Graph, node_uuids: list[str]) -> None:
+        """FTS rows now, vectors of the nodes and their edges after (#61 formats)."""
+
+        with graph.use() as conn:
+            nodes = conn.execute(
+                f"SELECT rowid, name, labels, summary FROM nodes WHERE uuid IN ({','.join('?' * len(node_uuids))})",
+                node_uuids,
+            ).fetchall()
+            edges = conn.execute(
+                "SELECT e.rowid, e.name, e.fact, e.dedupe_key, s.name, t.name FROM edges e "
+                "LEFT JOIN nodes s ON s.uuid = e.source_uuid LEFT JOIN nodes t ON t.uuid = e.target_uuid "
+                f"WHERE e.source_uuid IN ({','.join('?' * len(node_uuids))}) "
+                f"OR e.target_uuid IN ({','.join('?' * len(node_uuids))})",
+                [*node_uuids, *node_uuids],
+            ).fetchall()
+        node_texts = {row[0]: self._node_text(row[1], json.loads(row[2]), row[3]) for row in nodes}
+        edge_texts = {
+            row[0]: f"{row[1]} {row[2]}" if row[3].startswith("fact:")
+            else f"{row[4] or ''} {row[1]} {row[5] or ''} {row[2]}"
+            for row in edges
+        }
+        with graph.use() as conn, _transaction(conn):
+            for rowid, text in node_texts.items():
+                conn.execute("DELETE FROM nodes_fts WHERE rowid = ?", (rowid,))
+                conn.execute("INSERT INTO nodes_fts (rowid, body) VALUES (?, ?)", (rowid, index_text(text)))
+            for rowid, text in edge_texts.items():
+                conn.execute("DELETE FROM edges_fts WHERE rowid = ?", (rowid,))
+                conn.execute("INSERT INTO edges_fts (rowid, body) VALUES (?, ?)", (rowid, index_text(text)))
+        # The edit is committed; a vector failure must not read as a failed
+        # edit. Keyword search already sees the change.
+        try:
+            vectors = self._embed(node_texts, edge_texts)
+            with graph.use() as conn, _transaction(conn):
+                self._store_vectors(graph, vectors)
+        except Exception as error:
+            logger.warning("role edit: vectors not refreshed (%s); run reembed_graphs.py", error)
+            try:  # so embedding_state() and --check report it
+                with graph.use() as conn, _transaction(conn):
+                    conn.execute("INSERT OR REPLACE INTO meta VALUES ('vectors_incomplete', '1')")
+            except Exception as flag_error:
+                logger.warning("role edit: could not flag vectors_incomplete (%s)", flag_error)
+
+    @staticmethod
+    def _delete_edge(conn: sqlite3.Connection, graph: _Graph, rowid: int) -> None:
+        conn.execute("DELETE FROM edges WHERE rowid = ?", (rowid,))
+        conn.execute("DELETE FROM edges_fts WHERE rowid = ?", (rowid,))
+        if graph.current_dim() is not None:
+            conn.execute("DELETE FROM vec_edges WHERE rowid = ?", (rowid,))
+
+    def _rekey_moved_edges(self, conn: sqlite3.Connection, graph: _Graph, rowids: list[int]) -> None:
+        """Extracted edges key on their endpoints (_upsert_edge); after a merge
+        the key must use the kept node, and an edge that now repeats another
+        one folds into it (its episodes join the survivor's)."""
+
+        for rowid in rowids:
+            row = conn.execute(
+                "SELECT name, fact, source_uuid, target_uuid, dedupe_key, episodes FROM edges WHERE rowid = ?",
+                (rowid,),
+            ).fetchone()
+            if row is None or row[4].startswith("fact:"):
+                continue
+            key = hashlib.sha256("\0".join([row[2], row[0], row[3], row[1]]).encode("utf-8")).hexdigest()
+            if key == row[4]:
+                continue
+            twin = conn.execute("SELECT rowid, episodes FROM edges WHERE dedupe_key = ?", (key,)).fetchone()
+            if twin is None:
+                conn.execute("UPDATE edges SET dedupe_key = ? WHERE rowid = ?", (key, rowid))
+                continue
+            episodes = json.loads(twin[1])
+            episodes += [e for e in json.loads(row[5]) if e not in episodes]
+            conn.execute("UPDATE edges SET episodes = ? WHERE rowid = ?", (json.dumps(episodes), twin[0]))
+            self._delete_edge(conn, graph, rowid)
+
+    def rename_node(self, graph_id: str, node_uuid: str, new_name: str) -> None:
+        new_name = (new_name or "").strip()
+        if not new_name:
+            raise ValueError("name is empty")
+        graph = self._graph(graph_id)
+        with graph.use() as conn, _transaction(conn):
+            rowid, old_name, _, _, attributes = self._role_row(conn, node_uuid)
+            key = normalize_name(new_name)
+            clash = conn.execute("SELECT uuid FROM nodes WHERE name_key = ?", (key,)).fetchone()
+            if clash and clash[0] != node_uuid:
+                raise ValueError(f"{new_name!r} is another role; merge the two instead")
+            attributes = json.loads(attributes)
+            if normalize_name(old_name) != key:
+                self._add_alias(conn, attributes, old_name, node_uuid)
+            conn.execute("DELETE FROM node_keys WHERE key = ?", (_ALIAS_KEY + key,))
+            conn.execute(
+                "UPDATE nodes SET name = ?, name_key = ?, attributes = ? WHERE rowid = ?",
+                (new_name, key, json.dumps(attributes, ensure_ascii=False), rowid),
+            )
+        self._refresh_role_texts(graph, [node_uuid])
+
+    def merge_nodes(self, graph_id: str, keep_uuid: str, drop_uuid: str) -> None:
+        if keep_uuid == drop_uuid:
+            raise ValueError("cannot merge a role with itself")
+        graph = self._graph(graph_id)
+        with graph.use() as conn, _transaction(conn):
+            keep_rowid, _, keep_labels, keep_summary, keep_attrs = self._role_row(conn, keep_uuid)
+            drop_rowid, drop_name, _, drop_summary, drop_attrs = self._role_row(conn, drop_uuid)
+            attributes = json.loads(keep_attrs)
+            for alias in [drop_name, *json.loads(drop_attrs).get("aliases", [])]:
+                self._add_alias(conn, attributes, alias, keep_uuid)
+            summary = keep_summary
+            if drop_summary and drop_summary not in summary:
+                summary = f"{summary} {drop_summary}".strip()[:MAX_SUMMARY_CHARS]
+            conn.execute(
+                "UPDATE nodes SET summary = ?, attributes = ? WHERE rowid = ?",
+                (summary, json.dumps(attributes, ensure_ascii=False), keep_rowid),
+            )
+            moved = conn.execute(
+                "SELECT rowid FROM edges WHERE source_uuid = ? OR target_uuid = ?", (drop_uuid, drop_uuid)
+            ).fetchall()
+            conn.execute("UPDATE edges SET source_uuid = ? WHERE source_uuid = ?", (keep_uuid, drop_uuid))
+            conn.execute("UPDATE edges SET target_uuid = ? WHERE target_uuid = ?", (keep_uuid, drop_uuid))
+            self._rekey_moved_edges(conn, graph, [rowid for (rowid,) in moved])
+            # An edge between the two became a loop: drop it.
+            for (rowid,) in conn.execute(
+                "SELECT rowid FROM edges WHERE source_uuid = ? AND target_uuid = ?", (keep_uuid, keep_uuid)
+            ).fetchall():
+                self._delete_edge(conn, graph, rowid)
+            conn.execute(
+                "UPDATE OR IGNORE episode_links SET target_uuid = ? WHERE kind = 'node' AND target_uuid = ?",
+                (keep_uuid, drop_uuid),
+            )
+            conn.execute("DELETE FROM episode_links WHERE kind = 'node' AND target_uuid = ?", (drop_uuid,))
+            conn.execute("UPDATE node_keys SET node_uuid = ? WHERE node_uuid = ?", (keep_uuid, drop_uuid))
+            conn.execute("DELETE FROM nodes WHERE rowid = ?", (drop_rowid,))
+            conn.execute("DELETE FROM nodes_fts WHERE rowid = ?", (drop_rowid,))
+            if graph.current_dim() is not None:
+                conn.execute("DELETE FROM vec_nodes WHERE rowid = ?", (drop_rowid,))
+        with self._registry_lock, _transaction(self._registry):
+            self._registry.execute("DELETE FROM node_index WHERE node_uuid = ?", (drop_uuid,))
+        self._refresh_role_texts(graph, [keep_uuid])
+
+    def set_node_role(self, graph_id: str, node_uuid: str, entity_type: str | None) -> None:
+        """``None`` excludes the role from preparation; a type includes it."""
+
+        graph = self._graph(graph_id)
+        with graph.use() as conn, _transaction(conn):
+            rowid, _, labels, _, attributes = self._role_row(conn, node_uuid)
+            if entity_type is not None and entity_type not in self._entity_types(conn):
+                raise ValueError(f"{entity_type!r} is not an entity type of this graph")
+            attributes = json.loads(attributes)
+            if entity_type is None:
+                attributes[ROLE_EXCLUDED] = True
+            else:
+                attributes.pop(ROLE_EXCLUDED, None)
+            labels = ["Entity"] + ([entity_type] if entity_type else [])
+            conn.execute(
+                "UPDATE nodes SET labels = ?, attributes = ? WHERE rowid = ?",
+                (json.dumps(labels, ensure_ascii=False), json.dumps(attributes, ensure_ascii=False), rowid),
+            )
+        self._refresh_role_texts(graph, [node_uuid])
+
+    def add_role_node(self, graph_id: str, name: str, entity_type: str, summary: str = "") -> str:
+        name = (name or "").strip()
+        if not name:
+            raise ValueError("name is empty")
+        graph = self._graph(graph_id)
+        node_uuid = uuidlib.uuid4().hex
+        with graph.use() as conn, _transaction(conn):
+            if entity_type not in self._entity_types(conn):
+                raise ValueError(f"{entity_type!r} is not an entity type of this graph")
+            key = normalize_name(name)
+            if conn.execute("SELECT 1 FROM nodes WHERE name_key = ?", (key,)).fetchone():
+                raise ValueError(f"{name!r} is already a role")
+            conn.execute(
+                "INSERT INTO nodes (uuid, name, name_key, labels, summary, attributes, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    node_uuid, name, key, json.dumps(["Entity", entity_type], ensure_ascii=False),
+                    (summary or "")[:MAX_SUMMARY_CHARS],
+                    json.dumps({"added_by": "user"}, ensure_ascii=False),
+                    datetime.now(timezone.utc).isoformat(),
+                ),
+            )
+        with self._registry_lock, _transaction(self._registry):
+            self._registry.execute("INSERT OR REPLACE INTO node_index VALUES (?, ?)", (node_uuid, graph_id))
+        self._refresh_role_texts(graph, [node_uuid])
+        return node_uuid
+
     def _graph_of_node(self, node_uuid: str) -> _Graph:
         with self._registry_lock:
             row = self._registry.execute(
@@ -950,7 +1327,11 @@ class LocalGraphStore:
             if scope == "nodes"
             else ("edges_fts", "vec_edges", "edges", self._EDGE_COLS)
         )
-        query_vector = self.embedder.embed_query(query) if query.strip() else None
+        query_vector = (
+            self.embedder.embed_query(query)
+            if query.strip() and self.vectors_usable(graph_id)
+            else None
+        )
         expression = match_query(query)
         scores: dict[int, float] = {}
         with graph.use():

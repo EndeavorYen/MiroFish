@@ -19,11 +19,7 @@ from app.simulation_policy.interview import augment_interview_prompt
 
 # IPC相关常量
 IPC_COMMANDS_DIR = "ipc_commands"
-
-
 IPC_RESPONSES_DIR = "ipc_responses"
-
-
 ENV_STATUS_FILE = "env_status.json"
 
 

@@ -10,8 +10,6 @@ import sqlite3
 from typing import Any, Dict, List, Optional, Tuple
 
 
-
-
 # 需要过滤掉的非核心动作类型（这些动作对分析价值较低）
 FILTERED_ACTIONS = {'refresh', 'sign_up'}
 

@@ -353,3 +353,30 @@ def test_scorer_by_pool_name(monkeypatch):
     monkeypatch.delenv("MODEL_POOL")
     with pytest.raises(SystemExit, match="MODEL_POOL"):
         ab.scorer_endpoint("phi")
+
+
+def test_run_all_runs_jobs_in_parallel_and_keeps_every_result(monkeypatch, tmp_path):
+    import threading
+    import time
+
+    active, peak, lock = [0], [0], threading.Lock()
+
+    def fake_run(work, out, backend, seed, rounds, content):
+        with lock:
+            active[0] += 1
+            peak[0] = max(peak[0], active[0])
+        time.sleep(0.05)
+        with lock:
+            active[0] -= 1
+        return {"seed": seed, "backend": backend}
+
+    monkeypatch.setattr(ab, "run_simulation", fake_run)
+    groups = {"A": {"work": tmp_path, "backend": "llm", "content": None},
+              "B": {"work": tmp_path, "backend": "system_one", "content": "tiered"}}
+    runs = ab.run_all(groups, tmp_path, [1, 2, 3], 24, jobs=3)
+    assert peak[0] == 3
+    assert {s: r["summary"]["seed"] for s, r in runs["B"].items()} == {1: 1, 2: 2, 3: 3}
+    assert runs["A"][2]["dir"] == tmp_path / "A_seed2"
+    active[0] = peak[0] = 0
+    ab.run_all(groups, tmp_path, [1, 2], 24, jobs=1)
+    assert peak[0] == 1

@@ -250,6 +250,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--seeds", type=int, nargs="+", default=None)
     parser.add_argument("--rounds", type=int, default=24)
     parser.add_argument("--quick", action="store_true")
+    parser.add_argument("--jobs", type=int, default=1, help="simulations to run at once per scenario")
     parser.add_argument("--bootstrap-reps", type=int, default=ab_eval.BOOTSTRAP_REPS)
     parser.add_argument("--delta", type=float, default=ab_eval.PERSONA_DELTA)
     args = parser.parse_args(argv)
@@ -318,6 +319,7 @@ def main(argv: list[str] | None = None) -> int:
             "--rounds", str(args.rounds),
             "--bootstrap-reps", str(args.bootstrap_reps),
             "--delta", str(args.delta),
+            "--jobs", str(args.jobs),
             *(["--stance-question", question] if (question := stance_question(fixture)) else []),
         ])
         report = json.loads((run_out / "ab_report.json").read_text(encoding="utf-8"))

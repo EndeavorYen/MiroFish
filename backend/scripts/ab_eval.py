@@ -112,6 +112,34 @@ def run_simulation(work: Path, out: Path, backend: str, seed: int, rounds: int, 
     return json.loads(summary.read_text(encoding="utf-8"))
 
 
+def run_all(
+    groups: dict[str, dict[str, Any]], out: Path, seeds: list[int], rounds: int, jobs: int = 1
+) -> dict[str, dict[int, dict[str, Any]]]:
+    """Every (group, seed) run, ``jobs`` at a time.
+
+    Runs are independent, and one System One run keeps the model server's
+    GPU mostly idle (7-29% utilisation; its rounds wait on sequential
+    readouts), so several runs side by side finish sooner. Round latency is
+    then measured under contention; decode counts are not affected."""
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    tasks = [(name, seed) for name in groups for seed in seeds]
+
+    def one(task: tuple[str, int]) -> tuple[str, int, dict[str, Any]]:
+        name, seed = task
+        group = groups[name]
+        run_dir = out / f"{name}_seed{seed}"
+        summary = run_simulation(group["work"], run_dir, group["backend"], seed, rounds, group["content"])
+        return name, seed, {"dir": run_dir, "summary": summary}
+
+    runs: dict[str, dict[int, dict[str, Any]]] = {name: {} for name in groups}
+    with ThreadPoolExecutor(max_workers=max(1, jobs)) as pool:
+        for name, seed, result in pool.map(one, tasks):
+            runs[name][seed] = result
+    return runs
+
+
 def llm_errors(run: Path) -> int:
     """Model-server errors (context overflow, 5xx) the simulation logged.
 
@@ -707,6 +735,8 @@ def main(argv: list[str] | None = None) -> int:
                         help="score posts with another model's readout (an independent judge, #48)")
     parser.add_argument("--scorer-model", default=None)
     parser.add_argument("--scorer-prompt-format", default="chatml", choices=["chatml", "plain"])
+    parser.add_argument("--jobs", type=int, default=1,
+                        help="simulations to run at once (independent seeds; the GPU is mostly idle in one run)")
     parser.add_argument("--scorer", default=None,
                         help="MODEL_POOL entry name to score posts with (sets the three --scorer-* options)")
     args = parser.parse_args(argv)
@@ -726,13 +756,8 @@ def main(argv: list[str] | None = None) -> int:
         *(json.loads((groups[g]["work"] / "prepared.json").read_text(encoding="utf-8")) for g in ("A", "B"))
     )
     runs: dict[str, dict[int, dict[str, Any]]] = {"A": {}, "B": {}}
-    for name, group in groups.items():
-        if args.simulate_only and name != args.simulate_only:
-            continue
-        for seed in args.seeds:
-            run_dir = out / f"{name}_seed{seed}"
-            summary = run_simulation(group["work"], run_dir, group["backend"], seed, args.rounds, group["content"])
-            runs[name][seed] = {"dir": run_dir, "summary": summary}
+    chosen = {n: g for n, g in groups.items() if not args.simulate_only or n == args.simulate_only}
+    runs.update(run_all(chosen, out, args.seeds, args.rounds, jobs=args.jobs))
     if args.simulate_only:
         return 0
 

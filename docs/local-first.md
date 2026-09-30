@@ -82,16 +82,17 @@ uv run python scripts/compare_options.py ... --path llm
 
 ## 快速開始（llama.cpp，已實測）
 
-1. 下載 [llama.cpp](https://github.com/ggml-org/llama.cpp/releases) 與模型：`Qwen3.5-4B-Q4_K_M.gguf`、`multilingual-e5-small-F16.gguf`。
+1. 下載 [llama.cpp](https://github.com/ggml-org/llama.cpp/releases) 與 `Qwen3.5-4B-Q4_K_M.gguf`；embedding 模型用下方「embedding 的 GGUF」自己轉（現成的 e5-small GGUF 斷詞是錯的）。
 2. 啟動模型服務（兩個終端）：
 
    ```bash
    # 生成與 System One 讀出（GPU）
-   llama-server -m Qwen3.5-4B-Q4_K_M.gguf -c 65536 -np 8 -ngl 99 --jinja \
-     --reasoning off --no-mmproj --alias qwen3.5-4b --host 127.0.0.1 --port 8000
+   # local／local-hybrid：每個 slot 4K；local-llm 改用 -c 65536（8K／slot）
+   llama-server -m Qwen3.5-4B-Q4_K_M.gguf -c 32768 -np 8 -ngl 99 --jinja \
+     --reasoning off --no-mmproj --cache-ram 0 --alias qwen3.5-4b --host 127.0.0.1 --port 8000
 
-   # 向量（CPU）
-   llama-server -m multilingual-e5-small-F16.gguf --embedding --pooling mean -ngl 0 \
+   # 向量（CPU）；GGUF 要用下方「embedding 的 GGUF」的方式轉
+   llama-server -m multilingual-e5-small-ugm-F16.gguf --embedding --pooling mean -ngl 0 \
      -c 2048 -b 2048 -ub 2048 -np 4 --alias intfloat/multilingual-e5-small \
      --host 127.0.0.1 --port 8001
    ```
@@ -104,12 +105,74 @@ uv run python scripts/compare_options.py ... --path llm
 
 4. 照原本方式啟動：`npm run dev`。
 
+### embedding 的 GGUF（#61）
+
+網路上常見的 `multilingual-e5-small` GGUF（以及 llama.cpp 轉檔程式直接轉出來的）斷詞是錯的：模型的 `config.json` 寫 `BertModel`，轉檔程式就寫入 WordPiece 詞表，但這個模型用的是 XLM-R 的 SentencePiece Unigram。結果大部分英文單字變成 `<unk>`，中文被拆成單字，向量和原模型的 cosine 只有 0.78–0.95。`backend/scripts/convert_e5_gguf.py` 保留 BERT 的張量、改寫正確的詞表：
+
+```bash
+git clone --depth 1 https://github.com/ggml-org/llama.cpp
+uv run --no-project --python 3.12 \
+    --with torch --with transformers --with sentencepiece --with protobuf \
+    --with safetensors --with numpy --with pyyaml --with requests \
+    python backend/scripts/convert_e5_gguf.py --llama-cpp llama.cpp \
+    --out multilingual-e5-small-ugm-F16.gguf
+```
+
+模型從 Hugging Face cache 讀（沒有的話加 `--model <目錄>`）。轉檔需要 torch，所以用一次性的環境，不裝進後端。實測（2026-10-01，6 句中英文）：
+
+| GGUF | `/tokenize` 與 transformers | `<unk>` | cosine（對 transformers） |
+| --- | --- | ---: | ---: |
+| 舊檔（`tokenizer.ggml.model = bert`） | 全部不同 | 每句 1–6 個 | 0.78–0.95 |
+| `convert_e5_gguf.py`（`t5`，Unigram） | 全部相同 | 0 | 1.0000 |
+
+檢索與建圖的變化（同一天實測）：
+
+- 句子檢索：把種子新聞切成句子，每個查詢改寫其中一句（盡量不用原句的關鍵字），看那一句用向量排第幾。每個情境 12 個查詢（查詢是人工寫的，樣本小）。northbridge（英文，16 句）hit@1 從 0.42 到 1.00、MRR 從 0.53 到 1.00；golden（中文，17 句）hit@1 從 0.58 到 0.83、MRR 從 0.79 到 0.92。
+- 建圖品質（`eval_local_extraction.py`，golden 與 holdout3 的人工標準圖譜）：兩個 GGUF 的實體召回、精確度、邊召回完全相同，建圖不受影響。
+- 模擬層級（G5，每組 5 個 seed）還沒比，要在 Colab 跑。
+
+後端啟動時會用 `/tokenize` 檢查本機 llama.cpp embedding 服務，斷詞有 `<unk>` 就在 log 警告。
+
+**換了 embedding 之後要重算圖譜的向量。** 圖譜會記下寫入向量的 embedder（固定探針句的向量）；換成不同的 embedder 後，搜尋那張圖只用關鍵字（BM25），並在 log 警告。在 #61 之前建立的圖譜沒有這個紀錄，會照舊使用向量。重算（先停後端）：
+
+```bash
+cd backend
+uv run python scripts/reembed_graphs.py --check   # 每張圖的狀態
+uv run python scripts/reembed_graphs.py           # 全部重算
+```
+
+`--check` 的狀態：`matches`（目前的 embedder 寫的）、`other embedder`（要重算）、`no fingerprint`（#61 之前建立的，若當時用的是舊 GGUF 就要重算）、`no vectors`、`unknown`（embedding 服務沒回應）、`incomplete`（向量是目前的 embedder 寫的，但有些列是在另一個 embedder 運作時寫入、沒有向量，要重算）。換掉 embedding 服務（例如換成新的 GGUF）之後要**重新啟動後端**：後端會記住啟動後第一次算出的探針向量。embedding 服務沒回應時，搜尋改用關鍵字；已經記錄指紋的圖譜也不會寫入另一個 embedder 的向量。
+
 ### llama-server 參數注意事項
 
-- `-c 65536 -np 8` 是每個 slot 8K context。本機路徑與 `local-llm`（有記憶預算）都在這個設定下實測零錯誤。
+- `-c 65536 -np 8` 是每個 slot 8K context。本機路徑與 `local-llm`（有記憶預算）都在這個設定下實測零錯誤。本機路徑（System One 讀出與分層內容）單一請求實測最多約 600 tokens，所以 `local`／`local-hybrid` 用 `-c 32768 -np 8`（4K／slot）就夠：2026-10-01 以此設定跑了多次 12–14 回合，模型服務零錯誤。`local-llm` 的 agent 記憶需要 8K／slot。
+- **加上 `--cache-ram 0`**：llama-server 預設在主機記憶體保留最多 8 GB 的 prompt 快取（`--cache-ram 8192`），Qwen3.5-4B 每筆約 111 MB。本機路徑每回合換一批 agent，快取幾乎用不到，只是一直在搬移。實測（#65）llama-server 的私有記憶體從 9.8 GB 降到 1.3 GB，12 回合的模擬從 48–52 秒變成 29–37 秒（不同 seed），沒有變慢。`local-llm` 還沒有在這個設定下量過。
 - **不要加 `--kv-unified`**：共用 KV pool 在多個 agent 同時請求時會回 `Context size has been exceeded`，丟失回合。
 - ReportAgent（`REPORT_MODE=agent`）單一請求會超過 8K；本機建議用 `REPORT_MODE=metrics`（兩個 profile 都已預設）。
 - 若要跑沒有記憶預算的 LLM 決策（`SIM_AGENT_CONTEXT_TOKENS=off`），每個 slot 需要 64K（`-c 262144 -np 4`，實測閒置 VRAM 13.0 GB）。
+
+### 記憶體（#65，2026-10-01 實測）
+
+單一模擬進程（14 個 agent、12 回合，`scripts/bench_memory.py`）：
+
+| 推薦系統 | RSS 峰值 | 啟動到第 1 回合 |
+| --- | ---: | ---: |
+| `SIM_RECSYS=oasis`（OASIS 原版，載入 torch 與 twhin-bert） | 1298–1338 MB | 7.7 s |
+| `SIM_RECSYS=light`（三個本機 profile 的預設） | 281–284 MB | 3.7–3.9 s |
+
+OASIS 在匯入時就載入 torch、sentence-transformers、scikit-learn 與 transformers；Twitter 平台接著載入 twhin-bert，而它的 pooler 是隨機初始化，排序用的向量接近隨機投影。輕量推薦（`app/simulation_policy/light_recsys.py`）改用「使用者簡介＋最新貼文」與貼文之間的詞／字元 bigram 重疊度，乘上 OASIS 原本的時間衰減，並且不推薦使用者自己的貼文；Reddit 的熱度排序照舊。neo4j driver 改成用到時才載入（MiroFish 用的是 igraph）。後端 Flask 本身約 63 MB，不載入模擬相關的套件。
+
+兩種推薦各跑一次就能比較：
+
+```bash
+cd backend
+SIM_RECSYS=light uv run python scripts/bench_memory.py uploads/simulations/<id> --rounds 12
+SIM_RECSYS=oasis uv run python scripts/bench_memory.py uploads/simulations/<id> --rounds 12
+```
+
+輕量推薦對 G5 主要指標的影響（每組 5 個 seed）要在 Colab 上比較：`golden_pipeline.py` 預設 `SIM_RECSYS=light`，匯出 `SIM_RECSYS=oasis` 就是對照組。
+
+**16 GB 的機器**：本機路徑的主機記憶體大約是 llama-server 1.3 GB（加 `--cache-ram 0`）＋後端 0.1 GB＋每個同時進行的模擬 0.3 GB，其餘留給作業系統、瀏覽器與 embedding 服務。沒有加 `--cache-ram 0` 時，光 llama-server 就可能用掉 10 GB。Apple Silicon 的模型權重與 KV cache 也放在同一塊記憶體（Qwen3.5-4B Q4 約 2.7 GB，另加 `-c 32768` 的 KV cache），這部分還沒有在 Mac 上量過。
 
 ### Docker compose（已實測，2026-09-29）
 

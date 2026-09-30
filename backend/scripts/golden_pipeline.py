@@ -123,6 +123,9 @@ LOCAL_DEFAULTS = {
     # Agent chat memory for LLM decisions; fits llama-server -c 65536 -np 8
     # (8K per slot) with room for the tool schemas and the reply (#28).
     "SIM_AGENT_CONTEXT_TOKENS": "3072",
+    # The torch-free recommender the local profiles use (#65); export
+    # SIM_RECSYS=oasis to compare against OASIS's twhin-bert ranking.
+    "SIM_RECSYS": "light",
 }
 
 

@@ -14,10 +14,12 @@ with open(os.path.join(_locales_dir, 'languages.json'), 'r', encoding='utf-8') a
 # Load translation files
 _translations = {}
 for filename in os.listdir(_locales_dir):
-    if filename.endswith('.json') and filename != 'languages.json':
+    if filename.endswith('.json') and filename != 'languages.json' and not filename.endswith('_stance_bank.json'):
         locale_name = filename[:-5]
         with open(os.path.join(_locales_dir, filename), 'r', encoding='utf-8') as f:
             _translations[locale_name] = json.load(f)
+
+DEFAULT_LOCALE = 'zh-TW'
 
 
 def set_locale(locale: str):
@@ -27,14 +29,14 @@ def set_locale(locale: str):
 
 def get_locale() -> str:
     if has_request_context():
-        raw = request.headers.get('Accept-Language', 'zh')
-        return raw if raw in _translations else 'zh'
-    return getattr(_thread_local, 'locale', 'zh')
+        raw = request.headers.get('Accept-Language', DEFAULT_LOCALE)
+        return raw if raw in _translations else DEFAULT_LOCALE
+    return getattr(_thread_local, 'locale', DEFAULT_LOCALE)
 
 
 def t(key: str, **kwargs) -> str:
     locale = get_locale()
-    messages = _translations.get(locale, _translations.get('zh', {}))
+    messages = _translations.get(locale, _translations.get(DEFAULT_LOCALE, _translations.get('zh', {})))
 
     value = messages
     for part in key.split('.'):
@@ -45,7 +47,7 @@ def t(key: str, **kwargs) -> str:
             break
 
     if value is None:
-        value = _translations.get('zh', {})
+        value = _translations.get(DEFAULT_LOCALE, _translations.get('zh', {}))
         for part in key.split('.'):
             if isinstance(value, dict):
                 value = value.get(part)
@@ -65,5 +67,6 @@ def t(key: str, **kwargs) -> str:
 
 def get_language_instruction() -> str:
     locale = get_locale()
-    lang_config = _languages.get(locale, _languages.get('zh', {}))
-    return lang_config.get('llmInstruction', '请使用中文回答。')
+    lang_config = _languages.get(locale, _languages.get(DEFAULT_LOCALE, _languages.get('zh', {})))
+    default_instruction = '請使用繁體中文回答。' if DEFAULT_LOCALE == 'zh-TW' else '请使用中文回答。'
+    return lang_config.get('llmInstruction', default_instruction)

@@ -3,6 +3,10 @@
     "label": "中文",
     "llmInstruction": "请使用中文回答。"
   },
+  "zh-TW": {
+    "label": "繁體中文",
+    "llmInstruction": "請使用繁體中文回答。"
+  },
   "en": {
     "label": "English",
     "llmInstruction": "Please respond in English."

@@ -248,7 +248,7 @@ def test_scan_is_skipped_when_scoring_fails(sim_dir, tmp_path):
 
     metrics, markdown = write_metrics_report(str(sim_dir), str(tmp_path), "req", score_fn=broken)
     assert metrics["scan"] is None
-    assert "## 掃描結論與可信度" not in markdown
+    assert "無法產生" in markdown  # the section says why instead of disappearing (#62)
 
 
 def test_hybrid_runs_cite_their_own_evidence(tmp_path):
@@ -262,3 +262,31 @@ def test_hybrid_runs_cite_their_own_evidence(tmp_path):
     assert scan["ranking"]["indistinct"] is False
     assert scan["ranking"]["confidence"] == HYBRID_EVIDENCE["ranking"][0]
     assert "混合" in scan["ranking"]["evidence"]
+
+
+def test_failed_decisions_still_mark_the_local_path_and_warn(tmp_path):
+    from app.services.metrics_report import decision_error_rate, scan_conclusions
+
+    sim = _scan_dir(tmp_path, {1: 0.9, 2: 0.2, 3: 0.5}, [(1, 1, "a"), (2, 2, "b"), (9, 3, "c")])
+    rows = [{"round": 1, "agent_id": 1, "action": "DO_NOTHING", "error": "ConnectError: refused"}] * 3
+    rows += [{"round": 1, "agent_id": 2, "action": "CREATE_POST", "intent": {"stance": 0.4}}]
+    (sim / "decisions.jsonl").write_text("\n".join(json.dumps(r) for r in rows), encoding="utf-8")
+    assert decision_error_rate(str(sim)) == pytest.approx(0.75)
+    scan = scan_conclusions(str(sim), score_fn=lambda text, question: 0.5)
+    assert scan["path"] == "local"
+    assert scan["trend"]["rounds"] == [0, 9]  # the last round with a post, not the window end
+    text = render_markdown({**compute_metrics(str(sim)), "scan": scan, "decision_error_rate": 0.75})
+    assert text.index("75%") < text.index("## 概況")  # the warning comes first
+
+
+def test_a_scan_that_could_not_run_says_why(sim_dir, tmp_path):
+    def broken(text, question):
+        raise ConnectionError("refused http://127.0.0.1:8000/v1")
+
+    posts = sim_dir / "twitter" / "actions.jsonl"
+    posts.write_text(posts.read_text(encoding="utf-8") + json.dumps(
+        {"round": 3, "agent_id": 1, "action_type": "CREATE_POST", "action_args": {"content": "試點下月啟動"}},
+        ensure_ascii=False) + "\n", encoding="utf-8")
+    metrics, markdown = write_metrics_report(str(sim_dir), str(tmp_path), "req", score_fn=broken)
+    assert metrics["scan"] is None
+    assert "## 掃描結論與可信度" in markdown and "無法產生" in markdown and "ConnectionError" in markdown

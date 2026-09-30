@@ -45,6 +45,8 @@ _LOCAL_MODES = {
     "GRAPH_EXTRACTOR": "local",
     "GRAPH_EMBEDDER": "http",
     "LOCAL_NER": "candidates",
+    # OASIS's recommender pulls in torch and twhin-bert (~550 MB, #65).
+    "SIM_RECSYS": "light",
 }
 
 PROFILES: dict[str, dict[str, str]] = {

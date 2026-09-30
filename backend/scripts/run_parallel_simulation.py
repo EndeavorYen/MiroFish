@@ -105,6 +105,13 @@ else:
 from app.profiles import apply_profile
 
 apply_profile()  # MIROFISH_PROFILE after this script's own .env load (#36)
+from app.simulation_policy.lazy_imports import defer_neo4j
+from app.simulation_policy.light_recsys import install as install_light_recsys
+
+# Before anything imports oasis: its recommender loads torch and twhin-bert,
+# its agent graph the neo4j driver MiroFish does not use (#65).
+install_light_recsys(os.environ)
+defer_neo4j()
 from app.utils.llm_usage import wrap_camel_model, usage_stage
 from app.utils.camel_context import apply_agent_graph_budget, context_budget_from_env
 from app.simulation_policy.oasis_bridge import (

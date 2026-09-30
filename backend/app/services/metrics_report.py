@@ -32,6 +32,8 @@ import statistics
 from collections import Counter, defaultdict
 from typing import Any, Callable
 
+from ..utils.locale import t
+
 PLATFORMS = ("twitter", "reddit")
 SUMMARY_MAX_TOKENS = 800
 TOP_POSTS = 5
@@ -388,7 +390,7 @@ def _scan_markdown(scan: dict[str, Any]) -> list[str]:
         return f"可信度：{CONFIDENCE_LABEL.get(block['confidence'], '參考')}（{block['evidence']}）"
 
     lines = [
-        "## 掃描結論與可信度",
+        f"## {t('metrics.scanConclusion')}",
         "",
         f"由 {scan['posts']} 則貼文的立場讀出計算（題目：{scan['question']}；0 = 強烈反對，1 = 強烈支持）。",
         "",
@@ -449,18 +451,14 @@ ERROR_RATE_WARNING = 0.2
 
 
 def render_markdown(metrics: dict[str, Any], summary: str = "") -> str:
-    lines = ["# 模擬指標報告", ""]
+    lines = [f"# {t('metrics.reportTitle')}", ""]
     rate = metrics.get("decision_error_rate")
     if rate is not None and rate > ERROR_RATE_WARNING:
-        lines += [
-            f"> ⚠️ 這次模擬有 {rate:.0%} 的 agent 決策失敗（多半是模型服務沒有回應），"
-            "失敗的決策都成了「不動作」。以下數字不能代表模擬結果，請修復模型服務後重跑。",
-            "",
-        ]
+        lines += [f"> ⚠️ {t('metrics.decisionErrorWarning', rate=f'{rate:.0%}')}", ""]
     if summary:
-        lines += ["## 摘要", "", summary.strip(), ""]
+        lines += [f"## {t('metrics.summary')}", "", summary.strip(), ""]
     lines += [
-        "## 概況",
+        f"## {t('metrics.overview')}",
         "",
         f"- Agent 數：{metrics['agents']}",
         f"- 實體類型：{', '.join(f'{k} {v}' for k, v in metrics['entity_types'].items()) or '—'}",
@@ -471,13 +469,13 @@ def render_markdown(metrics: dict[str, Any], summary: str = "") -> str:
         lines += _scan_markdown(metrics["scan"])
     elif metrics.get("scan_error"):
         lines += [
-            "## 掃描結論與可信度",
+            f"## {t('metrics.scanConclusion')}",
             "",
-            f"無法產生：{metrics['scan_error']}",
+            t("metrics.scanUnavailable", reason=metrics["scan_error"]),
             "",
         ]
     lines += [
-        "## 動作分布",
+        f"## {t('metrics.actionDistribution')}",
         "",
     ]
     for platform, data in metrics["actions"].items():
@@ -486,7 +484,7 @@ def render_markdown(metrics: dict[str, Any], summary: str = "") -> str:
             f"{a} {n}（{n / total:.0%}）" for a, n in sorted(data["total"].items(), key=lambda x: -x[1])
         )
         lines.append(f"- **{platform}**（{total} 個動作）：{parts}")
-    lines += ["", "## 情緒曲線", ""]
+    lines += ["", f"## {t('metrics.emotionCurve')}", ""]
     if metrics["emotion"]:
         for platform, data in metrics["emotion"].items():
             final = _final_emotions(data["overall"])
@@ -499,7 +497,7 @@ def render_markdown(metrics: dict[str, Any], summary: str = "") -> str:
                 lines.append(f"- **{platform}** 第 {first_round}→{final[0]} 輪：{change}")
     else:
         lines.append("- 無情緒狀態資料（LLM 決策模式不記錄情緒）。")
-    lines += ["", "## 擴散最廣的貼文", ""]
+    lines += ["", f"## {t('metrics.topPosts')}", ""]
     for platform, posts in metrics["spread"].items():
         for post in posts:
             chain = " → ".join(step["by"] for step in post["chain"][:6])
@@ -508,7 +506,7 @@ def render_markdown(metrics: dict[str, Any], summary: str = "") -> str:
                 f"（轉發／引用 {post['reposts_and_quotes']}，讚 {post['likes']}）"
                 + (f"；擴散路徑：{chain}" if chain else "")
             )
-    lines += ["", "## 立場分群", ""]
+    lines += ["", f"## {t('metrics.stanceClustering')}", ""]
     for etype, group in metrics["stance"].items():
         mean = group["expressed_stance_mean"]
         lines.append(
@@ -686,7 +684,7 @@ def markdown_outline(markdown: str, outline_cls, section_cls):
     """Split a rendered metrics report into a ReportOutline (# title, ## sections)."""
 
     title_match = re.search(r"^# (.+)$", markdown, flags=re.M)
-    title = title_match.group(1).strip() if title_match else "模擬指標報告"
+    title = title_match.group(1).strip() if title_match else t("metrics.reportTitle")
     parts = re.split(r"^## (.+)$", markdown, flags=re.M)
     sections = [
         section_cls(title=parts[i].strip(), content=parts[i + 1].strip())

@@ -543,7 +543,11 @@ class SimulationRunner:
             # 创建主日志文件，避免 stdout/stderr 管道缓冲区满导致进程阻塞
             main_log_path = os.path.join(sim_dir, "simulation.log")
             main_log_file = open(main_log_path, 'w', encoding='utf-8')
-            
+            # A previous run's abort reason must not become this run's (#62).
+            failure_path = os.path.join(sim_dir, "failure.json")
+            if os.path.exists(failure_path):
+                os.remove(failure_path)
+
             # 设置子进程环境变量，确保 Windows 上使用 UTF-8 编码
             # 这可以修复第三方库（如 OASIS）读取文件时未指定编码的问题
             env = os.environ.copy()

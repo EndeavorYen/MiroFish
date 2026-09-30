@@ -37,7 +37,7 @@ def test_force_restart_cleanup_removes_decisions_and_agent_state(tmp_path, monke
 def test_model_service_check_names_the_endpoint(monkeypatch):
     from app.utils import model_health
 
-    def refused(url, timeout):
+    def refused(url, **kwargs):
         raise httpx.ConnectError("refused")
 
     monkeypatch.setattr(model_health.httpx, "get", refused)
@@ -47,14 +47,19 @@ def test_model_service_check_names_the_endpoint(monkeypatch):
     class Ok:
         status_code = 200
 
-    monkeypatch.setattr(model_health.httpx, "get", lambda url, timeout: Ok())
+    monkeypatch.setattr(model_health.httpx, "get", lambda url, **kwargs: Ok())
     assert model_health.check_model_service("http://127.0.0.1:8000/v1") is None
 
     class Down:
         status_code = 503
 
-    monkeypatch.setattr(model_health.httpx, "get", lambda url, timeout: Down())
+    monkeypatch.setattr(model_health.httpx, "get", lambda url, **kwargs: Down())
     assert "503" in model_health.check_model_service("http://127.0.0.1:8000/v1")
+    class Keyed:
+        status_code = 401
+
+    monkeypatch.setattr(model_health.httpx, "get", lambda url, **kwargs: Keyed())
+    assert model_health.check_model_service("http://127.0.0.1:8000/v1") is None  # reachable, wants a key
     assert model_health.check_model_service("") is None  # no endpoint configured: nothing to check
 
 
@@ -84,3 +89,22 @@ def test_record_failure_writes_the_reason_the_runner_reads(tmp_path):
 
     record_failure(str(tmp_path), ModelServiceUnavailable("reddit: every decision failed in 2 consecutive rounds"))
     assert SimulationRunner._failure_reason(str(tmp_path), 3).startswith("reddit: every decision failed")
+
+
+def test_the_check_probes_the_services_the_step_uses(monkeypatch):
+    from app.api import simulation as simulation_api
+
+    probed = []
+    monkeypatch.setattr(simulation_api, "check_model_service", lambda url: probed.append(url))
+    monkeypatch.setattr(simulation_api.Config, "LLM_BASE_URL", "https://api.example.com/v1")
+    monkeypatch.setattr(simulation_api.Config, "SYSTEM_ONE_BASE_URL", "http://localhost:8000/v1")
+
+    monkeypatch.setenv("SIM_DECISION_BACKEND", "llm")
+    simulation_api._model_service_problem(run=True)
+    simulation_api._model_service_problem()
+    assert probed == ["https://api.example.com/v1"] * 2  # a hosted-LLM setup never probes :8000
+
+    probed.clear()
+    monkeypatch.setenv("SIM_DECISION_BACKEND", "system_one")
+    simulation_api._model_service_problem(run=True)
+    assert probed == ["http://localhost:8000/v1", "https://api.example.com/v1"]

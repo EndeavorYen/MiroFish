@@ -1502,10 +1502,21 @@ def generate_profiles():
 
 # ============== 模拟运行控制接口 ==============
 
-def _model_service_problem() -> str | None:
-    """The configured local model service, checked before a run uses it (#62)."""
+def _model_service_problem(run: bool = False) -> str | None:
+    """The local model services a step will use, checked before it starts (#62).
 
-    return check_model_service(Config.SYSTEM_ONE_BASE_URL or Config.LLM_BASE_URL)
+    Preparation and LLM-decided runs use ``LLM_BASE_URL``; a System One run
+    also scores decisions against ``SYSTEM_ONE_BASE_URL``.
+    """
+
+    urls = [Config.LLM_BASE_URL]
+    if run and os.environ.get("SIM_DECISION_BACKEND", "llm").strip().lower() == "system_one":
+        urls.insert(0, Config.SYSTEM_ONE_BASE_URL)
+    for url in dict.fromkeys(u for u in urls if u):
+        problem = check_model_service(url)
+        if problem:
+            return problem
+    return None
 
 
 @simulation_bp.route('/start', methods=['POST'])
@@ -1608,7 +1619,7 @@ def start_simulation():
         # A run on a dead model server used to finish on failed decisions and
         # report "completed" (#62). Checked before a forced restart clears the
         # previous run's logs.
-        problem = _model_service_problem()
+        problem = _model_service_problem(run=True)
         if problem:
             return jsonify({"success": False, "error": problem}), 503
 

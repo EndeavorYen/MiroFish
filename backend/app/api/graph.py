@@ -1054,9 +1054,17 @@ def edit_roles(graph_id: str):
     with graph_lifecycle_lock(graph_id):
         if any(_project_has_active_build(p) for p in ProjectManager.find_projects_by_graph_id(graph_id)):
             return jsonify({"success": False, "error": t('api.graphBuilding')}), 409
+        # A running simulation writes agents back into the graph by name.
+        running = [c for c in _active_graph_consumers(graph_id) if not c.startswith("report:")]
+        if running:
+            return jsonify({"success": False, "error": f"simulations are using this graph: {', '.join(running)}"}), 409
         for index, op in enumerate(ops):
             kind = op.get("op") if isinstance(op, dict) else None
             try:
+                # L3: field types first, so a bad value is a 400, not a 500.
+                for field in ("uuid", "keep", "drop", "name", "type", "summary"):
+                    if field in op and not isinstance(op[field], str):
+                        raise ValueError(f"{field} must be a string")
                 if kind == "rename":
                     store.rename_node(graph_id, op["uuid"], op["name"])
                 elif kind == "merge":

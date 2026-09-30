@@ -127,3 +127,30 @@ def test_the_zep_backend_is_not_supported(monkeypatch):
 
     monkeypatch.setattr(store_module, "get_graph_store", lambda **kw: object())
     assert create_app().test_client().get("/api/graph/g1/roles").status_code == 501
+
+
+def test_merging_folds_edges_that_now_repeat(store):
+    store.add_text_episodes("g1", [TextEpisode("林書瑤任職於雲梯。")], durable=True)
+    roles = _roles(store)
+    store.merge_nodes("g1", roles["雲梯科技"].uuid, roles["雲梯"].uuid)
+    count = len(store.list_edges("g1"))
+    store.add_text_episodes("g1", [TextEpisode("林書瑤任職於雲梯。")], durable=True)
+    assert len(store.list_edges("g1")) == count  # the same fact is not added twice
+    triples = [(e.source_node_uuid, e.name, e.target_node_uuid, e.fact) for e in store.list_edges("g1")]
+    assert len(triples) == len(set(triples))
+
+
+def test_a_vector_failure_does_not_undo_or_fail_an_edit(store, monkeypatch):
+    def broken(*args, **kwargs):
+        raise ValueError("embedding dimension changed from 256 to 8")
+
+    monkeypatch.setattr(store, "_store_vectors", broken)
+    node = _roles(store)["師林書瑤"]
+    store.rename_node("g1", node.uuid, "林書瑤二")  # does not raise
+    assert "林書瑤二" in _roles(store)
+
+
+def test_the_api_rejects_non_string_fields(client):
+    roles = {r["name"]: r for r in client.get("/api/graph/g1/roles").get_json()["data"]["roles"]}
+    response = client.post("/api/graph/g1/roles", json={"ops": [{"op": "rename", "uuid": roles["雲梯"]["uuid"], "name": 123}]})
+    assert response.status_code == 400 and response.get_json()["failed_op"] == 0

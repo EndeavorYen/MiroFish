@@ -1124,13 +1124,45 @@ class LocalGraphStore:
             for rowid, text in edge_texts.items():
                 conn.execute("DELETE FROM edges_fts WHERE rowid = ?", (rowid,))
                 conn.execute("INSERT INTO edges_fts (rowid, body) VALUES (?, ?)", (rowid, index_text(text)))
+        # The edit is committed; a vector failure must not read as a failed
+        # edit. Keyword search already sees the change.
         try:
             vectors = self._embed(node_texts, edge_texts)
-        except Exception as error:  # keyword search already sees the change
+            with graph.use() as conn, _transaction(conn):
+                self._store_vectors(graph, vectors)
+        except Exception as error:
             logger.warning("role edit: vectors not refreshed (%s); run reembed_graphs.py", error)
-            return
-        with graph.use() as conn, _transaction(conn):
-            self._store_vectors(graph, vectors)
+
+    @staticmethod
+    def _delete_edge(conn: sqlite3.Connection, graph: _Graph, rowid: int) -> None:
+        conn.execute("DELETE FROM edges WHERE rowid = ?", (rowid,))
+        conn.execute("DELETE FROM edges_fts WHERE rowid = ?", (rowid,))
+        if graph.current_dim() is not None:
+            conn.execute("DELETE FROM vec_edges WHERE rowid = ?", (rowid,))
+
+    def _rekey_moved_edges(self, conn: sqlite3.Connection, graph: _Graph, rowids: list[int]) -> None:
+        """Extracted edges key on their endpoints (_upsert_edge); after a merge
+        the key must use the kept node, and an edge that now repeats another
+        one folds into it (its episodes join the survivor's)."""
+
+        for rowid in rowids:
+            row = conn.execute(
+                "SELECT name, fact, source_uuid, target_uuid, dedupe_key, episodes FROM edges WHERE rowid = ?",
+                (rowid,),
+            ).fetchone()
+            if row is None or row[4].startswith("fact:"):
+                continue
+            key = hashlib.sha256("\0".join([row[2], row[0], row[3], row[1]]).encode("utf-8")).hexdigest()
+            if key == row[4]:
+                continue
+            twin = conn.execute("SELECT rowid, episodes FROM edges WHERE dedupe_key = ?", (key,)).fetchone()
+            if twin is None:
+                conn.execute("UPDATE edges SET dedupe_key = ? WHERE rowid = ?", (key, rowid))
+                continue
+            episodes = json.loads(twin[1])
+            episodes += [e for e in json.loads(row[5]) if e not in episodes]
+            conn.execute("UPDATE edges SET episodes = ? WHERE rowid = ?", (json.dumps(episodes), twin[0]))
+            self._delete_edge(conn, graph, rowid)
 
     def rename_node(self, graph_id: str, node_uuid: str, new_name: str) -> None:
         new_name = (new_name or "").strip()
@@ -1170,16 +1202,17 @@ class LocalGraphStore:
                 "UPDATE nodes SET summary = ?, attributes = ? WHERE rowid = ?",
                 (summary, json.dumps(attributes, ensure_ascii=False), keep_rowid),
             )
+            moved = conn.execute(
+                "SELECT rowid FROM edges WHERE source_uuid = ? OR target_uuid = ?", (drop_uuid, drop_uuid)
+            ).fetchall()
             conn.execute("UPDATE edges SET source_uuid = ? WHERE source_uuid = ?", (keep_uuid, drop_uuid))
             conn.execute("UPDATE edges SET target_uuid = ? WHERE target_uuid = ?", (keep_uuid, drop_uuid))
+            self._rekey_moved_edges(conn, graph, [rowid for (rowid,) in moved])
             # An edge between the two became a loop: drop it.
             for (rowid,) in conn.execute(
                 "SELECT rowid FROM edges WHERE source_uuid = ? AND target_uuid = ?", (keep_uuid, keep_uuid)
             ).fetchall():
-                conn.execute("DELETE FROM edges WHERE rowid = ?", (rowid,))
-                conn.execute("DELETE FROM edges_fts WHERE rowid = ?", (rowid,))
-                if graph.current_dim() is not None:
-                    conn.execute("DELETE FROM vec_edges WHERE rowid = ?", (rowid,))
+                self._delete_edge(conn, graph, rowid)
             conn.execute(
                 "UPDATE OR IGNORE episode_links SET target_uuid = ? WHERE kind = 'node' AND target_uuid = ?",
                 (keep_uuid, drop_uuid),

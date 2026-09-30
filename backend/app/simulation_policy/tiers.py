@@ -701,19 +701,13 @@ def openai_llm_fn(
     Usage is recorded by create_chat_completion under the active stage.
     """
 
-    from openai import OpenAI
-
     from ..config import Config
+    from ..utils.llm_factory import CONTENT, make_llm_client
     from ..utils.openai_chat_compat import create_chat_completion, extract_chat_completion_text
 
     # A stalled server must not stall a round: short timeout, no retries
     # (a failed call falls back to a template).
-    client = OpenAI(
-        api_key=api_key or Config.LLM_API_KEY or "local",
-        base_url=base_url or Config.LLM_BASE_URL,
-        timeout=30,
-        max_retries=0,
-    )
+    client = make_llm_client(CONTENT, api_key=api_key, base_url=base_url, require_key=False)
     model_name = model or Config.LLM_MODEL_NAME
 
     def call(prompt: str, max_tokens: int) -> tuple[str, int]:

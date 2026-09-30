@@ -178,3 +178,12 @@ def test_calibration_manifest_refuses_eval_seeds(tmp_path):
         suite.main(["--manifest", str(suite.CALIBRATION_MANIFEST), "--out", str(tmp_path), "--seeds", "11", "3"])
     args = suite.parse_args(["--manifest", str(suite.CALIBRATION_MANIFEST), "--out", "x"])
     assert args.seeds == [11, 12, 13]
+
+
+def test_suite_tasks_span_every_scenario_group_and_seed(tmp_path):
+    from scripts import ab_suite as suite
+
+    tasks = suite.suite_tasks(tmp_path, ["s1", "s2"], [1, 2], 24)
+    assert len(tasks) == 8
+    assert (tmp_path / "s2" / "A", tmp_path / "s2" / "runs" / "A_seed2", "llm", 2, 24, None) in tasks
+    assert (tmp_path / "s1" / "B", tmp_path / "s1" / "runs" / "B_seed1", "system_one", 1, 24, "tiered") in tasks

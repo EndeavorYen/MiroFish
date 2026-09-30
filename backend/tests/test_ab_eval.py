@@ -380,3 +380,12 @@ def test_run_all_runs_jobs_in_parallel_and_keeps_every_result(monkeypatch, tmp_p
     active[0] = peak[0] = 0
     ab.run_all(groups, tmp_path, [1, 2], 24, jobs=1)
     assert peak[0] == 1
+
+
+def test_simulate_many_pools_tasks_from_several_scenarios(monkeypatch, tmp_path):
+    seen = []
+    monkeypatch.setattr(ab, "run_simulation", lambda *task: seen.append(task) or {"ok": True})
+    tasks = [(tmp_path / s, tmp_path / s / "B_seed1", "system_one", 1, 8, "tiered") for s in ("x", "y", "z")]
+    results = ab.simulate_many(tasks, jobs=3)
+    assert sorted(t[0].name for t in seen) == ["x", "y", "z"]
+    assert results[tasks[1]] == {"ok": True}

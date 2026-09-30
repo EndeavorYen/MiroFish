@@ -265,6 +265,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return args
 
 
+def suite_tasks(out: Path, names: list[str], seeds: list[int], rounds: int) -> list[tuple]:
+    """``ab_eval.run_simulation`` arguments for every scenario, group and seed,
+    so one pool of ``--jobs`` workers keeps the model server busy across
+    scenarios instead of one scenario's few seeds at a time."""
+
+    groups = (("A", "llm", None), ("B", "system_one", "tiered"))
+    return [
+        (out / name / group, out / name / "runs" / f"{group}_seed{seed}", backend, seed, rounds, content)
+        for name in names for group, backend, content in groups for seed in seeds
+    ]
+
+
 def is_calibration(manifest: Path) -> bool:
     return bool(json.loads(Path(manifest).read_text(encoding="utf-8")).get("calibration"))
 
@@ -303,12 +315,17 @@ def main(argv: list[str] | None = None) -> int:
             raise SystemExit(f"unknown scenarios: {', '.join(sorted(missing))}")
     rows: list[dict[str, Any]] = []
     started = time.perf_counter()
+    fixtures = {}
     for entry in entries:
-        fixture = verify_digest(entry)
+        fixtures[entry["name"]] = fixture = verify_digest(entry)
+        ensure_prepared(out / entry["name"] / "A", fixture, "llm", entry["digest"])
+        ensure_prepared(out / entry["name"] / "B", fixture, "template", entry["digest"])
+    if args.jobs > 1:
+        # All simulations first, in one pool; ab_eval then reuses them.
+        ab_eval.simulate_many(suite_tasks(out, [e["name"] for e in entries], args.seeds, args.rounds), args.jobs)
+    for entry in entries:
         name = entry["name"]
-        digest = entry["digest"]
-        ensure_prepared(out / name / "A", fixture, "llm", digest)
-        ensure_prepared(out / name / "B", fixture, "template", digest)
+        fixture = fixtures[name]
         run_out = out / name / "runs"
         scenario_started = time.perf_counter()
         ab_eval.main([

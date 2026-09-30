@@ -112,31 +112,35 @@ def run_simulation(work: Path, out: Path, backend: str, seed: int, rounds: int, 
     return json.loads(summary.read_text(encoding="utf-8"))
 
 
-def run_all(
-    groups: dict[str, dict[str, Any]], out: Path, seeds: list[int], rounds: int, jobs: int = 1
-) -> dict[str, dict[int, dict[str, Any]]]:
-    """Every (group, seed) run, ``jobs`` at a time.
+def simulate_many(tasks: list[tuple], jobs: int = 1) -> dict[tuple, dict[str, Any]]:
+    """``run_simulation(*task)`` for every task, ``jobs`` at a time.
 
     Runs are independent, and one System One run keeps the model server's
     GPU mostly idle (7-29% utilisation; its rounds wait on sequential
-    readouts), so several runs side by side finish sooner. Round latency is
-    then measured under contention; decode counts are not affected."""
+    readouts), so several runs side by side finish sooner. Tasks may come
+    from several scenarios. Round latency is then measured under contention;
+    decode counts are not affected."""
 
     from concurrent.futures import ThreadPoolExecutor
 
-    tasks = [(name, seed) for name in groups for seed in seeds]
-
-    def one(task: tuple[str, int]) -> tuple[str, int, dict[str, Any]]:
-        name, seed = task
-        group = groups[name]
-        run_dir = out / f"{name}_seed{seed}"
-        summary = run_simulation(group["work"], run_dir, group["backend"], seed, rounds, group["content"])
-        return name, seed, {"dir": run_dir, "summary": summary}
-
-    runs: dict[str, dict[int, dict[str, Any]]] = {name: {} for name in groups}
     with ThreadPoolExecutor(max_workers=max(1, jobs)) as pool:
-        for name, seed, result in pool.map(one, tasks):
-            runs[name][seed] = result
+        return dict(zip(tasks, pool.map(lambda task: run_simulation(*task), tasks)))
+
+
+def run_all(
+    groups: dict[str, dict[str, Any]], out: Path, seeds: list[int], rounds: int, jobs: int = 1
+) -> dict[str, dict[int, dict[str, Any]]]:
+    """Every (group, seed) run of one scenario, ``jobs`` at a time."""
+
+    keys = [(name, seed) for name in groups for seed in seeds]
+    tasks = [
+        (groups[n]["work"], out / f"{n}_seed{s}", groups[n]["backend"], s, rounds, groups[n]["content"])
+        for n, s in keys
+    ]
+    summaries = simulate_many(tasks, jobs)
+    runs: dict[str, dict[int, dict[str, Any]]] = {name: {} for name in groups}
+    for (name, seed), task in zip(keys, tasks):
+        runs[name][seed] = {"dir": task[1], "summary": summaries[task]}
     return runs
 
 

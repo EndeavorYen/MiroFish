@@ -178,8 +178,9 @@ def test_edge_pairs_cover_every_source_type_first():
 
     sources = ["A", "B", "C", "D", "E", "F"]
     pairs = _round_robin_pairs(sources, ["X", "Y", "A"])
-    assert len(pairs) == MAX_SOURCE_TARGETS
+    assert len(pairs) == 6 * 3 - 1  # every pair but A->A (#64: no cap)
     assert {p["source"] for p in pairs[:6]} == set(sources)
+    assert len({p["source"] for p in pairs[:MAX_SOURCE_TARGETS]}) == 6  # Zep's first 10 still cover all
     assert all(p["source"] != p["target"] for p in pairs)
 
 
@@ -289,3 +290,35 @@ def test_shipped_hours_priors_come_from_calibration_scenarios():
     assert set(data["weights"]) == set(ps.ACTIVE_PATTERNS)
     calibration = {row["name"] for row in ab_suite.load_manifest(ab_suite.CALIBRATION_MANIFEST)}
     assert data["scenarios"] and set(data["scenarios"]) <= calibration
+
+
+def test_template_pairs_are_not_capped_but_keep_their_order():
+    """#64: the 10-pair cap is Zep's; the local graph needs person->media too.
+
+    Zep still gets the first 10 (zep_store applies its limit), which are
+    the same pairs the capped version produced.
+    """
+
+    from app.services.prep_structured import MAX_SOURCE_TARGETS, _round_robin_pairs
+    from app.utils.ontology import normalize_ontology_source_targets
+
+    persons = ["CorporateExecutive", "Consumer", "Academic", "Employee", "Person"]
+    orgs = ["Company", "GovernmentAgency", "MediaOutlet", "ConsumerGroup", "Organization"]
+    pairs = _round_robin_pairs(persons, orgs)
+    assert len(pairs) == len(persons) * len(orgs)
+    assert {"source": "Person", "target": "MediaOutlet"} in pairs
+    first = [(p["source"], p["target"]) for p in pairs[:MAX_SOURCE_TARGETS]]
+    assert first == [(s, t) for t in orgs[:2] for s in persons]  # the old capped set
+    assert normalize_ontology_source_targets(pairs) == pairs[:MAX_SOURCE_TARGETS]  # Zep's cut
+
+
+def test_the_ontology_validator_keeps_every_pair():
+    from app.services.ontology_generator import OntologyGenerator
+
+    types = [{"name": f"T{i}", "description": "", "attributes": []} for i in range(8)]
+    pairs = [{"source": f"T{i}", "target": f"T{j}"} for i in range(4) for j in range(4, 8)]
+    ontology = {"entity_types": types, "edge_types": [
+        {"name": "KNOWS", "description": "", "source_targets": pairs, "attributes": []}]}
+    processed = OntologyGenerator.__new__(OntologyGenerator)._validate_and_process(ontology)
+    edge = next(e for e in processed["edge_types"] if e["name"] == "KNOWS")
+    assert len(edge["source_targets"]) == 16

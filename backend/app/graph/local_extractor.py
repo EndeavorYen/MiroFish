@@ -37,7 +37,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from .candidates import ORG_SUFFIXES, SURNAMES, Candidate, find_candidates
+from .candidates import COMPANY_FORMS, ORG_SUFFIXES, SURNAMES, Candidate, find_candidates
 from .embedding import Embedder
 from .extractor import ExtractedEntity, ExtractedRelation, Extraction, split_sentences
 
@@ -344,11 +344,16 @@ class LocalExtractor:
             vectors = dict(zip(pool, self.embedder.embed_documents(pool)))
 
         source_of = {t.name: t.source for t in typed}
+        pool_names = set(pool)
 
         def kind(name: str) -> str | None:
             """person / org from how the name was found, or its suffix."""
 
             if source_of.get(name) == "person":
+                # jieba reads a company's short name as a person (雲梯 for
+                # 雲梯科技); leave it to System One when the full name is here.
+                if any(name + form in pool_names for form in COMPANY_FORMS):
+                    return None
                 return "person"
             if source_of.get(name) == "org" or _strip_suffix(name) != name:
                 return "org"

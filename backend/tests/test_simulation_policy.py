@@ -367,6 +367,7 @@ def test_build_policy_shares_stores_and_validates_settings(tmp_path, monkeypatch
     reddit = build_policy("reddit", str(tmp_path), seed=2, client=FakeSystemOne(), content_provider=TemplateContentProvider())
     assert twitter.state_store is reddit.state_store
     assert twitter.log is reddit.log
+    assert twitter.health is reddit.health and twitter.health is not None
     with pytest.raises(ValueError):
         build_policy("twitter", str(tmp_path), seed=1, client=FakeSystemOne(), alpha=1.5, content_provider=TemplateContentProvider())
     monkeypatch.setenv("SIM_DECISION_CONCURRENCY", "zero")
@@ -559,3 +560,51 @@ def test_english_content_asks_the_intent_questions_in_english():
         stance_q = dict(client.questions)["stance"]
         assert word in stance_q.instructions
         assert len(stance_q.criteria) == 5
+
+
+def test_decision_health_stops_a_run_whose_model_service_is_gone():
+    from app.simulation_policy.oasis_bridge import DecisionHealth, ModelServiceUnavailable
+
+    health = DecisionHealth(fail_rounds=2, max_ratio=0.2, min_decisions=20)
+    health.record_round("twitter", total=3, failed=3, first_error="ConnectError: refused (http://127.0.0.1:8000/v1)")
+    health.record_round("reddit", total=2, failed=0, first_error=None)  # the other platform is fine
+    with pytest.raises(ModelServiceUnavailable, match="127.0.0.1:8000"):
+        health.record_round("twitter", total=2, failed=2, first_error="ConnectError: refused (http://127.0.0.1:8000/v1)")
+
+    steady = DecisionHealth(fail_rounds=2, max_ratio=0.2, min_decisions=20)
+    for _ in range(10):
+        steady.record_round("twitter", total=3, failed=0, first_error=None)
+        steady.record_round("twitter", total=3, failed=1, first_error="TimeoutError: slow")  # a timeout now and then
+        steady.record_round("twitter", total=0, failed=0, first_error=None)  # a round with no active agent
+    ratio = DecisionHealth(fail_rounds=99, max_ratio=0.2, min_decisions=20)
+    with pytest.raises(ModelServiceUnavailable, match="30%"):
+        for _ in range(10):
+            ratio.record_round("reddit", total=10, failed=3, first_error="TimeoutError: slow")
+
+
+def test_oasis_bridge_raises_after_consecutive_failed_rounds(tmp_path):
+    from app.simulation_policy.oasis_bridge import DecisionHealth, ModelServiceUnavailable, system_one_actions
+
+    class Broken(FakeSystemOne):
+        def ask(self, request):
+            raise ConnectionError("refused http://127.0.0.1:8000/v1")
+
+    class FakeActionApi:
+        async def refresh(self):
+            return {"success": True, "posts": _feed()}
+
+    class FakeAgent:
+        def __init__(self, agent_id):
+            self.social_agent_id = agent_id
+            self.user_info = None
+            self.env = type("E", (), {"action": FakeActionApi()})()
+
+    agent = FakeAgent(1)
+    env = type("Env", (), {"agent_graph": type("G", (), {"get_agents": lambda self: [(1, agent)]})()})()
+    policy = SystemOnePolicy(
+        Broken(), load_taxonomy("twitter"), seed=1, decision_log=DecisionLog(str(tmp_path / "d.jsonl"))
+    )
+    policy.health = DecisionHealth(fail_rounds=2)
+    asyncio.run(system_one_actions(env, [(1, agent)], policy, "twitter", 0))
+    with pytest.raises(ModelServiceUnavailable, match="127.0.0.1:8000"):
+        asyncio.run(system_one_actions(env, [(1, agent)], policy, "twitter", 1))

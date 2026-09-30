@@ -90,10 +90,15 @@
         </div>
       </div>
 
+      <div v-if="failureReason" class="failure-banner" role="alert">
+        <strong>{{ $t('step3.simFailedTitle') }}</strong>
+        <span>{{ failureReason }}</span>
+      </div>
+
       <div class="action-controls">
         <button 
           class="action-btn primary"
-          :disabled="phase !== 2 || isGeneratingReport"
+          :disabled="phase !== 2 || isGeneratingReport || !!failureReason"
           @click="handleNextStep"
         >
           <span v-if="isGeneratingReport" class="loading-spinner-small"></span>
@@ -321,6 +326,9 @@ const phase = ref(0) // 0: 未开始, 1: 运行中, 2: 已完成
 const isStarting = ref(false)
 const isStopping = ref(false)
 const startError = ref(null)
+// A failed run (e.g. the model service stopped answering) must not offer a
+// report built on failed decisions (#62).
+const failureReason = ref(null)
 const runStatus = ref({})
 const allActions = ref([]) // 所有动作（增量累积）
 const actionIds = ref(new Set()) // 用于去重的动作ID集合
@@ -374,6 +382,7 @@ const resetAllState = () => {
   prevTwitterRound.value = 0
   prevRedditRound.value = 0
   startError.value = null
+  failureReason.value = null
   isStarting.value = false
   isStopping.value = false
   stopPolling()  // 停止之前可能存在的轮询
@@ -425,11 +434,13 @@ const doStartSimulation = async () => {
       startDetailPolling()
     } else {
       startError.value = res.error || '启动失败'
+      failureReason.value = res.error || t('common.unknownError')
       addLog(t('log.startFailed', { error: res.error || t('common.unknownError') }))
       emit('update-status', 'error')
     }
   } catch (err) {
     startError.value = err.message
+    failureReason.value = err.message || t('common.unknownError')
     addLog(t('log.startException', { error: err.message }))
     emit('update-status', 'error')
   } finally {
@@ -519,6 +530,7 @@ const fetchRunStatus = async () => {
       // terminal state after the Zep ingestion barrier has completed.
       if (isFailed) {
         addLog(t('log.simFailed') + (data.error ? `: ${data.error}` : ''))
+        failureReason.value = data.error || t('common.unknownError')
         phase.value = 2
         stopPolling()
         emit('update-status', 'error')
@@ -1264,5 +1276,18 @@ onUnmounted(() => {
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
   margin-right: 6px;
+}
+
+.failure-banner {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 12px 0;
+  padding: 12px 16px;
+  border: 1px solid #d93025;
+  border-radius: 6px;
+  background: #fdecea;
+  color: #8c1d18;
+  font-size: 13px;
 }
 </style>

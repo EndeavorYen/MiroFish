@@ -211,7 +211,8 @@
     "forceStopSuccess": "Simulation force stopped",
     "forceStopFailed": "Force stop failed: {error}",
     "startGenerateReportBtn": "Generate Report",
-    "generatingReportBtn": "Starting..."
+    "generatingReportBtn": "Starting...",
+    "simFailedTitle": "Simulation failed; no report can be generated"
   },
   "step4": {
     "generatingSection": "Generating {title}...",
@@ -625,7 +626,9 @@
     "actionDistribution": "Action Distribution",
     "emotionCurve": "Emotion Curve",
     "topPosts": "Most Spread Posts",
-    "stanceClustering": "Stance Clustering"
+    "stanceClustering": "Stance Clustering",
+    "decisionErrorWarning": "{rate} of agent decisions in this run failed (usually the model service stopped answering) and became \"do nothing\". The numbers below do not represent the simulation; fix the model service and run again.",
+    "scanUnavailable": "Could not produce: {reason}"
   },
   "console": {
     "zepToolsInitialized": "ZepToolsService initialized",

@@ -211,7 +211,8 @@
     "forceStopSuccess": "模擬已強制停止",
     "forceStopFailed": "強制停止失敗: {error}",
     "startGenerateReportBtn": "開始生成結果報告",
-    "generatingReportBtn": "啟動中..."
+    "generatingReportBtn": "啟動中...",
+    "simFailedTitle": "模擬失敗，無法產生報告"
   },
   "step4": {
     "generatingSection": "正在生成{title}...",
@@ -625,7 +626,9 @@
     "actionDistribution": "動作分布",
     "emotionCurve": "情緒曲線",
     "topPosts": "擴散最廣的貼文",
-    "stanceClustering": "立場分群"
+    "stanceClustering": "立場分群",
+    "decisionErrorWarning": "這次模擬有 {rate} 的 agent 決策失敗（多半是模型服務沒有回應），失敗的決策都成了「不動作」。以下數字不能代表模擬結果，請修復模型服務後重跑。",
+    "scanUnavailable": "無法產生：{reason}"
   },
   "console": {
     "zepToolsInitialized": "ZepToolsService 初始化完成",

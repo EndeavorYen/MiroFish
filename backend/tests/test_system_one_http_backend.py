@@ -1,6 +1,6 @@
 import json
 import threading
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
@@ -18,6 +18,11 @@ from app.system_one.models import (
 
 
 class _Handler(BaseHTTPRequestHandler):
+    # HTTP/1.1 keep-alive like llama.cpp and Jev. The HTTP/1.0 default closes
+    # after each response, and on Windows the shared keep-alive client then
+    # read about half the responses as WinError 10054 (connection reset):
+    # 49/100 requests needed a retry and 2/100 failed after six (#68).
+    protocol_version = "HTTP/1.1"
     received = []
 
     def do_POST(self):  # noqa: N802
@@ -58,11 +63,13 @@ class _Handler(BaseHTTPRequestHandler):
 @pytest.fixture
 def mock_server():
     _Handler.received = []
-    server = HTTPServer(("127.0.0.1", 0), _Handler)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+    server.daemon_threads = True  # a kept-alive connection must not block shutdown()
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     yield f"http://127.0.0.1:{server.server_address[1]}"
     server.shutdown()
+    server.server_close()
 
 
 def _request():

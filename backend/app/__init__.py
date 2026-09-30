@@ -16,6 +16,24 @@ from .config import Config
 from .utils.logger import setup_logger, get_logger
 
 
+def _warn_about_embedding_tokenizer(logger) -> None:
+    """A mis-converted local embedding GGUF distorts graph search (#61)."""
+
+    if Config.GRAPH_EMBEDDER != "http":
+        return
+
+    def check() -> None:
+        from .graph.embedding import check_embedding_tokenizer
+
+        warning = check_embedding_tokenizer(Config.EMBED_BASE_URL)
+        if warning:
+            logger.warning(warning)
+
+    # Off the start-up path: a stalled server must not delay the backend.
+    import threading
+    threading.Thread(target=check, name="embed-tokenizer-check", daemon=True).start()
+
+
 def create_app(config_class=Config):
     """Flask应用工厂函数"""
     app = Flask(__name__)
@@ -47,7 +65,8 @@ def create_app(config_class=Config):
     SimulationRunner.register_cleanup()
     if should_log_startup:
         logger.info("已注册模拟进程清理函数")
-    
+        _warn_about_embedding_tokenizer(logger)
+
     # 请求日志中间件
     @app.before_request
     def log_request():

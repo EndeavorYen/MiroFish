@@ -82,7 +82,7 @@ uv run python scripts/compare_options.py ... --path llm
 
 ## 快速開始（llama.cpp，已實測）
 
-1. 下載 [llama.cpp](https://github.com/ggml-org/llama.cpp/releases) 與模型：`Qwen3.5-4B-Q4_K_M.gguf`、`multilingual-e5-small-F16.gguf`。
+1. 下載 [llama.cpp](https://github.com/ggml-org/llama.cpp/releases) 與 `Qwen3.5-4B-Q4_K_M.gguf`；embedding 模型用下方「embedding 的 GGUF」自己轉（現成的 e5-small GGUF 斷詞是錯的）。
 2. 啟動模型服務（兩個終端）：
 
    ```bash
@@ -90,8 +90,8 @@ uv run python scripts/compare_options.py ... --path llm
    llama-server -m Qwen3.5-4B-Q4_K_M.gguf -c 65536 -np 8 -ngl 99 --jinja \
      --reasoning off --no-mmproj --alias qwen3.5-4b --host 127.0.0.1 --port 8000
 
-   # 向量（CPU）
-   llama-server -m multilingual-e5-small-F16.gguf --embedding --pooling mean -ngl 0 \
+   # 向量（CPU）；GGUF 要用下方「embedding 的 GGUF」的方式轉
+   llama-server -m multilingual-e5-small-ugm-F16.gguf --embedding --pooling mean -ngl 0 \
      -c 2048 -b 2048 -ub 2048 -np 4 --alias intfloat/multilingual-e5-small \
      --host 127.0.0.1 --port 8001
    ```
@@ -103,6 +103,42 @@ uv run python scripts/compare_options.py ... --path llm
    ```
 
 4. 照原本方式啟動：`npm run dev`。
+
+### embedding 的 GGUF（#61）
+
+網路上常見的 `multilingual-e5-small` GGUF（以及 llama.cpp 轉檔程式直接轉出來的）斷詞是錯的：模型的 `config.json` 寫 `BertModel`，轉檔程式就寫入 WordPiece 詞表，但這個模型用的是 XLM-R 的 SentencePiece Unigram。結果大部分英文單字變成 `<unk>`，中文被拆成單字，向量和原模型的 cosine 只有 0.78–0.95。`backend/scripts/convert_e5_gguf.py` 保留 BERT 的張量、改寫正確的詞表：
+
+```bash
+git clone --depth 1 https://github.com/ggml-org/llama.cpp
+uv run --no-project --python 3.12 \
+    --with torch --with transformers --with sentencepiece --with protobuf \
+    --with safetensors --with numpy --with pyyaml --with requests \
+    python backend/scripts/convert_e5_gguf.py --llama-cpp llama.cpp \
+    --out multilingual-e5-small-ugm-F16.gguf
+```
+
+模型從 Hugging Face cache 讀（沒有的話加 `--model <目錄>`）。轉檔需要 torch，所以用一次性的環境，不裝進後端。實測（2026-10-01，6 句中英文）：
+
+| GGUF | `/tokenize` 與 transformers | `<unk>` | cosine（對 transformers） |
+| --- | --- | ---: | ---: |
+| 舊檔（`tokenizer.ggml.model = bert`） | 全部不同 | 每句 1–6 個 | 0.78–0.95 |
+| `convert_e5_gguf.py`（`t5`，Unigram） | 全部相同 | 0 | 1.0000 |
+
+檢索與建圖的變化（同一天實測）：
+
+- 句子檢索：把種子新聞切成句子，每個查詢改寫其中一句（盡量不用原句的關鍵字），看那一句用向量排第幾。每個情境 12 個查詢（查詢是人工寫的，樣本小）。northbridge（英文，16 句）hit@1 從 0.42 到 1.00、MRR 從 0.53 到 1.00；golden（中文，17 句）hit@1 從 0.58 到 0.83、MRR 從 0.79 到 0.92。
+- 建圖品質（`eval_local_extraction.py`，golden 與 holdout3 的人工標準圖譜）：兩個 GGUF 的實體召回、精確度、邊召回完全相同，建圖不受影響。
+- 模擬層級（G5，每組 5 個 seed）還沒比，要在 Colab 跑。
+
+後端啟動時會用 `/tokenize` 檢查本機 llama.cpp embedding 服務，斷詞有 `<unk>` 就在 log 警告。
+
+**換了 embedding 之後要重算圖譜的向量。** 圖譜會記下寫入向量的 embedder（固定探針句的向量）；換成不同的 embedder 後，搜尋那張圖只用關鍵字（BM25），並在 log 警告。在 #61 之前建立的圖譜沒有這個紀錄，會照舊使用向量。重算（先停後端）：
+
+```bash
+cd backend
+uv run python scripts/reembed_graphs.py --check   # 每張圖的狀態
+uv run python scripts/reembed_graphs.py           # 全部重算
+```
 
 ### llama-server 參數注意事項
 

@@ -11,8 +11,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from scripts.run_twitter_simulation import TwitterSimulationRunner
-from scripts.run_reddit_simulation import RedditSimulationRunner
 from scripts.run_parallel_simulation import get_active_agents_for_round
 
 
@@ -47,50 +45,6 @@ def _make_mock_env():
     mock_env = MagicMock()
     mock_env.agent_graph.get_agent = lambda aid: SimpleNamespace(id=aid, name=f"agent_{aid}")
     return mock_env
-
-
-def test_twitter_simulation_runner_deterministic_with_seed(tmp_path):
-    cfg_file = _make_config(tmp_path / "config.json")
-    mock_env = _make_mock_env()
-
-    runner1 = TwitterSimulationRunner(cfg_file, wait_for_commands=False, seed=42)
-    runner2 = TwitterSimulationRunner(cfg_file, wait_for_commands=False, seed=42)
-    runner3 = TwitterSimulationRunner(cfg_file, wait_for_commands=False, seed=999)
-
-    seq1, seq2, seq3 = [], [], []
-    for r in range(12):
-        hour = (r * 2) % 24
-        agents1 = runner1._get_active_agents_for_round(mock_env, current_hour=hour, round_num=r)
-        agents2 = runner2._get_active_agents_for_round(mock_env, current_hour=hour, round_num=r)
-        agents3 = runner3._get_active_agents_for_round(mock_env, current_hour=hour, round_num=r)
-        seq1.append([aid for aid, _ in agents1])
-        seq2.append([aid for aid, _ in agents2])
-        seq3.append([aid for aid, _ in agents3])
-
-    assert seq1 == seq2, "Identical seed must produce identical active agent sequences round-by-round"
-    assert seq1 != seq3, "Different seeds should produce different active agent sequences"
-
-
-def test_reddit_simulation_runner_deterministic_with_seed(tmp_path):
-    cfg_file = _make_config(tmp_path / "config.json")
-    mock_env = _make_mock_env()
-
-    runner1 = RedditSimulationRunner(cfg_file, wait_for_commands=False, seed=42)
-    runner2 = RedditSimulationRunner(cfg_file, wait_for_commands=False, seed=42)
-    runner3 = RedditSimulationRunner(cfg_file, wait_for_commands=False, seed=999)
-
-    seq1, seq2, seq3 = [], [], []
-    for r in range(12):
-        hour = (r * 2) % 24
-        agents1 = runner1._get_active_agents_for_round(mock_env, current_hour=hour, round_num=r)
-        agents2 = runner2._get_active_agents_for_round(mock_env, current_hour=hour, round_num=r)
-        agents3 = runner3._get_active_agents_for_round(mock_env, current_hour=hour, round_num=r)
-        seq1.append([aid for aid, _ in agents1])
-        seq2.append([aid for aid, _ in agents2])
-        seq3.append([aid for aid, _ in agents3])
-
-    assert seq1 == seq2, "Identical seed must produce identical active agent sequences round-by-round"
-    assert seq1 != seq3, "Different seeds should produce different active agent sequences"
 
 
 def test_parallel_simulation_get_active_agents_deterministic(tmp_path):
@@ -148,87 +102,3 @@ def test_parallel_simulation_platform_rng_independence(tmp_path):
 
     assert tw_seq == tw_intl, "Twitter RNG must be unaffected by Reddit execution"
     assert rd_seq == rd_intl, "Reddit RNG must be unaffected by Twitter execution"
-
-
-def test_runner_reads_seed_from_config(tmp_path):
-    cfg_file = _make_config(tmp_path / "config.json", seed=123)
-    runner = TwitterSimulationRunner(cfg_file, wait_for_commands=False)
-    assert runner.seed == 123
-    assert runner.rng is not random
-    assert runner.wait_for_commands is False
-
-
-def _write_runner_config(path, *, hours: int, initial_posts):
-    payload = {
-        "simulation_id": "empty_initial_posts",
-        "time_config": {
-            "total_simulation_hours": hours,
-            "minutes_per_round": 30,
-        },
-        "agent_configs": [],
-        "event_config": {"initial_posts": initial_posts},
-    }
-    path.write_text(json.dumps(payload), encoding="utf-8")
-    return str(path)
-
-
-def _patch_runner_env(monkeypatch, module_name: str, graph_name: str):
-    env = MagicMock()
-    env.reset = AsyncMock()
-    env.step = AsyncMock()
-    env.close = AsyncMock()
-
-    async def fake_graph(**kwargs):
-        return MagicMock()
-
-    monkeypatch.setattr(f"{module_name}.{graph_name}", fake_graph)
-    monkeypatch.setattr(f"{module_name}.oasis.make", lambda **kwargs: env)
-    monkeypatch.setattr(
-        f"{module_name}.IPCHandler",
-        MagicMock(return_value=MagicMock()),
-    )
-    return env
-
-
-@pytest.mark.asyncio
-async def test_twitter_empty_initial_posts_does_not_raise(tmp_path, monkeypatch):
-    cfg = _write_runner_config(
-        tmp_path / "simulation_config.json",
-        hours=0,
-        initial_posts=[],
-    )
-    (tmp_path / "twitter_profiles.csv").write_text("user_id\n", encoding="utf-8")
-    runner = TwitterSimulationRunner(cfg, wait_for_commands=False, seed=1)
-    runner._create_model = lambda: object()
-    env = _patch_runner_env(
-        monkeypatch,
-        "scripts.run_twitter_simulation",
-        "generate_twitter_agent_graph",
-    )
-
-    await runner.run()
-
-    env.step.assert_not_called()
-    env.close.assert_awaited()
-
-
-@pytest.mark.asyncio
-async def test_reddit_empty_initial_posts_does_not_raise(tmp_path, monkeypatch):
-    cfg = _write_runner_config(
-        tmp_path / "simulation_config.json",
-        hours=0,
-        initial_posts=[],
-    )
-    (tmp_path / "reddit_profiles.json").write_text("[]", encoding="utf-8")
-    runner = RedditSimulationRunner(cfg, wait_for_commands=False, seed=1)
-    runner._create_model = lambda: object()
-    env = _patch_runner_env(
-        monkeypatch,
-        "scripts.run_reddit_simulation",
-        "generate_reddit_agent_graph",
-    )
-
-    await runner.run()
-
-    env.step.assert_not_called()
-    env.close.assert_awaited()

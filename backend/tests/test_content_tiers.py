@@ -180,7 +180,7 @@ def test_interview_context_summarises_decisions_and_emotions(tmp_path, monkeypat
 def test_interview_replies_through_the_existing_ipc_flow(tmp_path, monkeypatch):
     from oasis import ActionType
 
-    from scripts.run_twitter_simulation import IPCHandler
+    from scripts.run_parallel_simulation import ParallelIPCHandler
 
     monkeypatch.setenv("SIM_DECISION_BACKEND", "system_one")
     _write_history(tmp_path)
@@ -209,8 +209,8 @@ def test_interview_replies_through_the_existing_ipc_flow(tmp_path, monkeypatch):
         def get_agent(self, agent_id):
             return FakeAgent()
 
-    handler = IPCHandler(str(tmp_path), FakeEnv(), FakeGraph())
-    assert asyncio.run(handler.handle_interview("cmd-1", 3, "你怎麼看票價？"))
+    handler = ParallelIPCHandler(str(tmp_path), twitter_env=FakeEnv(), twitter_agent_graph=FakeGraph())
+    assert asyncio.run(handler.handle_interview("cmd-1", 3, "你怎麼看票價？", platform="twitter"))
     response = json.loads((tmp_path / "ipc_responses" / "cmd-1.json").read_text(encoding="utf-8"))
     assert response["status"] == "completed"
     assert response["result"]["response"] == "我覺得票價應該降低。"

@@ -1,7 +1,6 @@
 """Glue between the simulation scripts (OASIS) and SystemOnePolicy.
 
-Imported by run_twitter_simulation.py, run_reddit_simulation.py and
-run_parallel_simulation.py when ``SIM_DECISION_BACKEND=system_one``.
+Imported by run_parallel_simulation.py when ``SIM_DECISION_BACKEND=system_one``.
 """
 
 from __future__ import annotations

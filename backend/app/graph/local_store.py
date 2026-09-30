@@ -6,7 +6,7 @@ Layout under ``data_dir``::
     <graph_id>.sqlite      nodes, edges, episodes, ontology, FTS5 and vec0
 
 Labels follow Zep: every node carries ``"Entity"`` plus its ontology type, so
-``ZepEntityReader.filter_defined_entities`` works unchanged.
+``EntityReader.filter_defined_entities`` works unchanged.
 
 Search runs BM25 (FTS5 over CJK-bigram text) and cosine KNN (sqlite-vec)
 and merges the two rankings with reciprocal rank fusion (k=60). Both

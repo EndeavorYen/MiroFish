@@ -91,7 +91,7 @@ def client(store, monkeypatch):
 
 
 def test_the_api_edits_roles_and_preparation_sees_them(client, store, monkeypatch):
-    from app.services import zep_entity_reader
+    from app.services import entity_reader
 
     roles = {r["name"]: r for r in client.get("/api/graph/g1/roles").get_json()["data"]["roles"]}
     ops = [
@@ -106,8 +106,8 @@ def test_the_api_edits_roles_and_preparation_sees_them(client, store, monkeypatc
     assert after["數位前線"]["excluded"] and after["數位前線"]["type"] is None
     assert "雲梯" not in after and "OpenAI" in after
 
-    monkeypatch.setattr(zep_entity_reader, "get_graph_store", lambda **kw: store)
-    prepared = zep_entity_reader.ZepEntityReader().filter_defined_entities("g1", enrich_with_edges=False)
+    monkeypatch.setattr(entity_reader, "get_graph_store", lambda **kw: store)
+    prepared = entity_reader.EntityReader().filter_defined_entities("g1", enrich_with_edges=False)
     names = {e.name for e in prepared.entities}
     assert {"林書瑤二", "雲梯科技", "OpenAI"} <= names
     assert not names & {"師林書瑤", "雲梯", "數位前線"}
@@ -152,9 +152,9 @@ def test_a_vector_failure_does_not_undo_or_fail_an_edit(store, monkeypatch):
 
 
 def test_edits_wait_while_a_simulation_owns_the_graph(client, monkeypatch):
-    from app.services.zep_graph_memory_updater import ZepGraphMemoryManager
+    from app.services.graph_memory_updater import GraphMemoryManager
 
-    monkeypatch.setattr(ZepGraphMemoryManager, "get_simulation_ids_for_graph", classmethod(lambda cls, g: ["sim_1"]))
+    monkeypatch.setattr(GraphMemoryManager, "get_simulation_ids_for_graph", classmethod(lambda cls, g: ["sim_1"]))
     response = client.post("/api/graph/g1/roles", json={"ops": [{"op": "add", "name": "X", "type": "Company"}]})
     assert response.status_code == 409 and "sim_1" in response.get_json()["error"]
 

@@ -79,7 +79,7 @@ def test_project_reset_refuses_a_graph_with_an_active_simulation(monkeypatch):
         classmethod(lambda _cls, _project_id: project),
     )
     monkeypatch.setattr(
-        graph_api.ZepGraphMemoryManager,
+        graph_api.GraphMemoryManager,
         "get_simulation_ids_for_graph",
         classmethod(lambda _cls, _graph_id: ["sim-active"]),
     )
@@ -94,13 +94,13 @@ def test_project_reset_refuses_a_graph_with_an_active_simulation(monkeypatch):
 
 def test_graph_delete_cannot_discard_an_updater_during_finalization(monkeypatch):
     monkeypatch.setattr(
-        graph_api.ZepGraphMemoryManager,
+        graph_api.GraphMemoryManager,
         "get_simulation_ids_for_graph",
         classmethod(lambda _cls, _graph_id: ["sim-finalizing"]),
     )
     discarded = []
     monkeypatch.setattr(
-        graph_api.ZepGraphMemoryManager,
+        graph_api.GraphMemoryManager,
         "discard_inactive_updater",
         classmethod(
             lambda _cls, simulation_id: discarded.append(simulation_id)

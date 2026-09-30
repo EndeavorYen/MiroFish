@@ -98,7 +98,7 @@ def test_structured_profile_fields_are_oasis_compatible():
 
 def test_generate_profile_from_entity_uses_structured_mode_without_llm(monkeypatch):
     from app.services import oasis_profile_generator as opg
-    from app.services.zep_entity_reader import EntityNode
+    from app.services.entity_reader import EntityNode
 
     monkeypatch.setattr(Config, "PROFILE_MODE", "structured")
     monkeypatch.setattr(Config, "GRAPH_BACKEND", "zep")
@@ -137,7 +137,7 @@ def test_hot_topics_are_deterministic():
 
 def test_config_generator_structured_mode_makes_no_llm_calls(monkeypatch):
     from app.services import simulation_config_generator as scg
-    from app.services.zep_entity_reader import EntityNode
+    from app.services.entity_reader import EntityNode
 
     monkeypatch.setattr(Config, "SIM_CONFIG_MODE", "structured")
     monkeypatch.setattr("app.system_one.client.get_system_one_client", lambda: FakeSystemOne())
@@ -186,7 +186,7 @@ def test_edge_pairs_cover_every_source_type_first():
 
 def test_use_llm_false_stays_rule_based_in_structured_mode(monkeypatch):
     from app.services import oasis_profile_generator as opg
-    from app.services.zep_entity_reader import EntityNode
+    from app.services.entity_reader import EntityNode
 
     monkeypatch.setattr(Config, "PROFILE_MODE", "structured")
 

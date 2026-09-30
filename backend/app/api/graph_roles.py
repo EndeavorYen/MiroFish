@@ -5,10 +5,10 @@ from flask import request, jsonify
 from . import graph_bp
 from ..graph.store import GraphNotFoundError
 from ..models.project import ProjectManager
-from ..services.zep_graph_memory_updater import ZepGraphMemoryManager
+from ..services.graph_memory_updater import GraphMemoryManager
 from ..utils.locale import t
 from ..utils.logger import get_logger
-from ..utils.zep_lifecycle import graph_lifecycle_lock
+from ..utils.graph_lifecycle import graph_lifecycle_lock
 from .graph import _project_has_active_build
 
 logger = get_logger('mirofish.api')
@@ -99,7 +99,7 @@ def edit_roles(graph_id: str):
         # A simulation that still owns an updater (running, or failed with
         # writes to retry) writes agents back into the graph by name. Read
         # only: _active_graph_consumers would discard a failed run's updater.
-        running = ZepGraphMemoryManager.get_simulation_ids_for_graph(graph_id)
+        running = GraphMemoryManager.get_simulation_ids_for_graph(graph_id)
         if running:
             return jsonify({"success": False, "error": f"simulations are using this graph: {', '.join(running)}"}), 409
         for index, op in enumerate(ops):

@@ -4,7 +4,7 @@ import traceback
 from flask import request, jsonify
 
 from .. import simulation_bp
-from ...services.zep_entity_reader import ZepEntityReader
+from ...services.entity_reader import EntityReader
 from ...services.simulation_manager import SimulationManager, SimulationStatus
 from ...utils.logger import get_logger
 from ...utils.locale import t, get_locale, set_locale
@@ -211,7 +211,7 @@ def prepare_simulation():
         # 这样前端在调用prepare后立即就能获取到预期Agent总数
         try:
             logger.info(f"同步获取实体数量: graph_id={state.graph_id}")
-            reader = ZepEntityReader()
+            reader = EntityReader()
             # 快速读取实体（不需要边信息，只统计数量）
             filtered_preview = reader.filter_defined_entities(
                 graph_id=state.graph_id,

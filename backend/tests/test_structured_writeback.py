@@ -15,7 +15,7 @@ from app.services.simulation_facts import (
     activity_to_fact,
     fact_key,
 )
-from app.services.zep_graph_memory_updater import AgentActivity, ZepGraphMemoryUpdater
+from app.services.graph_memory_updater import AgentActivity, GraphMemoryUpdater
 
 ARGS = {
     "CREATE_POST": {"content": "凌雲飛行的試飛很成功", "post_id": 11},
@@ -176,7 +176,7 @@ def local_updater(monkeypatch, tmp_path):
     monkeypatch.setattr(Config, "GRAPH_DATA_DIR", str(tmp_path / "graphs"))
     monkeypatch.setattr(Config, "GRAPH_EMBEDDER", "hash")
     monkeypatch.setattr("app.graph.local_store.make_extractor", lambda: _NoModelExtractor())
-    updater = ZepGraphMemoryUpdater("sim_graph", simulation_id="sim_1")
+    updater = GraphMemoryUpdater("sim_graph", simulation_id="sim_1")
     updater.store.create_graph("g", graph_id="sim_graph")
     yield updater
     updater.store.close()

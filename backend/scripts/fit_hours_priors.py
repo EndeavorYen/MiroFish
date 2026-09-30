@@ -77,14 +77,14 @@ def read_b_patterns(work: Path) -> list[dict[str, float]]:
 
     gp.force_local_config(work)
     from app.services.prep_structured import ACTIVE_PATTERNS, _ask
-    from app.services.zep_entity_reader import ZepEntityReader
+    from app.services.entity_reader import EntityReader
     from app.system_one.client import get_system_one_client
     from app.system_one.models import ChoiceQuestion
 
     prepared = json.loads((work / "prepared.json").read_text(encoding="utf-8"))
     ontology = json.loads((work / "ontology.json").read_text(encoding="utf-8"))
     types = [t["name"] for t in ontology.get("entity_types", [])]
-    entities = ZepEntityReader().filter_defined_entities(prepared["graph_id"], types, enrich_with_edges=False).entities
+    entities = EntityReader().filter_defined_entities(prepared["graph_id"], types, enrich_with_edges=False).entities
     client = get_system_one_client()
     rows = []
     for entity in entities:

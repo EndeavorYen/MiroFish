@@ -6,7 +6,7 @@ from flask import request, jsonify, send_file
 
 from .. import simulation_bp
 from ...config import Config
-from ...services.zep_entity_reader import ZepEntityReader
+from ...services.entity_reader import EntityReader
 from ...services.oasis_profile_generator import OasisProfileGenerator
 from ...services.simulation_manager import SimulationManager, SimulationStatus
 from ...services.simulation_runner import (
@@ -629,7 +629,7 @@ def generate_profiles():
         use_llm = data.get('use_llm', True)
         platform = data.get('platform', 'reddit')
         
-        reader = ZepEntityReader()
+        reader = EntityReader()
         filtered = reader.filter_defined_entities(
             graph_id=graph_id,
             defined_entity_types=entity_types,

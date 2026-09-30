@@ -114,6 +114,7 @@ profile 只會填「還沒設定」的模式設定，所以 `.env` 裡明確寫�
 | `FLASK_HOST` | `0.0.0.0` | 後端監聽位址。 |
 | `FLASK_PORT` | `5001` | 後端埠號。 |
 | `FLASK_DEBUG` | `False` | `true`（不分大小寫）開啟 debug；`1` 不會開啟。不要用在正式環境。 |
+| `RUNS_DB_PATH` | `backend/uploads/runs/runs.sqlite` | runs API（#63）的 SQLite 資料庫：run 的狀態、產物 id 與事件。 |
 | `SECRET_KEY` | `mirofish-secret-key` | Flask secret key；對外服務時請改掉。 |
 | `WERKZEUG_RUN_MAIN` | 由 Flask 設定 | debug reloader 的子程序標記，不需要自己設。 |
 | `PYTHONIOENCODING` | 由後端設定 | 模擬子程序的輸出編碼（`utf-8`），不需要自己設。 |

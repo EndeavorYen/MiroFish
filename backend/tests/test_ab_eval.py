@@ -371,6 +371,7 @@ def test_run_all_runs_jobs_in_parallel_and_keeps_every_result(monkeypatch, tmp_p
         return {"seed": seed, "backend": backend}
 
     monkeypatch.setattr(ab, "run_simulation", fake_run)
+    monkeypatch.setattr(ab, "STAGGER_S", 0)
     groups = {"A": {"work": tmp_path, "backend": "llm", "content": None},
               "B": {"work": tmp_path, "backend": "system_one", "content": "tiered"}}
     runs = ab.run_all(groups, tmp_path, [1, 2, 3], 24, jobs=3)
@@ -385,7 +386,19 @@ def test_run_all_runs_jobs_in_parallel_and_keeps_every_result(monkeypatch, tmp_p
 def test_simulate_many_pools_tasks_from_several_scenarios(monkeypatch, tmp_path):
     seen = []
     monkeypatch.setattr(ab, "run_simulation", lambda *task: seen.append(task) or {"ok": True})
+    monkeypatch.setattr(ab, "STAGGER_S", 0)
     tasks = [(tmp_path / s, tmp_path / s / "B_seed1", "system_one", 1, 8, "tiered") for s in ("x", "y", "z")]
     results = ab.simulate_many(tasks, jobs=3)
     assert sorted(t[0].name for t in seen) == ["x", "y", "z"]
     assert results[tasks[1]] == {"ok": True}
+
+
+def test_simulate_many_waits_for_free_memory(monkeypatch, tmp_path):
+    free = iter([0.5, 0.5, 4.0, 4.0, 4.0])
+    waits = []
+    monkeypatch.setattr(ab, "_free_gb", lambda: next(free, 4.0))
+    monkeypatch.setattr(ab.time, "sleep", lambda s: waits.append(s))
+    monkeypatch.setattr(ab, "run_simulation", lambda *task: {"ok": True})
+    tasks = [(tmp_path, tmp_path / f"B_seed{i}", "system_one", i, 8, "tiered") for i in range(2)]
+    assert len(ab.simulate_many(tasks, jobs=1, min_free_gb=2.5, stagger_s=0)) == 2
+    assert len(waits) == 2  # held back until memory was free

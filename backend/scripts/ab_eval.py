@@ -41,11 +41,14 @@ import argparse
 import itertools
 import json
 import math
+import os
 import random
 import re
 import statistics
 import subprocess
 import sys
+import threading
+import time
 from collections import Counter
 from collections.abc import Callable
 from pathlib import Path
@@ -112,7 +115,19 @@ def run_simulation(work: Path, out: Path, backend: str, seed: int, rounds: int, 
     return json.loads(summary.read_text(encoding="utf-8"))
 
 
-def simulate_many(tasks: list[tuple], jobs: int = 1) -> dict[tuple, dict[str, Any]]:
+MIN_FREE_GB = 2.5  # one simulation (two Python processes with torch) takes ~1.2 GB
+STAGGER_S = 5.0  # between starts, so the last run's memory shows up in the next check
+
+
+def _free_gb() -> float:
+    import psutil
+
+    return psutil.virtual_memory().available / 1024**3
+
+
+def simulate_many(
+    tasks: list[tuple], jobs: int = 1, min_free_gb: float | None = None, stagger_s: float | None = None
+) -> dict[tuple, dict[str, Any]]:
     """``run_simulation(*task)`` for every task, ``jobs`` at a time.
 
     Runs are independent, and one System One run keeps the model server's
@@ -123,8 +138,24 @@ def simulate_many(tasks: list[tuple], jobs: int = 1) -> dict[tuple, dict[str, An
 
     from concurrent.futures import ThreadPoolExecutor
 
+    reserve = float(os.environ.get("AB_MIN_FREE_GB", MIN_FREE_GB)) if min_free_gb is None else min_free_gb
+    stagger_s = STAGGER_S if stagger_s is None else stagger_s
+    start = threading.Lock()
+
+    def one(task: tuple) -> dict[str, Any]:
+        # Start a simulation only with memory to spare: sixteen at once
+        # beside vLLM's WSL VM ran a 32 GB host out of memory, and the
+        # simulations that could not start failed the whole batch.
+        with start:
+            while _free_gb() < reserve:
+                time.sleep(5)
+            if stagger_s:
+                # Let the previous run load its models before measuring again.
+                time.sleep(stagger_s)
+        return run_simulation(*task)
+
     with ThreadPoolExecutor(max_workers=max(1, jobs)) as pool:
-        return dict(zip(tasks, pool.map(lambda task: run_simulation(*task), tasks)))
+        return dict(zip(tasks, pool.map(one, tasks)))
 
 
 def run_all(

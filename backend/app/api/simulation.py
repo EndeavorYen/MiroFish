@@ -10,6 +10,7 @@ from flask import request, jsonify, send_file
 
 from . import simulation_bp
 from ..config import Config
+from ..utils.model_health import check_model_service
 from ..services.zep_entity_reader import ZepEntityReader
 from ..services.oasis_profile_generator import OasisProfileGenerator
 from ..services.simulation_manager import SimulationManager, SimulationStatus
@@ -427,6 +428,9 @@ def prepare_simulation():
             }
         }
     """
+    problem = _model_service_problem()
+    if problem:
+        return jsonify({"success": False, "error": problem}), 503
     import threading
     import os
     from ..models.task import TaskManager, TaskStatus
@@ -1494,6 +1498,23 @@ def generate_profiles():
 
 # ============== 模拟运行控制接口 ==============
 
+def _model_service_problem(run: bool = False) -> str | None:
+    """The local model services a step will use, checked before it starts (#62).
+
+    Preparation and LLM-decided runs use ``LLM_BASE_URL``; a System One run
+    also scores decisions against ``SYSTEM_ONE_BASE_URL``.
+    """
+
+    urls = [Config.LLM_BASE_URL]
+    if run and os.environ.get("SIM_DECISION_BACKEND", "llm").strip().lower() == "system_one":
+        urls.insert(0, Config.SYSTEM_ONE_BASE_URL)
+    for url in dict.fromkeys(u for u in urls if u):
+        problem = check_model_service(url)
+        if problem:
+            return problem
+    return None
+
+
 @simulation_bp.route('/start', methods=['POST'])
 def start_simulation():
     """
@@ -1590,6 +1611,13 @@ def start_simulation():
                 "success": False,
                 "error": t('api.simulationNotFound', id=simulation_id)
             }), 404
+
+        # A run on a dead model server used to finish on failed decisions and
+        # report "completed" (#62). Checked before a forced restart clears the
+        # previous run's logs.
+        problem = _model_service_problem(run=True)
+        if problem:
+            return jsonify({"success": False, "error": problem}), 503
 
         force_restarted = False
         

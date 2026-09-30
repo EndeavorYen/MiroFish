@@ -140,15 +140,16 @@ def _level(score: float, levels: int) -> float:
 
 
 def _round_robin_pairs(sources: list[str], targets: list[str]) -> list[dict[str, str]]:
-    """Up to MAX_SOURCE_TARGETS pairs, one target per source per pass, so
-    every source type (media, residents, fallbacks) gets a pair before any
-    source gets a second one."""
+    """Every pair, one target per source per pass, so every source type
+    (media, residents, fallbacks) gets a pair before any source gets a
+    second one. Zep keeps only the first MAX_SOURCE_TARGETS (zep_store
+    applies that limit); the local graph uses them all (#64)."""
 
     queues = {s: [t for t in targets if t != s] for s in sources}
     pairs: list[dict[str, str]] = []
-    while len(pairs) < MAX_SOURCE_TARGETS and any(queues.values()):
+    while any(queues.values()):
         for source in sources:
-            if queues[source] and len(pairs) < MAX_SOURCE_TARGETS:
+            if queues[source]:
                 pairs.append({"source": source, "target": queues[source].pop(0)})
     return pairs
 

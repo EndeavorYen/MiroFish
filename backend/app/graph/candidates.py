@@ -15,7 +15,9 @@ Sources, unioned:
 * person names: jieba POS ``nr*`` tokens (adjacent ones joined), plus names
   after a title word (教授, 執行長, 議員 ...) that start with a common
   surname, offered as 3- and 2-character variants;
-* quoted names: text inside 「」, 『』 or “”.
+* quoted names: text inside 「」, 『』 or “”;
+* Latin names (#64): capitalised words in the Chinese text (OpenAI,
+  ChatGPT Pro), a run of them offered whole and as its first word.
 """
 
 from __future__ import annotations
@@ -31,6 +33,11 @@ ORG_SUFFIXES = (
 )
 # Single-character suffixes also occur inside ordinary words (委託, 局面);
 # they only count when the next character does not continue such a word.
+# ... or when the character before makes it an ordinary word (連署, 格局).
+_SINGLE_SUFFIX_PREFIX_BLOCKERS = {
+    "局": "布格結騙賽僵變時大",
+    "署": "連簽部",
+}
 _SINGLE_SUFFIX_BLOCKERS = {
     "局": "面勢限部長",
     "委": "託屈婉任員",
@@ -66,7 +73,14 @@ TITLE_WORDS = (
     "主任委員", "副局長", "局長", "副市長", "市長", "執行長", "董事長", "總經理", "總裁",
     "發言人", "教授", "研究員", "議員", "委員", "理事長", "主席", "會長", "院長", "所長",
     "記者", "律師", "醫師", "代表", "部長", "署長", "處長", "主任",
+    "分析師", "主管", "版主", "創辦人",
 )
+# Company forms: 雲梯 inside 雲梯科技 is the company, not a person.
+COMPANY_FORMS = ("股份有限公司", "有限公司", "公司", "科技", "集團", "控股")
+# A Latin word that starts with a capital or holds one after the first
+# letter (iPhone); all-caps words of two letters (AI, US) are left out.
+_LATIN_WORD = r"[A-Za-z][A-Za-z0-9&+\-]*"
+_LATIN_RUN_RE = re.compile(rf"{_LATIN_WORD}(?: {_LATIN_WORD})*")
 # Common Chinese surnames (traditional forms), used to anchor names after titles.
 SURNAMES = set(
     "陳林黃張李王吳劉蔡楊許鄭謝洪郭邱曾廖賴徐周葉蘇莊呂江何蕭羅高潘簡朱鍾彭游詹胡施沈"
@@ -130,8 +144,23 @@ def _persons(text: str, tokens: list[tuple[str, str, int, int]]) -> list[Candida
             ):
                 end = tokens[j][3]
                 j += 1
+            # jieba glues a title's last character to the name (分析|師林書瑤).
+            # The uncut name stays a variant: the "title" may end a word
+            # before a real surname (民主|管中閔), and System One picks.
+            full_start = start
+            for title in TITLE_WORDS:
+                cut = next(
+                    (k for k in range(1, len(title))
+                     if text[max(start - (len(title) - k), 0) : start + k] == title),
+                    0,
+                )
+                if cut and end - (start + cut) >= 2:
+                    start += cut
+                    break
             name = text[start:end]
             variants = [name]
+            if start != full_start:
+                variants.append(text[full_start:end])
             # jieba often drops the surname: 高|明哲 -> offer 高明哲 too.
             if len(name) == 2 and start > 0 and text[start - 1] in SURNAMES:
                 variants.insert(0, text[start - 1 : end])
@@ -169,6 +198,8 @@ def _suffix_matches(text: str) -> list[tuple[int, int, str]]:
             ):
                 continue  # 委 inside 委員會, 公司 inside 公司治理 is fine below
             if len(suffix) == 1 and end < len(text) and text[end] in _SINGLE_SUFFIX_BLOCKERS[suffix]:
+                continue
+            if start > 0 and text[start - 1] in _SINGLE_SUFFIX_PREFIX_BLOCKERS.get(suffix, ""):
                 continue
             # 科技 in 創新科技局: the name continues into another suffix.
             if any(
@@ -304,6 +335,46 @@ def _quoted(text: str) -> list[Candidate]:
     ]
 
 
+def _is_name_word(word: str) -> bool:
+    if not any(ch.isupper() for ch in word):
+        return False
+    return not (word.isupper() and len(word) <= 2)
+
+
+def _latin(text: str) -> list[Candidate]:
+    found = []
+    for match in _LATIN_RUN_RE.finditer(text):
+        # Every run of name words: "OpenAI and Microsoft" holds two names,
+        # "the OpenAI API" one after a lowercase word.
+        position = match.start()
+        run: list[tuple[str, int]] = []
+        for word in match.group(0).split(" ") + [""]:
+            if word and _is_name_word(word):
+                run.append((word, position))
+            elif run:
+                name = " ".join(w for w, _ in run)
+                start = run[0][1]
+                # A run's first or last word may be the name alone
+                # (ChatGPT Pro, Today OpenAI).
+                variants = list(dict.fromkeys([name, run[0][0], run[-1][0]]))
+                found.append(Candidate(name, start, start + len(name), "latin", tuple(variants)))
+                run = []
+            position += len(word) + 1
+    return found
+
+
+def _company_fragment(item: Candidate, kept: list[Candidate]) -> bool:
+    """雲梯 read as a person inside 雲梯科技: the company's name, not a person."""
+
+    return item.source == "person" and any(
+        other.start <= item.start
+        and item.end <= other.end
+        and other.text.startswith(item.text)
+        and other.text[len(item.text):] in COMPANY_FORMS
+        for other in kept
+    )
+
+
 def find_candidates(text: str) -> list[Candidate]:
     """Candidates in order of first appearance, one per distinct span text.
 
@@ -312,7 +383,7 @@ def find_candidates(text: str) -> list[Candidate]:
     """
 
     tokens = _pos_tokens(text)
-    items = _organisations(text, tokens) + _persons(text, tokens) + _quoted(text)
+    items = _organisations(text, tokens) + _persons(text, tokens) + _quoted(text) + _latin(text)
     items.sort(key=lambda c: (c.start, -(c.end - c.start)))
     kept: list[Candidate] = []
     seen: set[str] = set()
@@ -323,6 +394,8 @@ def find_candidates(text: str) -> list[Candidate]:
             other.start <= item.start and item.end <= other.end and item.text in other.options()
             for other in kept
         ):
+            continue
+        if _company_fragment(item, kept):
             continue
         seen.add(item.text)
         kept.append(item)

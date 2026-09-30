@@ -627,8 +627,10 @@ class OntologyGenerator:
                 target = resolve_entity_name(source_target["target"])
                 if source and target:
                     normalized_targets.append({"source": source, "target": target})
+            # No cap here: zep_store applies Zep's limit when it sends the
+            # ontology; the local graph can use every pair (#64).
             edge["source_targets"] = normalize_ontology_source_targets(
-                normalized_targets
+                normalized_targets, limit=None
             )
             edge["attributes"] = normalize_ontology_attributes(
                 edge.get("attributes", [])

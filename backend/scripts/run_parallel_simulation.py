@@ -105,9 +105,22 @@ else:
 from app.profiles import apply_profile
 
 apply_profile()  # MIROFISH_PROFILE after this script's own .env load (#36)
+from app.simulation_policy.lazy_imports import defer_neo4j
+from app.simulation_policy.light_recsys import install as install_light_recsys
+
+# Before anything imports oasis: its recommender loads torch and twhin-bert,
+# its agent graph the neo4j driver MiroFish does not use (#65).
+install_light_recsys(os.environ)
+defer_neo4j()
 from app.utils.llm_usage import wrap_camel_model, usage_stage
 from app.utils.camel_context import apply_agent_graph_budget, context_budget_from_env
-from app.simulation_policy.oasis_bridge import build_policy, decision_backend, system_one_actions
+from app.simulation_policy.oasis_bridge import (
+    ModelServiceUnavailable,
+    build_policy,
+    decision_backend,
+    record_failure,
+    system_one_actions,
+)
 from app.simulation_policy.interview import augment_interview_prompt
 
 
@@ -1680,17 +1693,26 @@ async def main():
         policy_reddit = build_policy("reddit", simulation_dir, seed=seed + 1 if seed is not None else None)
         log_manager.info("决策后端: system_one（不经 LLM decode）")
     
-    if args.twitter_only:
-        twitter_result = await run_twitter_simulation(config, simulation_dir, twitter_logger, log_manager, args.max_rounds, rng=rng_twitter, policy=policy_twitter)
-    elif args.reddit_only:
-        reddit_result = await run_reddit_simulation(config, simulation_dir, reddit_logger, log_manager, args.max_rounds, rng=rng_reddit, policy=policy_reddit)
-    else:
-        # 并行运行（每个平台使用独立的日志记录器）
-        results = await asyncio.gather(
-            run_twitter_simulation(config, simulation_dir, twitter_logger, log_manager, args.max_rounds, rng=rng_twitter, policy=policy_twitter),
-            run_reddit_simulation(config, simulation_dir, reddit_logger, log_manager, args.max_rounds, rng=rng_reddit, policy=policy_reddit),
-        )
-        twitter_result, reddit_result = results
+    try:
+        if args.twitter_only:
+            twitter_result = await run_twitter_simulation(config, simulation_dir, twitter_logger, log_manager, args.max_rounds, rng=rng_twitter, policy=policy_twitter)
+        elif args.reddit_only:
+            reddit_result = await run_reddit_simulation(config, simulation_dir, reddit_logger, log_manager, args.max_rounds, rng=rng_reddit, policy=policy_reddit)
+        else:
+            # 并行运行（每个平台使用独立的日志记录器）
+            results = await asyncio.gather(
+                run_twitter_simulation(config, simulation_dir, twitter_logger, log_manager, args.max_rounds, rng=rng_twitter, policy=policy_twitter),
+                run_reddit_simulation(config, simulation_dir, reddit_logger, log_manager, args.max_rounds, rng=rng_reddit, policy=policy_reddit),
+            )
+            twitter_result, reddit_result = results
+    except ModelServiceUnavailable as error:
+        # The model service stopped answering: stop instead of finishing on
+        # failed decisions, and leave the reason for the runner (#62).
+        global _EXIT_CODE
+        log_manager.info(f"模拟中止: {error}")
+        record_failure(simulation_dir, error)
+        _EXIT_CODE = 3
+        return
     
     total_elapsed = (datetime.now() - start_time).total_seconds()
     log_manager.info("=" * 60)
@@ -1785,6 +1807,9 @@ def setup_signal_handlers(loop=None):
     signal.signal(signal.SIGINT, signal_handler)
 
 
+# Non-zero when the run stopped on a failed model service (#62).
+_EXIT_CODE = 0
+
 if __name__ == "__main__":
     setup_signal_handlers()
     try:
@@ -1801,3 +1826,5 @@ if __name__ == "__main__":
         except Exception:
             pass
         print("模拟进程已退出")
+    if _EXIT_CODE:
+        sys.exit(_EXIT_CODE)

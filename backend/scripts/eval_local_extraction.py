@@ -142,7 +142,25 @@ def evaluate(store: LocalGraphStore, graph_id: str, gold: dict) -> dict:
         ),
         "missed_entities": sorted({e["name"] for e in gold["entities"]} - matched),
         "unmatched_nodes": sorted(n.name for n in nodes if not node_group[n.uuid]),
+        # #64: one gold entity split over several nodes (雲梯 / 雲梯科技), and
+        # names with a wrong boundary (師林書瑤 for 林書瑤).
+        "duplicate_groups": sorted(
+            g for g in matched if sum(1 for v in node_group.values() if v == g) > 1
+        ),
+        "boundary_errors": sorted(
+            n.name
+            for n in nodes
+            if not node_group[n.uuid]
+            and any(
+                gold_name != n.name and (gold_name in n.name or n.name in gold_name)
+                for gold_name in group_of_names(gold)
+            )
+        ),
     }
+
+
+def group_of_names(gold: dict) -> list[str]:
+    return [name for entity in gold["entities"] for name in [entity["name"], *entity["aliases"]]]
 
 
 def main(argv: list[str] | None = None) -> int:

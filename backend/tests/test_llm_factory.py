@@ -39,6 +39,6 @@ def test_no_other_module_builds_an_openai_client():
             if isinstance(node, ast.Call):
                 func = node.func
                 name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", None)
-                if name in ("OpenAI", "AsyncOpenAI"):
+                if name in ("OpenAI", "AsyncOpenAI", "AzureOpenAI", "AsyncAzureOpenAI"):
                     offenders.append(f"{path.relative_to(APP)}:{node.lineno}")
     assert not offenders, offenders

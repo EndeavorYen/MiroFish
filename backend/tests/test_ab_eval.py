@@ -1,3 +1,4 @@
+import json
 import math
 
 import pytest
@@ -338,3 +339,66 @@ def test_independent_scorer_client():
     assert (client.backend.base_url, client.backend.model, client.backend.prompt_format) == (
         "http://127.0.0.1:8002/v1", "phi-4-mini", "plain")
     assert ab.scorer_client(None, None, "chatml") is None
+
+
+def test_scorer_by_pool_name(monkeypatch):
+    pool = [
+        {"name": "qwen", "base_url": "http://127.0.0.1:8000/v1", "model": "qwen3.5-4b"},
+        {"name": "phi", "base_url": "http://127.0.0.1:8002/v1", "model": "phi-4-mini", "prompt_format": "plain"},
+    ]
+    monkeypatch.setenv("MODEL_POOL", json.dumps(pool))
+    assert ab.scorer_endpoint("phi") == ("http://127.0.0.1:8002/v1", "phi-4-mini", "plain")
+    with pytest.raises(SystemExit, match="gemma"):
+        ab.scorer_endpoint("gemma")
+    monkeypatch.delenv("MODEL_POOL")
+    with pytest.raises(SystemExit, match="MODEL_POOL"):
+        ab.scorer_endpoint("phi")
+
+
+def test_run_all_runs_jobs_in_parallel_and_keeps_every_result(monkeypatch, tmp_path):
+    import threading
+    import time
+
+    active, peak, lock = [0], [0], threading.Lock()
+
+    def fake_run(work, out, backend, seed, rounds, content):
+        with lock:
+            active[0] += 1
+            peak[0] = max(peak[0], active[0])
+        time.sleep(0.05)
+        with lock:
+            active[0] -= 1
+        return {"seed": seed, "backend": backend}
+
+    monkeypatch.setattr(ab, "run_simulation", fake_run)
+    monkeypatch.setattr(ab, "STAGGER_S", 0)
+    groups = {"A": {"work": tmp_path, "backend": "llm", "content": None},
+              "B": {"work": tmp_path, "backend": "system_one", "content": "tiered"}}
+    runs = ab.run_all(groups, tmp_path, [1, 2, 3], 24, jobs=3)
+    assert peak[0] == 3
+    assert {s: r["summary"]["seed"] for s, r in runs["B"].items()} == {1: 1, 2: 2, 3: 3}
+    assert runs["A"][2]["dir"] == tmp_path / "A_seed2"
+    active[0] = peak[0] = 0
+    ab.run_all(groups, tmp_path, [1, 2], 24, jobs=1)
+    assert peak[0] == 1
+
+
+def test_simulate_many_pools_tasks_from_several_scenarios(monkeypatch, tmp_path):
+    seen = []
+    monkeypatch.setattr(ab, "run_simulation", lambda *task: seen.append(task) or {"ok": True})
+    monkeypatch.setattr(ab, "STAGGER_S", 0)
+    tasks = [(tmp_path / s, tmp_path / s / "B_seed1", "system_one", 1, 8, "tiered") for s in ("x", "y", "z")]
+    results = ab.simulate_many(tasks, jobs=3)
+    assert sorted(t[0].name for t in seen) == ["x", "y", "z"]
+    assert results[tasks[1]] == {"ok": True}
+
+
+def test_simulate_many_waits_for_free_memory(monkeypatch, tmp_path):
+    free = iter([0.5, 0.5, 4.0, 4.0, 4.0])
+    waits = []
+    monkeypatch.setattr(ab, "_free_gb", lambda: next(free, 4.0))
+    monkeypatch.setattr(ab.time, "sleep", lambda s: waits.append(s))
+    monkeypatch.setattr(ab, "run_simulation", lambda *task: {"ok": True})
+    tasks = [(tmp_path, tmp_path / f"B_seed{i}", "system_one", i, 8, "tiered") for i in range(2)]
+    assert len(ab.simulate_many(tasks, jobs=1, min_free_gb=2.5, stagger_s=0)) == 2
+    assert len(waits) == 2  # held back until memory was free

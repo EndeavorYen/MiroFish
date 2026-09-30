@@ -8,7 +8,10 @@ Computed from the simulation's structured outputs, no generation:
 * the most spread posts and their repost/quote chains from the OASIS
   ``<platform>_simulation.db``;
 * stance by entity type from ``decisions.jsonl`` intents and the agent
-  config stance labels.
+  config stance labels;
+* scan conclusions (main camp, overall tendency, trend, role ranking) from
+  the posts' zero-decode stance readout, each with how far it can be trusted
+  on the local path (#53).
 
 ``report_metrics.json`` / ``report_metrics.md`` are written to the report
 folder. A small model then writes one summary of at most 800 tokens from the
@@ -229,6 +232,197 @@ def compute_metrics(sim_dir: str) -> dict[str, Any]:
     }
 
 
+# ------------------------------------------------------------ scan (#53)
+
+# How often each conclusion of the local path (System One decisions, tiered
+# content) matched the LLM path on the evaluation suite: gate G5 over six
+# scenarios x five seeds, docs/local-first.md. Trend and ranking held in half
+# of them or fewer, so the report points to MIROFISH_PROFILE=local-llm.
+SCAN_EVIDENCE = {
+    "main_camp": ("high", "6/6"),
+    "tendency": ("medium", "3/6"),
+    "trend": ("low", "3/6"),
+    "ranking": ("low", "2/6"),
+}
+# The same for MIROFISH_PROFILE=local-hybrid (LLM prep, local simulation);
+# A and B share the prep there, so it measures whether the cheap simulation
+# reproduces the LLM simulation's conclusions from one preparation (#58).
+HYBRID_EVIDENCE = {
+    "main_camp": ("medium", "4/6"),
+    "tendency": ("high", "6/6"),
+    "trend": ("high", "5/6"),
+    "ranking": ("medium", "3/6"),
+}
+CONFIDENCE_LABEL = {"high": "高", "medium": "中", "low": "低", "none": "無法判讀"}
+CAMP_LABEL = {"oppose": "反對", "neutral": "中立", "support": "支持"}
+# Configured stances (0..1) spread less than this: the readout did not tell
+# the roles apart, and their order in the posts is noise. Set on the
+# calibration scenarios (lakemont: 0.097, ranking 0.07); on the evaluation
+# suite it flags gangwan, qingpu and Northbridge, all three below 0.5.
+INDISTINCT_SD = 0.10
+TREND_WINDOW = 4
+ScoreFn = Callable[[str, str], float]
+
+
+def _posts(sim_dir: str) -> list[dict[str, Any]]:
+    rows = []
+    for platform in PLATFORMS:
+        for row in _jsonl(os.path.join(sim_dir, platform, "actions.jsonl")):
+            if "event_type" in row or row.get("action_type") not in ("CREATE_POST", "QUOTE_POST", "CREATE_COMMENT"):
+                continue
+            args = row.get("action_args") or {}
+            text = args.get("quote_content") or args.get("content")
+            if text:
+                rows.append({
+                    "round": int(row.get("round", 0)),
+                    "agent": str(row.get("agent_name") or f"id:{row.get('agent_id')}"),
+                    "text": str(text),
+                })
+    return rows
+
+
+def _camp(stance: float) -> str:
+    return "oppose" if stance < 0.4 else "support" if stance > 0.6 else "neutral"
+
+
+def default_score_fn() -> ScoreFn:
+    from ..simulation_policy.tiers import system_one_stance_score
+
+    return lambda text, question: system_one_stance_score(text, question=question)
+
+
+def scan_conclusions(sim_dir: str, score_fn: ScoreFn, question: str | None = None) -> dict[str, Any] | None:
+    """Directional conclusions from the posts, scored on the simulated event
+    in the same form as the evaluation (gate G5), with their confidence.
+
+    ``question`` overrides the one built from the run's requirement, so runs
+    of different options are scored on the same question (#56)."""
+
+    from ..simulation_policy.tiers import detect_content_lang, event_phrase, stance_check_question
+
+    config = _load_config(sim_dir)
+    requirement = str(config.get("simulation_requirement") or "")
+    question = question or stance_check_question(event_phrase(requirement), detect_content_lang(requirement))
+    posts = _posts(sim_dir)
+    if not posts:
+        return None
+    cache: dict[str, float] = {}
+    for post in posts:
+        if post["text"] not in cache:
+            cache[post["text"]] = float(score_fn(post["text"], question))
+    scored = [cache[p["text"]] for p in posts]
+    by_agent: dict[str, list[float]] = defaultdict(list)
+    by_window: dict[int, list[float]] = defaultdict(list)
+    for post in posts:
+        by_agent[post["agent"]].append(cache[post["text"]])
+        by_window[post["round"] // TREND_WINDOW].append(cache[post["text"]])
+    means = {agent: statistics.mean(values) for agent, values in by_agent.items()}
+    counts = Counter(_camp(v) for v in means.values())
+    camps = {camp: counts.get(camp, 0) for camp in ("oppose", "neutral", "support")}
+    windows = sorted(by_window)
+    trend = (
+        statistics.mean(by_window[windows[-1]]) - statistics.mean(by_window[windows[0]])
+        if len(windows) > 1 else None
+    )
+    configured = [
+        (float(a["sentiment_bias"]) + 1) / 2 for a in config.get("agent_configs", [])
+        if isinstance(a.get("sentiment_bias"), (int, float))
+    ]
+    spread = statistics.pstdev(configured) if len(configured) > 1 else None
+    ordered = sorted(means.items(), key=lambda kv: (-kv[1], kv[0]))
+    # System One runs log an intent per decision; LLM runs do not. The
+    # structured prep records stance_raw; the LLM prep (hybrid) does not.
+    local = any(isinstance(row.get("intent"), dict) for row in _jsonl(os.path.join(sim_dir, "decisions.jsonl")))
+    structured = any("stance_raw" in a for a in config.get("agent_configs", []))
+    path = ("local" if structured else "hybrid") if local else "llm"
+
+    def evidence(key: str) -> dict[str, str]:
+        if path == "llm":
+            return {"confidence": "reference", "evidence": "LLM 路徑，評估時的參考路徑"}
+        table, label = (SCAN_EVIDENCE, "本機路徑") if path == "local" else (HYBRID_EVIDENCE, "混合模式")
+        level, record = table[key]
+        return {"confidence": level, "evidence": f"{label}在評估庫 {record} 個情境與 LLM 路徑一致"}
+
+    # Flat LLM-prep stances do not make the roles indistinct: the order comes
+    # from the persona text there, so the flag is for the structured prep only.
+    indistinct = path == "local" and spread is not None and spread < INDISTINCT_SD
+    ranking = {
+        "most_supportive": [{"name": n, "stance": _round(v)} for n, v in ordered[:3]],
+        "most_opposed": [{"name": n, "stance": _round(v)} for n, v in reversed(ordered[-3:])],
+        "configured_spread": _round(spread) if spread is not None else None,
+        "indistinct": indistinct,
+        **evidence("ranking"),
+    }
+    if indistinct:
+        ranking["confidence"] = "none"
+    return {
+        "question": question,
+        "posts": len(posts),
+        "local_path": local,
+        "path": path,
+        "main_camp": {
+            "value": max(camps, key=lambda c: camps[c]),
+            "counts": camps,
+            **evidence("main_camp"),
+        },
+        "tendency": {"value": _round(statistics.mean(cache[p["text"]] for p in posts)), **evidence("tendency")},
+        "trend": {
+            "value": _round(trend) if trend is not None else None,
+            "rounds": [windows[0] * TREND_WINDOW, windows[-1] * TREND_WINDOW + TREND_WINDOW - 1],
+            **evidence("trend"),
+        },
+        "ranking": ranking,
+        "by_role": {name: _round(value) for name, value in sorted(means.items())},
+        "post_shares": {camp: _round(sum(1 for v in scored if _camp(v) == camp) / len(scored)) for camp in ("oppose", "neutral", "support")},
+        "most_opposed_posts": [
+            {"text": t, "stance": _round(cache[t])}
+            for t in sorted({p["text"] for p in posts}, key=lambda t: (cache[t], t))[:3]
+        ],
+    }
+
+
+def _scan_markdown(scan: dict[str, Any]) -> list[str]:
+    def conf(block: dict[str, Any]) -> str:
+        return f"可信度：{CONFIDENCE_LABEL.get(block['confidence'], '參考')}（{block['evidence']}）"
+
+    lines = [
+        "## 掃描結論與可信度",
+        "",
+        f"由 {scan['posts']} 則貼文的立場讀出計算（題目：{scan['question']}；0 = 強烈反對，1 = 強烈支持）。",
+        "",
+    ]
+    camp = scan["main_camp"]
+    counts = "、".join(f"{CAMP_LABEL[c]} {n}" for c, n in camp["counts"].items())
+    lines.append(f"- **主要陣營**：{CAMP_LABEL[camp['value']]}（角色數：{counts}）。{conf(camp)}")
+    lines.append(f"- **整體傾向**：{scan['tendency']['value']:.2f}。{conf(scan['tendency'])}")
+    trend = scan["trend"]
+    if trend["value"] is not None:
+        lines.append(f"- **走向**：第 {trend['rounds'][0]}–{trend['rounds'][1]} 輪 {trend['value']:+.2f}。{conf(trend)}")
+    ranking = scan["ranking"]
+    if ranking["indistinct"]:
+        lines.append(
+            f"- **角色排序**：無法區分。準備階段給各角色的立場幾乎相同（標準差 {ranking['configured_spread']:.3f}），"
+            "貼文之間的差異主要是雜訊。"
+        )
+    else:
+        top = "、".join(f"{r['name']} {r['stance']:.2f}" for r in ranking["most_supportive"])
+        bottom = "、".join(f"{r['name']} {r['stance']:.2f}" for r in ranking["most_opposed"])
+        lines.append(f"- **角色排序**：最支持 {top}；最反對 {bottom}。{conf(ranking)}")
+    if scan.get("path", "local" if scan["local_path"] else "llm") == "local":
+        lines += [
+            "",
+            "本機路徑的主要陣營可信；走向與角色排序在評估中只有約一半的情境和 LLM 路徑一致。"
+            "要依這兩項下判斷，請用 `MIROFISH_PROFILE=local-hybrid` 或 `local-llm` 重跑確認。",
+        ]
+    elif scan.get("path") == "hybrid":
+        lines += [
+            "",
+            "混合模式（LLM 準備、本機模擬）的整體傾向與走向在評估中大多和 LLM 路徑一致，角色排序約一半；"
+            "主要陣營在「多數中立」的情境會偏中立（LLM 路徑偏支持）。重要的判斷請用 `MIROFISH_PROFILE=local-llm` 重跑確認。",
+        ]
+    return lines + [""]
+
+
 # --------------------------------------------------------------- markdown
 
 
@@ -250,6 +444,10 @@ def render_markdown(metrics: dict[str, Any], summary: str = "") -> str:
         f"- 實體類型：{', '.join(f'{k} {v}' for k, v in metrics['entity_types'].items()) or '—'}",
         f"- 熱門話題：{', '.join(metrics['hot_topics']) or '—'}",
         "",
+    ]
+    if metrics.get("scan"):
+        lines += _scan_markdown(metrics["scan"])
+    lines += [
         "## 動作分布",
         "",
     ]
@@ -298,6 +496,8 @@ SummaryFn = Callable[[str, int], str]
 
 def summary_prompt(metrics: dict[str, Any], requirement: str) -> str:
     compact = {k: metrics[k] for k in ("agents", "entity_types", "hot_topics", "stance")}
+    if metrics.get("scan"):
+        compact["scan"] = metrics["scan"]
     compact["actions_total"] = {p: d["total"] for p, d in metrics["actions"].items()}
     compact["top_posts"] = {
         p: [
@@ -346,12 +546,22 @@ def write_metrics_report(
     *,
     summary_fn: SummaryFn | None = None,
     metrics_dir: str | None = None,
+    score_fn: ScoreFn | None = None,
 ) -> tuple[dict[str, Any], str]:
-    """Compute metrics, write the two files, return (metrics, markdown)."""
+    """Compute metrics, write the two files, return (metrics, markdown).
+
+    With ``score_fn`` the posts are scored for the scan conclusions; when that
+    fails (no model server) they are left out, like a failed summary."""
 
     from ..utils.llm_usage import usage_stage
 
     metrics = compute_metrics(sim_dir)
+    if score_fn is not None:
+        try:
+            metrics["scan"] = scan_conclusions(sim_dir, score_fn)
+        except Exception:  # noqa: BLE001 - the metrics report stands alone
+            logger.warning("scan conclusions failed", exc_info=True)
+            metrics["scan"] = None
     os.makedirs(report_dir, exist_ok=True)
     with open(os.path.join(report_dir, "report_metrics.json"), "w", encoding="utf-8") as f:
         json.dump(metrics, f, ensure_ascii=False, indent=2, sort_keys=True)
@@ -376,6 +586,7 @@ def generate_metrics_report(
     report_id: str,
     *,
     summary_fn: SummaryFn | None = None,
+    score_fn: ScoreFn | None = None,
 ):
     """REPORT_MODE=metrics: build and save a Report like ReportAgent does."""
 
@@ -413,6 +624,7 @@ def generate_metrics_report(
             requirement,
             summary_fn=summary_fn if summary_fn is not None else default_summary_fn(),
             metrics_dir=os.path.join(sim_dir, "metrics"),
+            score_fn=score_fn if score_fn is not None else default_score_fn(),
         )
         outline = markdown_outline(markdown, ReportOutline, ReportSection)
         report.outline = outline

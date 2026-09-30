@@ -43,6 +43,13 @@ services:
       - ${LOCAL_LLM_GPU_MEMORY_UTILIZATION:-0.90}
       - --max-num-seqs
       - "32"
+      # LLM agents (MIROFISH_PROFILE=local-llm) act through tool calls.
+      - --enable-auto-tool-choice
+      - --tool-call-parser
+      - qwen3_coder
+      # Same as llama-server --reasoning off: no "Thinking Process:" in posts.
+      - --default-chat-template-kwargs
+      - '{"enable_thinking": false}'
 
   local-embed:
     image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.8.1

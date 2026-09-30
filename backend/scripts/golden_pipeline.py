@@ -228,6 +228,22 @@ def stage_totals(rows: list[dict[str, Any]]) -> dict[str, dict[str, int]]:
 # ---------------------------------------------------------------- prepare
 
 
+def reuse_graph(source: Path, work: Path) -> tuple[str, dict[str, Any]]:
+    """Copy another prepared work dir's graph and ontology into ``work``.
+
+    Options compared on one scenario (#56) share the entities: extracting a
+    graph per option dropped a whole opposition group from one of them, so
+    the options differed in who took part, not only in what was announced."""
+
+    prepared = source / "prepared.json"
+    if not prepared.exists() or not (source / "graphs").is_dir():
+        raise SystemExit(f"--graph-from {source}: not a prepared work dir")
+    graph_id = json.loads(prepared.read_text(encoding="utf-8"))["graph_id"]
+    shutil.copytree(source / "graphs", work / "graphs", dirs_exist_ok=True)
+    shutil.copy(source / "ontology.json", work / "ontology.json")
+    return graph_id, json.loads((work / "ontology.json").read_text(encoding="utf-8"))
+
+
 def cmd_prepare(args: argparse.Namespace) -> int:
     work = Path(args.work).resolve()
     work.mkdir(parents=True, exist_ok=True)
@@ -251,22 +267,27 @@ def cmd_prepare(args: argparse.Namespace) -> int:
     shutil.copy(fixture / "simulation_requirement.txt", work / "simulation_requirement.txt")
     timings: dict[str, float] = {}
 
-    started = time.perf_counter()
-    ontology = OntologyGenerator().generate(
-        document_texts=[seed_text], simulation_requirement=requirement
-    )
-    timings["ontology_s"] = round(time.perf_counter() - started, 1)
-    (work / "ontology.json").write_text(json.dumps(ontology, ensure_ascii=False, indent=2), encoding="utf-8")
+    if getattr(args, "graph_from", None):
+        graph_id, ontology = reuse_graph(Path(args.graph_from).resolve(), work)
+        graph = GraphBuilderService().get_graph_data(graph_id)
+        timings["graph_reused_from"] = str(Path(args.graph_from).resolve())
+    else:
+        started = time.perf_counter()
+        ontology = OntologyGenerator().generate(
+            document_texts=[seed_text], simulation_requirement=requirement
+        )
+        timings["ontology_s"] = round(time.perf_counter() - started, 1)
+        (work / "ontology.json").write_text(json.dumps(ontology, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    started = time.perf_counter()
-    with usage_stage("graph_build"):
-        builder = GraphBuilderService()
-        graph_id = builder.create_graph(fixture.name)
-        builder.set_ontology(graph_id, ontology)
-        chunks = TextProcessor.split_text(seed_text, chunk_size=500, overlap=50)
-        builder._wait_for_batch(builder.add_text_batches(graph_id, chunks))
-        graph = builder.get_graph_data(graph_id)
-    timings["graph_build_s"] = round(time.perf_counter() - started, 1)
+        started = time.perf_counter()
+        with usage_stage("graph_build"):
+            builder = GraphBuilderService()
+            graph_id = builder.create_graph(fixture.name)
+            builder.set_ontology(graph_id, ontology)
+            chunks = TextProcessor.split_text(seed_text, chunk_size=500, overlap=50)
+            builder._wait_for_batch(builder.add_text_batches(graph_id, chunks))
+            graph = builder.get_graph_data(graph_id)
+        timings["graph_build_s"] = round(time.perf_counter() - started, 1)
 
     started = time.perf_counter()
     manager = SimulationManager()
@@ -578,6 +599,8 @@ def main(argv: list[str] | None = None) -> int:
         "--fixture", default=str(FIXTURE),
         help="scenario dir with news_seed.txt and simulation_requirement.txt (default: the golden scenario)",
     )
+    prep.add_argument("--graph-from", default=None,
+                      help="reuse this prepared work dir's graph and ontology; only the preparation readouts rerun")
     sim = sub.add_parser("simulate")
     sim.add_argument("--work", required=True)
     sim.add_argument("--out", required=True)

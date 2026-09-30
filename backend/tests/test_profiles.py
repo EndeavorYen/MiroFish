@@ -65,6 +65,14 @@ def test_local_llm_profile_keeps_llm_decisions_with_a_memory_budget():
     assert env["GRAPH_BACKEND"] == "local"
 
 
+def test_hybrid_profile_prepares_with_the_llm_and_simulates_locally():
+    env = {"MIROFISH_PROFILE": "local-hybrid"}
+    apply_profile(env)
+    assert (env["ONTOLOGY_MODE"], env["PROFILE_MODE"], env["SIM_CONFIG_MODE"]) == ("llm", "llm", "llm")
+    assert (env["SIM_DECISION_BACKEND"], env["CONTENT_MODE"], env["REPORT_MODE"]) == ("system_one", "tiered", "metrics")
+    assert env["GRAPH_BACKEND"] == "local"
+
+
 def test_unknown_profile_is_an_error():
     with pytest.raises(ValueError):
         apply_profile({"MIROFISH_PROFILE": "cloud"})

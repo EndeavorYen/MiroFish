@@ -254,3 +254,38 @@ def test_event_stance_is_asked_alone_with_the_same_state_as_the_profile():
     assert len(stance_calls) == 1 and "空中計程車試點" in stance_calls[0] and "轉崗基金" in stance_calls[0]
     assert all("stance" not in q and "空中計程車試點" not in s for s, q in other_calls)
     assert cfg["sentiment_bias"] == -1.0  # score 0 = strongly opposed
+
+
+def test_hours_priors_reweight_the_active_hours_readout(monkeypatch, tmp_path):
+    from app.services import prep_structured as ps
+
+    class OfficeLeaning(FakeSystemOne):
+        def ask(self, request):
+            response = super().ask(request)
+            if "hours" in request.questions:
+                probs = {"office_hours": 0.5, "daytime_evening": 0.1, "evening": 0.2, "all_day": 0.15, "night_owl": 0.05}
+                response.answers["hours"] = ChoiceAnswer(choice="office_hours", probabilities=probs, confidence=0.5)
+            return response
+
+    monkeypatch.delenv("PREP_HOURS_PRIORS", raising=False)
+    plain = structured_agent_config(OfficeLeaning(), "周德勝", "Person", "計程車司機")
+    assert plain["active_hours"] == ps.ACTIVE_PATTERNS["office_hours"][1]
+
+    priors = tmp_path / "hours_priors.json"
+    priors.write_text(json.dumps({"weights": {"office_hours": 0.2, "evening": 1.0, "all_day": 0.5}}), encoding="utf-8")
+    monkeypatch.setenv("PREP_HOURS_PRIORS", str(priors))
+    weighted = structured_agent_config(OfficeLeaning(), "周德勝", "Person", "計程車司機")
+    assert weighted["active_hours"] == ps.ACTIVE_PATTERNS["evening"][1]  # 0.2 x 1.0 beats 0.5 x 0.2
+
+    monkeypatch.setenv("PREP_HOURS_PRIORS", "0")
+    assert structured_agent_config(OfficeLeaning(), "周德勝", "Person", "計程車司機")["active_hours"] == plain["active_hours"]
+
+
+def test_shipped_hours_priors_come_from_calibration_scenarios():
+    import app.services.prep_structured as ps
+    from scripts import ab_suite
+
+    data = json.loads(ps.HOURS_PRIORS_PATH.read_text(encoding="utf-8"))
+    assert set(data["weights"]) == set(ps.ACTIVE_PATTERNS)
+    calibration = {row["name"] for row in ab_suite.load_manifest(ab_suite.CALIBRATION_MANIFEST)}
+    assert data["scenarios"] and set(data["scenarios"]) <= calibration

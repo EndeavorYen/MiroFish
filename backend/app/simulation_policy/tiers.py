@@ -138,6 +138,23 @@ def detect_content_lang(text: str) -> str:
     return "zh"
 
 
+def detect_zh_script(text: str) -> str:
+    """"hant" when the text is written in traditional characters, else "hans".
+
+    The zh templates, prefixes and prompts are in simplified characters; in
+    a scenario written in traditional ones the posts mixed both scripts
+    ("刚看到消息" next to "東海市"). Counted over characters whose forms
+    differ, so shared characters do not tip it."""
+
+    from opencc import OpenCC
+
+    to_simplified = OpenCC("t2s").convert(text)
+    to_traditional = OpenCC("s2t").convert(text)
+    traditional = sum(1 for a, b in zip(text, to_simplified) if a != b)
+    simplified = sum(1 for a, b in zip(text, to_traditional) if a != b)
+    return "hant" if traditional > simplified else "hans"
+
+
 def usable_topic(text: str) -> bool:
     word = (text or "").strip()
     if len(word) < 2:
@@ -257,8 +274,18 @@ class TieredContentProvider:
         stance_bank: dict[str, Any] | None = None,
         bank_share: float = 0.0,
         generator: Any = None,
+        script: str = "hans",
     ) -> None:
         self.templates = templates
+        # zh posts are converted to traditional characters for a scenario
+        # written in them; "s2tw" maps characters only, so names stay as
+        # written ("s2twp" would turn 智能 into 智慧).
+        self.script = script if script in ("hans", "hant") else "hans"
+        self._to_script = None
+        if self.script == "hant" and lang == "zh":
+            from opencc import OpenCC
+
+            self._to_script = OpenCC("s2tw").convert
         self.stance_bank = stance_bank
         self.bank_share = bank_share
         # A model_pool.PooledGenerator ties each persona to one model (#48).
@@ -497,6 +524,10 @@ class TieredContentProvider:
         return "template"
 
     def generate(self, intent: ContentIntent) -> str:
+        text = self._generate(intent)
+        return self._to_script(text) if self._to_script and text else text
+
+    def _generate(self, intent: ContentIntent) -> str:
         band = stance_level(intent.stance)
         bucket = (intent.round_num, intent.kind, band, intent.target_ref)
         waited: threading.Event | None = None
@@ -756,6 +787,12 @@ def build_tiered_provider(
         # the shared and full prompts; CONTENT_BANK_SHARE lets templates use them.
         bank_share=float(os.environ.get("CONTENT_BANK_SHARE", "0")),
         generator=generator,
+        # CONTENT_SCRIPT=off keeps the templates' simplified characters.
+        script=(
+            detect_zh_script(str(config.get("simulation_requirement") or ""))
+            if lang == "zh" and os.environ.get("CONTENT_SCRIPT", "auto").strip().lower() != "off"
+            else "hans"
+        ),
     )
 
 

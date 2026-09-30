@@ -39,6 +39,12 @@ def test_local_profile_services():
     assert "--enable-prefix-caching" in command
     assert int(_flag_value(command, "--max-logprobs")) >= 64
     assert int(_flag_value(command, "--max-model-len")) >= 8192
+    # MIROFISH_PROFILE=local-llm agents act through tool calls, and Qwen3.5
+    # thinks aloud unless told not to: without these, every LLM-path action
+    # failed with a 400 and 18% of the tiered posts began "Thinking Process:".
+    assert "--enable-auto-tool-choice" in command
+    assert _flag_value(command, "--tool-call-parser") == "qwen3_coder"
+    assert '--default-chat-template-kwargs {"enable_thinking": false}' in command
 
     devices = (
         local_embed.get("deploy", {})

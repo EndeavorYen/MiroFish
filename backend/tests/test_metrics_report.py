@@ -178,3 +178,87 @@ def test_missing_emotion_table_and_bad_stance_are_ignored(sim_dir):
         f.write(json.dumps({"agent_id": 1, "intent": {"stance": "high"}}) + "\n")
     metrics = compute_metrics(str(sim_dir))
     assert metrics["emotion"] is None
+
+
+def _scan_dir(tmp_path, stances, texts_by_round, structured=True):
+    """agent_id -> configured stance 0..1; texts_by_round: [(round, agent_id, text)].
+
+    ``structured`` writes the stance_raw field the structured prep records;
+    the LLM prep (the hybrid profile) has none."""
+
+    config = {
+        "simulation_requirement": "模擬空中計程車試點後，各方的反應。",
+        "agent_configs": [
+            {"agent_id": a, "entity_name": f"角色{a}", "entity_type": "Person", "sentiment_bias": s * 2 - 1,
+             **({"stance_raw": s} if structured else {})}
+            for a, s in stances.items()
+        ],
+    }
+    (tmp_path / "simulation_config.json").write_text(json.dumps(config, ensure_ascii=False), encoding="utf-8")
+    (tmp_path / "twitter").mkdir()
+    rows = [{"event_type": "round_start", "round": 0}] + [
+        {"round": r, "agent_id": a, "agent_name": f"角色{a}", "action_type": "CREATE_POST",
+         "action_args": {"content": text}}
+        for r, a, text in texts_by_round
+    ]
+    (tmp_path / "twitter" / "actions.jsonl").write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in rows), encoding="utf-8")
+    (tmp_path / "decisions.jsonl").write_text(json.dumps({"round": 1, "agent_id": 1, "intent": {"stance": 0.5}}), encoding="utf-8")
+    return tmp_path
+
+
+def test_scan_conclusions_with_their_confidence(tmp_path):
+    from app.services.metrics_report import scan_conclusions
+
+    score = {"讚": 0.9, "好": 0.75, "爛": 0.1}
+    posts = [(1, 1, "讚"), (1, 2, "讚"), (2, 3, "爛"), (5, 1, "好"), (6, 3, "爛"), (6, 2, "讚")]
+    sim = _scan_dir(tmp_path, {1: 0.9, 2: 0.8, 3: 0.1}, posts)
+    questions = []
+
+    def fake(text, question):
+        questions.append(question)
+        return score[text]
+
+    scan = scan_conclusions(str(sim), score_fn=fake)
+    assert set(questions) == {"這則貼文對「空中計程車試點」的立場是什麼？"}
+    assert scan["local_path"] is True
+    assert scan["main_camp"]["value"] == "support" and scan["main_camp"]["counts"] == {"oppose": 1, "neutral": 0, "support": 2}
+    assert scan["main_camp"]["confidence"] == "high"
+    assert scan["tendency"]["value"] == pytest.approx(sum(score[t] for _, _, t in posts) / len(posts), abs=1e-3)
+    assert [row["name"] for row in scan["ranking"]["most_supportive"]][:1] == ["角色2"]
+    assert scan["ranking"]["most_opposed"][0]["name"] == "角色3"
+    assert scan["ranking"]["confidence"] == "low" and not scan["ranking"]["indistinct"]
+    assert scan["trend"]["confidence"] == "low"
+    text = render_markdown({**compute_metrics(str(sim)), "scan": scan})
+    assert "## 掃描結論與可信度" in text and "local-llm" in text
+
+
+def test_scan_flags_roles_it_cannot_tell_apart(tmp_path):
+    from app.services.metrics_report import scan_conclusions
+
+    sim = _scan_dir(tmp_path, {1: 0.5, 2: 0.52, 3: 0.49}, [(1, 1, "a"), (1, 2, "b"), (2, 3, "c")])
+    scan = scan_conclusions(str(sim), score_fn=lambda text, question: 0.5)
+    assert scan["ranking"]["indistinct"] is True
+    assert scan["ranking"]["confidence"] == "none"
+    assert "無法區分" in render_markdown({**compute_metrics(str(sim)), "scan": scan})
+
+
+def test_scan_is_skipped_when_scoring_fails(sim_dir, tmp_path):
+    def broken(text, question):
+        raise ConnectionError("no model server")
+
+    metrics, markdown = write_metrics_report(str(sim_dir), str(tmp_path), "req", score_fn=broken)
+    assert metrics["scan"] is None
+    assert "## 掃描結論與可信度" not in markdown
+
+
+def test_hybrid_runs_cite_their_own_evidence(tmp_path):
+    from app.services.metrics_report import HYBRID_EVIDENCE, scan_conclusions
+
+    sim = _scan_dir(tmp_path, {1: 0.5, 2: 0.5, 3: 0.5}, [(1, 1, "a"), (1, 2, "b"), (5, 3, "c")], structured=False)
+    scan = scan_conclusions(str(sim), score_fn=lambda text, question: 0.5)
+    assert scan["path"] == "hybrid"
+    # Flat LLM-prep stances do not mean indistinct roles: the LLM agents' own
+    # reading of the persona orders them (#53), so the flag is structured-only.
+    assert scan["ranking"]["indistinct"] is False
+    assert scan["ranking"]["confidence"] == HYBRID_EVIDENCE["ranking"][0]
+    assert "混合" in scan["ranking"]["evidence"]

@@ -41,11 +41,14 @@ import argparse
 import itertools
 import json
 import math
+import os
 import random
 import re
 import statistics
 import subprocess
 import sys
+import threading
+import time
 from collections import Counter
 from collections.abc import Callable
 from pathlib import Path
@@ -110,6 +113,66 @@ def run_simulation(work: Path, out: Path, backend: str, seed: int, rounds: int, 
         command += ["--content-mode", content]
     subprocess.run(command, cwd=str(BACKEND_DIR), check=True, stdout=subprocess.DEVNULL)
     return json.loads(summary.read_text(encoding="utf-8"))
+
+
+MIN_FREE_GB = 2.5  # one simulation (two Python processes with torch) takes ~1.2 GB
+STAGGER_S = 5.0  # between starts, so the last run's memory shows up in the next check
+
+
+def _free_gb() -> float:
+    import psutil
+
+    return psutil.virtual_memory().available / 1024**3
+
+
+def simulate_many(
+    tasks: list[tuple], jobs: int = 1, min_free_gb: float | None = None, stagger_s: float | None = None
+) -> dict[tuple, dict[str, Any]]:
+    """``run_simulation(*task)`` for every task, ``jobs`` at a time.
+
+    Runs are independent, and one System One run keeps the model server's
+    GPU mostly idle (7-29% utilisation; its rounds wait on sequential
+    readouts), so several runs side by side finish sooner. Tasks may come
+    from several scenarios. Round latency is then measured under contention;
+    decode counts are not affected."""
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    reserve = float(os.environ.get("AB_MIN_FREE_GB", MIN_FREE_GB)) if min_free_gb is None else min_free_gb
+    stagger_s = STAGGER_S if stagger_s is None else stagger_s
+    start = threading.Lock()
+
+    def one(task: tuple) -> dict[str, Any]:
+        # Start a simulation only with memory to spare: sixteen at once
+        # beside vLLM's WSL VM ran a 32 GB host out of memory, and the
+        # simulations that could not start failed the whole batch.
+        with start:
+            while _free_gb() < reserve:
+                time.sleep(5)
+            if stagger_s:
+                # Let the previous run load its models before measuring again.
+                time.sleep(stagger_s)
+        return run_simulation(*task)
+
+    with ThreadPoolExecutor(max_workers=max(1, jobs)) as pool:
+        return dict(zip(tasks, pool.map(one, tasks)))
+
+
+def run_all(
+    groups: dict[str, dict[str, Any]], out: Path, seeds: list[int], rounds: int, jobs: int = 1
+) -> dict[str, dict[int, dict[str, Any]]]:
+    """Every (group, seed) run of one scenario, ``jobs`` at a time."""
+
+    keys = [(name, seed) for name in groups for seed in seeds]
+    tasks = [
+        (groups[n]["work"], out / f"{n}_seed{s}", groups[n]["backend"], s, rounds, groups[n]["content"])
+        for n, s in keys
+    ]
+    summaries = simulate_many(tasks, jobs)
+    runs: dict[str, dict[int, dict[str, Any]]] = {name: {} for name in groups}
+    for (name, seed), task in zip(keys, tasks):
+        runs[name][seed] = {"dir": task[1], "summary": summaries[task]}
+    return runs
 
 
 def llm_errors(run: Path) -> int:
@@ -234,6 +297,21 @@ def _fixture_by_digest(digest: str | None) -> Path | None:
             if row.get("digest") == digest:
                 return BACKEND_DIR / row["path"]
     return None
+
+
+def scorer_endpoint(name: str) -> tuple[str, str, str]:
+    """(base_url, model, prompt_format) of the ``MODEL_POOL`` entry ``name``."""
+
+    import os
+
+    if not os.environ.get("MODEL_POOL", "").strip():
+        raise SystemExit(f"--scorer {name}: MODEL_POOL is not set")
+    from app.model_pool import load_pool
+
+    for entry in load_pool():
+        if entry.name == name:
+            return entry.base_url, entry.model, entry.prompt_format
+    raise SystemExit(f"--scorer {name}: no MODEL_POOL entry named {name}")
 
 
 def scorer_client(base_url: str | None, model: str | None, prompt_format: str = "chatml"):
@@ -692,7 +770,13 @@ def main(argv: list[str] | None = None) -> int:
                         help="score posts with another model's readout (an independent judge, #48)")
     parser.add_argument("--scorer-model", default=None)
     parser.add_argument("--scorer-prompt-format", default="chatml", choices=["chatml", "plain"])
+    parser.add_argument("--jobs", type=int, default=1,
+                        help="simulations to run at once (independent seeds; the GPU is mostly idle in one run)")
+    parser.add_argument("--scorer", default=None,
+                        help="MODEL_POOL entry name to score posts with (sets the three --scorer-* options)")
     args = parser.parse_args(argv)
+    if args.scorer:
+        args.scorer_base_url, args.scorer_model, args.scorer_prompt_format = scorer_endpoint(args.scorer)
     if gp.dotenv_files():
         parser.error("a .env file exists; move it aside (see golden_pipeline.py)")
 
@@ -707,13 +791,8 @@ def main(argv: list[str] | None = None) -> int:
         *(json.loads((groups[g]["work"] / "prepared.json").read_text(encoding="utf-8")) for g in ("A", "B"))
     )
     runs: dict[str, dict[int, dict[str, Any]]] = {"A": {}, "B": {}}
-    for name, group in groups.items():
-        if args.simulate_only and name != args.simulate_only:
-            continue
-        for seed in args.seeds:
-            run_dir = out / f"{name}_seed{seed}"
-            summary = run_simulation(group["work"], run_dir, group["backend"], seed, args.rounds, group["content"])
-            runs[name][seed] = {"dir": run_dir, "summary": summary}
+    chosen = {n: g for n, g in groups.items() if not args.simulate_only or n == args.simulate_only}
+    runs.update(run_all(chosen, out, args.seeds, args.rounds, jobs=args.jobs))
     if args.simulate_only:
         return 0
 

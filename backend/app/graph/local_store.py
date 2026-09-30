@@ -209,7 +209,9 @@ class _Graph:
     def drop_vectors(self) -> None:
         for table in ("vec_nodes", "vec_edges"):
             self.conn.execute(f"DROP TABLE IF EXISTS {table}")
-        self.conn.execute("DELETE FROM meta WHERE key IN ('embedding_dim', 'embedding_probe')")
+        self.conn.execute(
+            "DELETE FROM meta WHERE key IN ('embedding_dim', 'embedding_probe', 'vectors_incomplete')"
+        )
 
     def ensure_vec_tables(self, dim: int) -> None:
         current = self.current_dim()
@@ -617,7 +619,8 @@ class LocalGraphStore:
 
     def embedding_state(self, graph_id: str) -> str:
         """``matches``, ``other embedder``, ``no fingerprint``, ``no vectors`` or
-        ``unknown`` (the embedder did not answer) (#61)."""
+        ``unknown`` (the embedder did not answer), or ``incomplete`` (this
+        embedder's vectors, but rows written while another one ran have none) (#61)."""
 
         graph = self._graph(graph_id)
         with graph.use():
@@ -631,7 +634,13 @@ class LocalGraphStore:
         except Exception as error:
             logger.warning("embedding fingerprint check failed: %s", error)
             return "unknown"
-        return "matches" if self._same_probe(current, stored) else "other embedder"
+        if not self._same_probe(current, stored):
+            return "other embedder"
+        with graph.use():
+            incomplete = graph.conn.execute(
+                "SELECT 1 FROM meta WHERE key = 'vectors_incomplete'"
+            ).fetchone()
+        return "incomplete" if incomplete else "matches"
 
     @staticmethod
     def _same_probe(current: list[float], stored: list[float]) -> bool:
@@ -656,12 +665,19 @@ class LocalGraphStore:
                 "until backend/scripts/reembed_graphs.py re-embeds it",
                 graph_id,
             )
+        elif state == "incomplete":
+            self._warn_once(
+                graph_id,
+                "graph %s has rows without vectors (written by another embedder); "
+                "run backend/scripts/reembed_graphs.py",
+                graph_id,
+            )
         elif state == "unknown":
             # The query embedding would fail the same way: answer by keywords.
             self._warn_once(
                 graph_id, "embedding service unavailable; searching graph %s by keywords only", graph_id
             )
-        return state in ("matches", "no fingerprint")
+        return state in ("matches", "no fingerprint", "incomplete")
 
     def reembed(self, graph_id: str) -> dict[str, int]:
         """Recompute every vector with this store's embedder.
@@ -711,7 +727,9 @@ class LocalGraphStore:
     ) -> None:
         stored = graph.stored_probe()
         if stored is not None and vectors and not self._same_probe(self._probe(), stored):
-            # Keyword search still finds the new rows; reembed restores vectors.
+            # Keyword search still finds the new rows; reembed restores vectors,
+            # and --check reports the graph as incomplete until then.
+            graph.conn.execute("INSERT OR REPLACE INTO meta VALUES ('vectors_incomplete', '1')")
             logger.warning(
                 "not storing vectors in %s: another embedder wrote its vectors; "
                 "run backend/scripts/reembed_graphs.py",

@@ -150,7 +150,11 @@ def test_writes_from_another_embedder_are_not_mixed_in(tmp_path, warnings):
     store.add_text_episodes("g1", [TextEpisode("凌雲飛行下月載客。")], durable=True)
     assert any("not storing vectors" in w for w in warnings)
     reopened = _store(tmp_path, HashEmbedder())
-    assert reopened.embedding_state("g1") == "matches"  # only A's vectors are stored
+    # Only A's vectors are stored, but the new rows have none until reembed.
+    assert reopened.embedding_state("g1") == "incomplete"
+    assert reopened.vectors_usable("g1")
+    reopened.reembed("g1")
+    assert reopened.embedding_state("g1") == "matches"
     reopened.close()
     store.close()
 

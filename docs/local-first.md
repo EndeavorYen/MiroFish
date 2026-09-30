@@ -140,7 +140,7 @@ uv run python scripts/reembed_graphs.py --check   # 每張圖的狀態
 uv run python scripts/reembed_graphs.py           # 全部重算
 ```
 
-`--check` 的狀態：`matches`（目前的 embedder 寫的）、`other embedder`（要重算）、`no fingerprint`（#61 之前建立的，若當時用的是舊 GGUF 就要重算）、`no vectors`、`unknown`（embedding 服務沒回應）。換掉 embedding 服務（例如換成新的 GGUF）之後要**重新啟動後端**：後端會記住啟動後第一次算出的探針向量。embedding 服務沒回應時，搜尋改用關鍵字；已經記錄指紋的圖譜也不會寫入另一個 embedder 的向量。
+`--check` 的狀態：`matches`（目前的 embedder 寫的）、`other embedder`（要重算）、`no fingerprint`（#61 之前建立的，若當時用的是舊 GGUF 就要重算）、`no vectors`、`unknown`（embedding 服務沒回應）、`incomplete`（向量是目前的 embedder 寫的，但有些列是在另一個 embedder 運作時寫入、沒有向量，要重算）。換掉 embedding 服務（例如換成新的 GGUF）之後要**重新啟動後端**：後端會記住啟動後第一次算出的探針向量。embedding 服務沒回應時，搜尋改用關鍵字；已經記錄指紋的圖譜也不會寫入另一個 embedder 的向量。
 
 ### llama-server 參數注意事項
 

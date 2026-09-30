@@ -11,10 +11,10 @@ from ...services.simulation_runner import (
     RunnerStatus,
     SimulationStopPending,
 )
-from ...services.zep_graph_memory_updater import ZepGraphMemoryManager
+from ...services.graph_memory_updater import GraphMemoryManager
 from ...utils.logger import get_logger
 from ...utils.locale import t
-from ...utils.zep_lifecycle import get_graph_readers, graph_lifecycle_lock
+from ...utils.graph_lifecycle import get_graph_readers, graph_lifecycle_lock
 from ...models.project import ProjectManager
 
 logger = get_logger('mirofish.api.simulation')
@@ -140,7 +140,7 @@ def start_simulation():
 
             if is_prepared:
                 run_state = SimulationRunner.get_run_state(simulation_id)
-                updater = ZepGraphMemoryManager.get_updater(simulation_id)
+                updater = GraphMemoryManager.get_updater(simulation_id)
                 needs_finalization = bool(
                     run_state
                     and run_state.runner_status in {

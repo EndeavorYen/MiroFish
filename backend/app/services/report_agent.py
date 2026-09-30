@@ -22,8 +22,8 @@ from ..utils.llm_client import LLMClient
 from ..utils.logger import get_logger
 from ..utils.locale import get_language_instruction, t
 from ..utils.llm_usage import usage_stage
-from .zep_tools import (
-    ZepToolsService
+from .graph_tools import (
+    GraphToolsService
 )
 
 logger = get_logger('mirofish.report_agent')
@@ -101,7 +101,7 @@ class ReportAgent(ReportToolsMixin):
         simulation_id: str,
         simulation_requirement: str,
         llm_client: Optional[LLMClient] = None,
-        zep_tools: Optional[ZepToolsService] = None
+        zep_tools: Optional[GraphToolsService] = None
     ):
         """
         初始化Report Agent
@@ -118,7 +118,7 @@ class ReportAgent(ReportToolsMixin):
         self.simulation_requirement = simulation_requirement
         
         self.llm = llm_client or LLMClient()
-        self.zep_tools = zep_tools or ZepToolsService()
+        self.zep_tools = zep_tools or GraphToolsService()
         
         # 工具定义
         self.tools = self._define_tools()
@@ -159,7 +159,7 @@ class ReportAgent(ReportToolsMixin):
             progress_callback("planning", 0, t('progress.analyzingRequirements'))
         
         # 首先获取模拟上下文
-        context = self.zep_tools.get_simulation_context(
+        context = self.graph_tools.get_simulation_context(
             graph_id=self.graph_id,
             simulation_requirement=self.simulation_requirement
         )

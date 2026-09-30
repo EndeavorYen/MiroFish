@@ -93,7 +93,7 @@ def main(argv: list[str] | None = None) -> int:
         setattr(Config, key, value)
     from app.services.oasis_profile_generator import OasisProfileGenerator
     from app.services.ontology_generator import OntologyGenerator
-    from app.services.zep_entity_reader import EntityNode
+    from app.services.entity_reader import EntityNode
 
     fixture_dir = backend_dir / "tests" / "fixtures" / "golden_scenario"
     news = (fixture_dir / "news_seed.txt").read_text(encoding="utf-8")

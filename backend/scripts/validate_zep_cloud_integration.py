@@ -28,8 +28,8 @@ from zep_cloud import BatchAddItem
 from zep_cloud.types import SearchFilters
 
 from app.services.graph_builder import BatchSubmission, GraphBuilderService
-from app.services.zep_entity_reader import ZepEntityReader
-from app.services.zep_graph_memory_updater import AgentActivity, ZepGraphMemoryUpdater
+from app.services.entity_reader import EntityReader
+from app.services.graph_memory_updater import AgentActivity, GraphMemoryUpdater
 from app.utils.zep_paging import fetch_all_edges, fetch_all_nodes
 
 # Keep later code that consults os.environ consistent with the captured value.
@@ -472,7 +472,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     builder = GraphBuilderService(api_key=api_key)
     client = builder.client
     created = False
-    updater: ZepGraphMemoryUpdater | None = None
+    updater: GraphMemoryUpdater | None = None
     updater_started = False
     updater_stop_attempted = False
     updater_drained = False
@@ -588,7 +588,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         result["temporal_update_episode_uuids"] = update_episode_uuids
         print(f"[zep-deep] temporal updates processed={len(update_episode_uuids)}", flush=True)
 
-        updater = ZepGraphMemoryUpdater(
+        updater = GraphMemoryUpdater(
             graph_id=graph_id,
             api_key=api_key,
             simulation_id=f"zep-deep-{stamp}",
@@ -672,7 +672,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             if edge.source_node_uuid == _uuid(selected_node)
             or edge.target_node_uuid == _uuid(selected_node)
         ]
-        entity_context = ZepEntityReader(api_key=api_key).get_entity_with_context(
+        entity_context = EntityReader(api_key=api_key).get_entity_with_context(
             graph_id,
             _uuid(selected_node),
         )

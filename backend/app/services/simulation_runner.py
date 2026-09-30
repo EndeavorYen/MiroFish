@@ -20,7 +20,7 @@ from ..utils.zep import (
     ZEP_HTTP_REQUEST_TIMEOUT_SECONDS,
     ZEP_INGESTION_WAIT_TIMEOUT_SECONDS,
 )
-from .zep_graph_memory_updater import ZepGraphMemoryManager
+from .graph_memory_updater import GraphMemoryManager
 
 logger = get_logger('mirofish.simulation_runner')
 
@@ -283,7 +283,7 @@ class SimulationRunner(MonitorMixin, ActionQueryMixin, CleanupMixin, InterviewMi
             }
             if (
                 existing and existing.runner_status in active_statuses
-            ) or ZepGraphMemoryManager.get_updater(simulation_id) is not None:
+            ) or GraphMemoryManager.get_updater(simulation_id) is not None:
                 raise ValueError(f"模拟已在运行或结束处理中: {simulation_id}")
             cls._save_run_state(state)
         
@@ -293,7 +293,7 @@ class SimulationRunner(MonitorMixin, ActionQueryMixin, CleanupMixin, InterviewMi
                 raise ValueError("启用图谱记忆更新时必须提供 graph_id")
             
             try:
-                ZepGraphMemoryManager.create_updater(simulation_id, graph_id)
+                GraphMemoryManager.create_updater(simulation_id, graph_id)
                 cls._graph_memory_enabled[simulation_id] = True
                 logger.info(f"已启用图谱记忆更新: simulation_id={simulation_id}, graph_id={graph_id}")
             except Exception as e:
@@ -325,7 +325,7 @@ class SimulationRunner(MonitorMixin, ActionQueryMixin, CleanupMixin, InterviewMi
             cleanup_error = None
             if cls._graph_memory_enabled.get(simulation_id, False):
                 try:
-                    ZepGraphMemoryManager.stop_updater(simulation_id)
+                    GraphMemoryManager.stop_updater(simulation_id)
                     cls._graph_memory_enabled.pop(simulation_id, None)
                 except Exception as error:
                     cleanup_error = error
@@ -450,7 +450,7 @@ class SimulationRunner(MonitorMixin, ActionQueryMixin, CleanupMixin, InterviewMi
                     cleanup_errors.append(f"日志关闭失败: {error}")
             if cls._graph_memory_enabled.get(simulation_id, False):
                 try:
-                    ZepGraphMemoryManager.stop_updater(simulation_id)
+                    GraphMemoryManager.stop_updater(simulation_id)
                     cls._graph_memory_enabled.pop(simulation_id, None)
                 except Exception as error:
                     cleanup_errors.append(f"Zep图谱写入清理失败: {error}")
@@ -702,7 +702,7 @@ class SimulationRunner(MonitorMixin, ActionQueryMixin, CleanupMixin, InterviewMi
                     # outside the lock: its monitor takes the lock on exit.
                     raise _CompletedWhileStopping()
 
-                pending_updater = ZepGraphMemoryManager.get_updater(simulation_id)
+                pending_updater = GraphMemoryManager.get_updater(simulation_id)
                 retrying_finalization = (
                     pending_updater is not None
                     and state.runner_status in {
@@ -776,7 +776,7 @@ class SimulationRunner(MonitorMixin, ActionQueryMixin, CleanupMixin, InterviewMi
                     state = cls.get_run_state(simulation_id) or state
                     if cls._graph_memory_enabled.get(simulation_id, False):
                         try:
-                            ZepGraphMemoryManager.stop_updater(simulation_id)
+                            GraphMemoryManager.stop_updater(simulation_id)
                             cls._graph_memory_enabled.pop(simulation_id, None)
                         except Exception as error:
                             state.runner_status = RunnerStatus.FAILED

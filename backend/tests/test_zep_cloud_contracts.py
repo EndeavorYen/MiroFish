@@ -10,8 +10,8 @@ from app.services import graph_builder as graph_builder_module
 from app.graph.zep_store import ZepGraphStore
 from app.services.graph_builder import BatchSubmission, GraphBuilderService
 from app.services.oasis_profile_generator import OasisProfileGenerator
-from app.services.zep_entity_reader import EntityNode, ZepEntityReader
-from app.services.zep_tools import ZepToolsService
+from app.services.entity_reader import EntityNode, EntityReader
+from app.services.graph_tools import GraphToolsService
 
 
 def test_report_search_caps_the_query_sent_to_zep():
@@ -22,7 +22,7 @@ def test_report_search_caps_the_query_sent_to_zep():
             calls.append(kwargs)
             return SimpleNamespace(edges=[], nodes=[])
 
-    service = object.__new__(ZepToolsService)
+    service = object.__new__(GraphToolsService)
     service.store = ZepGraphStore(SimpleNamespace(graph=GraphApi()))
 
     original_query = "q" * 401
@@ -83,7 +83,7 @@ def test_entity_context_includes_incoming_edges_from_the_full_graph():
         "attributes": {},
     }
 
-    reader = object.__new__(ZepEntityReader)
+    reader = object.__new__(EntityReader)
     reader.store = ZepGraphStore(SimpleNamespace(
         graph=SimpleNamespace(
             node=SimpleNamespace(
@@ -125,7 +125,7 @@ def test_entity_reader_does_not_turn_auth_failure_into_missing_entity():
     def unauthorized(**_kwargs):
         raise ZepApiError(status_code=401, body={"message": "unauthorized"})
 
-    reader = object.__new__(ZepEntityReader)
+    reader = object.__new__(EntityReader)
     reader.store = ZepGraphStore(SimpleNamespace(
         graph=SimpleNamespace(node=SimpleNamespace(get=unauthorized))
     ))
@@ -140,7 +140,7 @@ def test_entity_reader_does_not_turn_edge_failure_into_empty_data():
     def forbidden(**_kwargs):
         raise ZepApiError(status_code=403, body={"message": "forbidden"})
 
-    reader = object.__new__(ZepEntityReader)
+    reader = object.__new__(EntityReader)
     reader.store = ZepGraphStore(SimpleNamespace(
         graph=SimpleNamespace(
             node=SimpleNamespace(get_edges=forbidden),
@@ -157,7 +157,7 @@ def test_report_tools_do_not_turn_zep_read_failures_into_empty_data():
     def unauthorized(**_kwargs):
         raise ZepApiError(status_code=401, body={"message": "unauthorized"})
 
-    service = object.__new__(ZepToolsService)
+    service = object.__new__(GraphToolsService)
     service.store = ZepGraphStore(SimpleNamespace(
         graph=SimpleNamespace(node=SimpleNamespace(get=unauthorized))
     ))

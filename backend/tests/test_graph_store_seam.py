@@ -8,12 +8,12 @@ import pytest
 
 from app.config import Config
 from app.graph.store import GraphNode, GraphNotFoundError, SearchResult
-from app.services import zep_graph_memory_updater as updater_module
+from app.services import graph_memory_updater as updater_module
 from app.services.graph_builder import GraphBuilderService
 from app.services.oasis_profile_generator import OasisProfileGenerator
-from app.services.zep_entity_reader import ZepEntityReader
-from app.services.zep_graph_memory_updater import AgentActivity, ZepGraphMemoryUpdater
-from app.services.zep_tools import ZepToolsService
+from app.services.entity_reader import EntityReader
+from app.services.graph_memory_updater import AgentActivity, GraphMemoryUpdater
+from app.services.graph_tools import GraphToolsService
 
 
 class _Handle:
@@ -128,7 +128,7 @@ def test_graph_build_worker_uses_only_protocol_methods():
 def test_memory_updater_uses_only_protocol_methods(monkeypatch):
     store = ProtocolOnlyStore()
     monkeypatch.setattr(updater_module, "get_graph_store", lambda **_kwargs: store)
-    updater = ZepGraphMemoryUpdater("graph-1", api_key="k", simulation_id="sim-1")
+    updater = GraphMemoryUpdater("graph-1", api_key="k", simulation_id="sim-1")
     activity = AgentActivity(
         platform="twitter",
         agent_id=1,
@@ -149,9 +149,9 @@ def test_memory_updater_uses_only_protocol_methods(monkeypatch):
 
 _SERVICES = [
     ("GraphBuilderService", lambda: GraphBuilderService()),
-    ("ZepEntityReader", lambda: ZepEntityReader()),
-    ("ZepToolsService", lambda: ZepToolsService()),
-    ("ZepGraphMemoryUpdater", lambda: ZepGraphMemoryUpdater("graph-1")),
+    ("EntityReader", lambda: EntityReader()),
+    ("GraphToolsService", lambda: GraphToolsService()),
+    ("GraphMemoryUpdater", lambda: GraphMemoryUpdater("graph-1")),
 ]
 
 

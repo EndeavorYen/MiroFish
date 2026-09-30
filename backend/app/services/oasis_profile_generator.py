@@ -23,7 +23,7 @@ from ..utils.zep import (
     is_retryable_zep_error,
     normalize_zep_search_query,
 )
-from .zep_entity_reader import EntityNode
+from .entity_reader import EntityNode
 
 logger = get_logger('mirofish.oasis_profile')
 

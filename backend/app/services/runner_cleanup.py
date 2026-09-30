@@ -7,7 +7,7 @@ import atexit
 from typing import Dict, Any, List
 
 from ..utils.logger import get_logger
-from .zep_graph_memory_updater import ZepGraphMemoryManager
+from .graph_memory_updater import GraphMemoryManager
 
 logger = get_logger('mirofish.simulation_runner')
 from .runner_models import (
@@ -120,7 +120,7 @@ class CleanupMixin:
             return
         cls._cleanup_done = True
 
-        updater_ids = set(ZepGraphMemoryManager.get_simulation_ids())
+        updater_ids = set(GraphMemoryManager.get_simulation_ids())
         simulation_ids = sorted(
             set(cls._processes)
             | set(cls._graph_memory_enabled)
@@ -139,7 +139,7 @@ class CleanupMixin:
         for simulation_id in simulation_ids:
             try:
                 state = cls.get_run_state(simulation_id)
-                updater = ZepGraphMemoryManager.get_updater(simulation_id)
+                updater = GraphMemoryManager.get_updater(simulation_id)
                 process = cls._processes.get(simulation_id)
 
                 if state is None:
@@ -148,7 +148,7 @@ class CleanupMixin:
                     if process is not None and process.poll() is None:
                         cls._terminate_process(process, simulation_id, timeout=5)
                     if updater is not None:
-                        ZepGraphMemoryManager.stop_updater(simulation_id)
+                        GraphMemoryManager.stop_updater(simulation_id)
                     continue
 
                 if updater is not None:

@@ -458,11 +458,11 @@ def replay_graph_writeback(run: Path, prepared: dict[str, Any]) -> dict[str, Any
     """Feed the run's actions to the memory updater on the local graph."""
 
     force_local_config(run)
-    from app.services.zep_graph_memory_updater import ZepGraphMemoryUpdater
+    from app.services.graph_memory_updater import GraphMemoryUpdater
     from app.utils.llm_usage import usage_stage
 
     before = len(usage_rows(run / "metrics"))
-    updater = ZepGraphMemoryUpdater(prepared["graph_id"], simulation_id=prepared["simulation_id"])
+    updater = GraphMemoryUpdater(prepared["graph_id"], simulation_id=prepared["simulation_id"])
     updater._running = True
     fed = 0
     with usage_stage("simulation", metrics_dir=str(run / "metrics")):

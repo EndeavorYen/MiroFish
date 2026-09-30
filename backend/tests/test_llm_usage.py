@@ -250,7 +250,7 @@ def test_threadpool_contextvar_propagation(tmp_path):
 
 def test_oasis_profile_generator_records_profile_stage_metrics(tmp_path, monkeypatch):
     from app.services.oasis_profile_generator import OasisProfileGenerator
-    from app.services.zep_entity_reader import EntityNode
+    from app.services.entity_reader import EntityNode
 
     metrics_dir = str(tmp_path / "metrics")
     generator = OasisProfileGenerator(api_key="fake-key")

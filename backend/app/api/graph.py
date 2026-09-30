@@ -18,12 +18,12 @@ from ..services.text_processor import TextProcessor
 from ..utils.file_parser import FileParser
 from ..utils.logger import get_logger
 from ..utils.locale import t, get_locale, set_locale
-from ..utils.zep_lifecycle import get_graph_readers, graph_lifecycle_lock
+from ..utils.graph_lifecycle import get_graph_readers, graph_lifecycle_lock
 from ..models.task import TaskManager, TaskStatus
 from ..models.project import ProjectManager, ProjectStatus
 from ..services.simulation_manager import SimulationManager
 from ..services.simulation_runner import SimulationRunner, RunnerStatus
-from ..services.zep_graph_memory_updater import ZepGraphMemoryManager
+from ..services.graph_memory_updater import GraphMemoryManager
 from ..utils.llm_client import LLMResponseError
 from ..utils.llm_usage import usage_stage
 
@@ -42,7 +42,7 @@ def _active_graph_consumers(graph_id: str) -> list[str]:
         f"report:{reader_id}"
         for reader_id in get_graph_readers(graph_id)
     }
-    for simulation_id in ZepGraphMemoryManager.get_simulation_ids_for_graph(graph_id):
+    for simulation_id in GraphMemoryManager.get_simulation_ids_for_graph(graph_id):
         finalization_lock = SimulationRunner._finalization_lock(simulation_id)
         if not finalization_lock.acquire(blocking=False):
             active.add(simulation_id)
@@ -52,7 +52,7 @@ def _active_graph_consumers(graph_id: str) -> list[str]:
             if run_state and run_state.runner_status == RunnerStatus.FAILED:
                 # reset/delete is the explicit recovery path for an incomplete,
                 # non-replayable write. Serialize it against a retry drain.
-                ZepGraphMemoryManager.discard_inactive_updater(simulation_id)
+                GraphMemoryManager.discard_inactive_updater(simulation_id)
                 SimulationRunner._graph_memory_enabled.pop(simulation_id, None)
                 continue
             active.add(simulation_id)

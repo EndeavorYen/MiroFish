@@ -5,7 +5,7 @@ import json
 from datetime import datetime
 
 from ..utils.logger import get_logger
-from .zep_graph_memory_updater import ZepGraphMemoryManager
+from .graph_memory_updater import GraphMemoryManager
 
 logger = get_logger('mirofish.simulation_runner')
 from .runner_models import (
@@ -66,7 +66,7 @@ class MonitorMixin:
                 RunnerStatus.STOPPING,
             )
             try:
-                ZepGraphMemoryManager.stop_updater(simulation_id)
+                GraphMemoryManager.stop_updater(simulation_id)
                 cls._graph_memory_enabled.pop(simulation_id, None)
                 logger.info(
                     "已停止图谱记忆更新: simulation_id=%s",
@@ -115,7 +115,7 @@ class MonitorMixin:
         graph_memory_enabled = cls._graph_memory_enabled.get(state.simulation_id, False)
         graph_updater = None
         if graph_memory_enabled:
-            graph_updater = ZepGraphMemoryManager.get_updater(state.simulation_id)
+            graph_updater = GraphMemoryManager.get_updater(state.simulation_id)
         
         try:
             with open(log_path, 'r', encoding='utf-8') as f:

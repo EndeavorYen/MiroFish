@@ -51,7 +51,7 @@ def test_build_read_entities_and_generate_profile(local_backend):
     from app.services.graph_builder import GraphBuilderService
     from app.services.oasis_profile_generator import OasisProfileGenerator
     from app.services.text_processor import TextProcessor
-    from app.services.zep_entity_reader import ZepEntityReader
+    from app.services.entity_reader import EntityReader
 
     builder = GraphBuilderService()
     remembered = []
@@ -67,7 +67,7 @@ def test_build_read_entities_and_generate_profile(local_backend):
     assert data["node_count"] == 3
     assert data["edge_count"] >= 2
 
-    reader = ZepEntityReader()
+    reader = EntityReader()
     filtered = reader.filter_defined_entities(graph_id)
     by_name = {entity.name: entity for entity in filtered.entities}
     assert set(by_name) == {"東海市交通運輸委員會", "凌雲飛行", "陳志遠"}

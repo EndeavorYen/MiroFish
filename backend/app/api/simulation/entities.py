@@ -5,7 +5,7 @@ from flask import request, jsonify
 
 from .. import simulation_bp
 from ...config import Config
-from ...services.zep_entity_reader import ZepEntityReader
+from ...services.entity_reader import EntityReader
 from ...utils.logger import get_logger
 from ...utils.locale import t
 
@@ -38,7 +38,7 @@ def get_graph_entities(graph_id: str):
         
         logger.info(f"获取图谱实体: graph_id={graph_id}, entity_types={entity_types}, enrich={enrich}")
         
-        reader = ZepEntityReader()
+        reader = EntityReader()
         result = reader.filter_defined_entities(
             graph_id=graph_id,
             defined_entity_types=entity_types,
@@ -69,7 +69,7 @@ def get_entity_detail(graph_id: str, entity_uuid: str):
                 "error": t('api.zepApiKeyMissing')
             }), 500
         
-        reader = ZepEntityReader()
+        reader = EntityReader()
         entity = reader.get_entity_with_context(graph_id, entity_uuid)
         
         if not entity:
@@ -104,7 +104,7 @@ def get_entities_by_type(graph_id: str, entity_type: str):
         
         enrich = request.args.get('enrich', 'true').lower() == 'true'
         
-        reader = ZepEntityReader()
+        reader = EntityReader()
         entities = reader.get_entities_by_type(
             graph_id=graph_id,
             entity_type=entity_type,

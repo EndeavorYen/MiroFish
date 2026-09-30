@@ -5,11 +5,11 @@ from queue import Queue
 import pytest
 
 from app.graph.zep_store import ZepGraphStore
-from app.services import zep_graph_memory_updater as updater_module
-from app.services.zep_graph_memory_updater import (
+from app.services import graph_memory_updater as updater_module
+from app.services.graph_memory_updater import (
     AgentActivity,
-    ZepGraphMemoryManager,
-    ZepGraphMemoryUpdater,
+    GraphMemoryManager,
+    GraphMemoryUpdater,
 )
 
 
@@ -43,7 +43,7 @@ def _updater(monkeypatch, add, simulation_id="sim-1"):
         "get_graph_store",
         lambda **_kwargs: ZepGraphStore(client),
     )
-    updater = ZepGraphMemoryUpdater(
+    updater = GraphMemoryUpdater(
         "graph-1",
         api_key="test-key",
         simulation_id=simulation_id,
@@ -206,12 +206,12 @@ def test_explicit_graph_destruction_can_discard_a_stopped_failed_updater():
         _running=False,
         _worker_thread=SimpleNamespace(is_alive=lambda: False),
     )
-    ZepGraphMemoryManager._updaters["sim-failed"] = updater
+    GraphMemoryManager._updaters["sim-failed"] = updater
     try:
-        assert ZepGraphMemoryManager.discard_inactive_updater("sim-failed") is True
-        assert "sim-failed" not in ZepGraphMemoryManager._updaters
+        assert GraphMemoryManager.discard_inactive_updater("sim-failed") is True
+        assert "sim-failed" not in GraphMemoryManager._updaters
     finally:
-        ZepGraphMemoryManager._updaters.pop("sim-failed", None)
+        GraphMemoryManager._updaters.pop("sim-failed", None)
 
 
 def test_flush_deadline_keeps_unattempted_platform_for_a_safe_retry(monkeypatch):

@@ -554,6 +554,7 @@ def download_simulation_script(script_name: str):
     
     script_name可选值：
         - run_parallel_simulation.py（--twitter-only / --reddit-only 跑單一平台）
+        - sim_ipc.py / sim_actions.py / sim_agents.py（run_parallel_simulation.py 的模組）
         - action_logger.py
     """
     try:
@@ -563,6 +564,10 @@ def download_simulation_script(script_name: str):
         # 验证脚本名称
         allowed_scripts = [
             "run_parallel_simulation.py",
+            # its modules since #68
+            "sim_ipc.py",
+            "sim_actions.py",
+            "sim_agents.py",
             "action_logger.py"
         ]
         

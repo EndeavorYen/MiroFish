@@ -440,6 +440,7 @@ const doStartSimulation = async () => {
     }
   } catch (err) {
     startError.value = err.message
+    failureReason.value = err.message || t('common.unknownError')
     addLog(t('log.startException', { error: err.message }))
     emit('update-status', 'error')
   } finally {

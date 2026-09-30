@@ -13,7 +13,7 @@ import json
 import random
 from typing import Dict, Any, List, Optional
 
-from openai import OpenAI
+from ..utils.llm_factory import make_llm_client
 from ..config import Config
 from ..utils.logger import get_logger
 from ..utils.locale import get_language_instruction, get_locale, set_locale, t
@@ -92,10 +92,7 @@ class OasisProfileGenerator(ProfileOutputMixin):
         if not self.api_key:
             raise ValueError("LLM_API_KEY 未配置")
         
-        self.client = OpenAI(
-            api_key=self.api_key,
-            base_url=self.base_url
-        )
+        self.client = make_llm_client(api_key=self.api_key, base_url=self.base_url)
         
         # Zep客户端用于检索丰富上下文
         self.zep_api_key = zep_api_key or Config.ZEP_API_KEY

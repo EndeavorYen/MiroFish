@@ -546,12 +546,11 @@ def summary_prompt(metrics: dict[str, Any], requirement: str) -> str:
 
 
 def default_summary_fn() -> SummaryFn:
-    from openai import OpenAI
-
     from ..config import Config
+    from ..utils.llm_factory import SUMMARY, make_llm_client
     from ..utils.openai_chat_compat import create_chat_completion, extract_chat_completion_text
 
-    client = OpenAI(api_key=Config.LLM_API_KEY, base_url=Config.LLM_BASE_URL, timeout=120)
+    client = make_llm_client(SUMMARY)
 
     def summarize(prompt: str, max_tokens: int) -> str:
         response = create_chat_completion(

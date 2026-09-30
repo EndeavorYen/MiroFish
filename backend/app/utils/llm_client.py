@@ -7,7 +7,7 @@ import json
 import logging
 import re
 from typing import Optional, Dict, Any, List
-from openai import OpenAI
+from .llm_factory import make_llm_client
 
 from ..config import Config
 from .openai_chat_compat import create_chat_completion, extract_chat_completion_text
@@ -104,10 +104,7 @@ class LLMClient:
         if not self.api_key:
             raise ValueError("LLM_API_KEY 未配置")
         
-        self.client = OpenAI(
-            api_key=self.api_key,
-            base_url=self.base_url
-        )
+        self.client = make_llm_client(api_key=self.api_key, base_url=self.base_url)
 
     def _create_completion(
         self,

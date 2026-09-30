@@ -19,9 +19,19 @@ def test_latin_names_inside_chinese_text_are_candidates():
 
 
 def test_a_title_glued_to_a_name_is_not_part_of_it():
-    options = _options("產業分析師林書瑤認為，這反映真實成本。")
-    assert "林書瑤" in options
-    assert not any(o.endswith("林書瑤") and o != "林書瑤" for o in options)
+    first = [c.text for c in find_candidates("產業分析師林書瑤認為，這反映真實成本。")]
+    assert "林書瑤" in first and "師林書瑤" not in first
+
+
+def test_a_word_ending_like_a_title_keeps_the_real_name_as_a_variant():
+    # 民主 + 管中閔 reads like 主管 + 中閔; the full name stays an option.
+    assert "管中閔" in _options("推動民主管中閔表示。")
+
+
+def test_every_run_of_latin_names_is_a_candidate():
+    assert {"OpenAI", "Microsoft"} <= _options("由 OpenAI and Microsoft 合作")
+    assert "OpenAI" in _options("使用 the OpenAI API 服務")
+    assert "OpenAI" in _options("Today OpenAI 宣布新方案。")
 
 
 def test_a_petition_is_not_an_organisation():

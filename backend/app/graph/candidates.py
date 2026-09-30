@@ -145,6 +145,9 @@ def _persons(text: str, tokens: list[tuple[str, str, int, int]]) -> list[Candida
                 end = tokens[j][3]
                 j += 1
             # jieba glues a title's last character to the name (分析|師林書瑤).
+            # The uncut name stays a variant: the "title" may end a word
+            # before a real surname (民主|管中閔), and System One picks.
+            full_start = start
             for title in TITLE_WORDS:
                 cut = next(
                     (k for k in range(1, len(title))
@@ -156,6 +159,8 @@ def _persons(text: str, tokens: list[tuple[str, str, int, int]]) -> list[Candida
                     break
             name = text[start:end]
             variants = [name]
+            if start != full_start:
+                variants.append(text[full_start:end])
             # jieba often drops the surname: 高|明哲 -> offer 高明哲 too.
             if len(name) == 2 and start > 0 and text[start - 1] in SURNAMES:
                 variants.insert(0, text[start - 1 : end])
@@ -339,19 +344,22 @@ def _is_name_word(word: str) -> bool:
 def _latin(text: str) -> list[Candidate]:
     found = []
     for match in _LATIN_RUN_RE.finditer(text):
-        words = match.group(0).split(" ")
-        # Keep the leading run of name words (OpenAI 宣布 ... ChatGPT Pro 方案).
-        run: list[str] = []
-        for word in words:
-            if not _is_name_word(word):
-                break
-            run.append(word)
-        if not run:
-            continue
-        name = " ".join(run)
-        variants = [name] + ([run[0]] if len(run) > 1 else [])
-        start = match.start()
-        found.append(Candidate(name, start, start + len(name), "latin", tuple(variants)))
+        # Every run of name words: "OpenAI and Microsoft" holds two names,
+        # "the OpenAI API" one after a lowercase word.
+        position = match.start()
+        run: list[tuple[str, int]] = []
+        for word in match.group(0).split(" ") + [""]:
+            if word and _is_name_word(word):
+                run.append((word, position))
+            elif run:
+                name = " ".join(w for w, _ in run)
+                start = run[0][1]
+                # A run's first or last word may be the name alone
+                # (ChatGPT Pro, Today OpenAI).
+                variants = list(dict.fromkeys([name, run[0][0], run[-1][0]]))
+                found.append(Candidate(name, start, start + len(name), "latin", tuple(variants)))
+                run = []
+            position += len(word) + 1
     return found
 
 

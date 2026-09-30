@@ -320,6 +320,43 @@ G5 結果（和上面兩張表是同一批 runs）：
 - B 的 run 間差異很大：每 run 約 60–90 則貼文，golden 同一版程式的強烈反對可從 1% 到 12%。3 個 seed 的抽樣曾經誤導判斷，決定前要用每組 5 個 seed 的完整基準。
 - 線上執行不是逐位元可重播（OASIS 共用全域亂數、模型伺服器批次不確定）；可重播的是活躍 agent 的選擇與 System One 的取樣。
 
+## 實驗加速（2026-09-30 實測）
+
+用 py-spy 對一次模擬取樣，約 58% 的時間在等模型伺服器回應讀出請求；OASIS 的 twhin-bert 推薦只占 0.1%，其他 Python 工作可以忽略。一次本機模擬約送出 1,200 個讀出請求，每個約 500 token，其中大部分是同一個角色的狀態描述。瓶頸是模型伺服器的 prefill 吞吐量。
+
+讀出吞吐量（同一張 RTX 5080，Qwen3.5-4B；模擬多個角色同時讀出，每個角色 4 題）：
+
+| 伺服器 | 讀出／秒 | 說明 |
+| --- | ---: | --- |
+| llama.cpp（`-np 8`） | 8.0 | 同時 1、8、16、32 個請求，吞吐量都差不多。調 `-ub`、`-fa on`、`-np 16` 都沒有幫助 |
+| llama.cpp + 同一狀態固定到同一 slot（`id_slot`） | 4.4 | 反而變慢，沒有採用 |
+| **vLLM 0.30（AWQ，`--enable-prefix-caching`）** | **25.0** | 對 Qwen3.5 的混合架構會開啟 prefix cache（Mamba cache 的 align 模式） |
+
+整次模擬（golden 的 B 組，6 個 seed、12 回合）：
+
+| 設定 | 6 次的牆鐘時間 |
+| --- | ---: |
+| llama.cpp，一次一個 | 約 564 秒 |
+| llama.cpp，`--jobs 6` | 428 秒 |
+| **vLLM，`--jobs 6`** | **105 秒** |
+
+- 快取 twhin-bert 的編碼、限制 torch 執行緒數，都量過沒有差別，所以沒有採用。
+- CUDA Graph：llama.cpp 與 vLLM 預設都開著。讀出只取 1 個 token，時間幾乎都在 prefill，CUDA Graph 在這裡幫不上忙。
+
+快速實驗的設定：
+
+```bash
+# vLLM（Docker／WSL；會占用大部分 GPU，先停掉 llama-server）
+docker run -d --name mf-vllm --gpus all -p 8030:8000 --ipc=host -v hf-cache:/root/.cache/huggingface \
+  vllm/vllm-openai:latest --model SubSir/Qwen3.5-4B-AWQ --served-model-name qwen3.5-4b \
+  --max-model-len 8192 --gpu-memory-utilization 0.75 --max-num-seqs 64 --enable-prefix-caching --max-logprobs 20
+# 所有情境的模擬放進同一個工作池
+LLM_BASE_URL=http://127.0.0.1:8030/v1 SYSTEM_ONE_BASE_URL=http://127.0.0.1:8030/v1 \
+  uv run python scripts/ab_pool.py --dirs <情境目錄> ... --seeds 1 2 3 --jobs 16
+```
+
+注意：vLLM 用的是 AWQ 量化，llama.cpp 用的是 GGUF Q4_K_M，兩者不是逐位元相同的模型。同一個比較裡的 A、B 兩組，必須在同一個伺服器上跑，不能混用兩種伺服器的數字。
+
 ## 重現實驗
 
 ```bash

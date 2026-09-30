@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
+import math
 import os
 import re
 import sqlite3
@@ -35,6 +37,13 @@ from typing import Any, Literal
 import sqlite_vec
 
 from .embedding import Embedder, make_embedder
+
+logger = logging.getLogger("mirofish.graph")
+
+# A fixed text whose vector identifies the embedder that wrote a graph's
+# vectors (#61): a mis-converted and a correct e5-small GGUF are both 384-d.
+PROBE_TEXT = "embedding fingerprint: 東海市宣佈啟動無人駕駛計程車 / Taxi drivers oppose the air taxi pilot"
+PROBE_MATCH = 0.99  # cosine; the two e5-small GGUFs differ at 0.78-0.95
 from .extractor import ExtractedEntity, ExtractedRelation, Extraction, Extractor, StubExtractor
 from .store import (
     EpisodeHandle,
@@ -124,6 +133,12 @@ def normalize_name(name: str) -> str:
     return re.sub(r"\s+", "", unicodedata.normalize("NFKC", name or "")).casefold()
 
 
+def _cosine(a: list[float], b: list[float]) -> float:
+    dot = sum(x * y for x, y in zip(a, b))
+    norm = math.sqrt(sum(x * x for x in a)) * math.sqrt(sum(y * y for y in b))
+    return dot / norm if norm else 0.0
+
+
 def _connect(path: str) -> sqlite3.Connection:
     conn = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
     conn.execute("PRAGMA journal_mode=WAL")
@@ -180,6 +195,24 @@ class _Graph:
         ).fetchone()
         return int(row[0]) if row else None
 
+    def stored_probe(self) -> list[float] | None:
+        row = self.conn.execute(
+            "SELECT value FROM meta WHERE key = 'embedding_probe'"
+        ).fetchone()
+        return json.loads(row[0]) if row else None
+
+    def set_probe(self, vector: list[float]) -> None:
+        self.conn.execute(
+            "INSERT OR REPLACE INTO meta VALUES ('embedding_probe', ?)", (json.dumps(vector),)
+        )
+
+    def drop_vectors(self) -> None:
+        for table in ("vec_nodes", "vec_edges"):
+            self.conn.execute(f"DROP TABLE IF EXISTS {table}")
+        self.conn.execute(
+            "DELETE FROM meta WHERE key IN ('embedding_dim', 'embedding_probe', 'vectors_incomplete')"
+        )
+
     def ensure_vec_tables(self, dim: int) -> None:
         current = self.current_dim()
         if current is None:
@@ -213,6 +246,8 @@ class LocalGraphStore:
         os.makedirs(self.data_dir, exist_ok=True)
         self.embedder = embedder
         self.extractor = extractor
+        self._probe_vector: list[float] | None = None
+        self._warned: set[str] = set()
         self._registry_lock = threading.RLock()
         self._registry = _connect(os.path.join(self.data_dir, "registry.sqlite"))
         self._registry.executescript(_REGISTRY_SCHEMA)
@@ -227,6 +262,11 @@ class LocalGraphStore:
         if not _GRAPH_ID_RE.match(graph_id or ""):
             raise ValueError(f"invalid graph_id: {graph_id!r}")
         return os.path.join(self.data_dir, f"{graph_id}.sqlite")
+
+    def graph_ids(self) -> list[str]:
+        with self._registry_lock:
+            rows = self._registry.execute("SELECT graph_id FROM graphs ORDER BY graph_id").fetchall()
+        return [row[0] for row in rows]
 
     def _exists(self, graph_id: str) -> bool:
         with self._registry_lock:
@@ -567,10 +607,114 @@ class LocalGraphStore:
             )
         return edge_uuid, rowid, text
 
+    def _probe(self) -> list[float]:
+        if self._probe_vector is None:
+            self._probe_vector = self.embedder.embed_documents([PROBE_TEXT])[0]
+        return self._probe_vector
+
+    def _warn_once(self, graph_id: str, message: str, *args: Any) -> None:
+        if graph_id not in self._warned:
+            self._warned.add(graph_id)
+            logger.warning(message, *args)
+
+    def embedding_state(self, graph_id: str) -> str:
+        """``matches``, ``other embedder``, ``no fingerprint``, ``no vectors`` or
+        ``unknown`` (the embedder did not answer), or ``incomplete`` (this
+        embedder's vectors, but rows written while another one ran have none) (#61)."""
+
+        graph = self._graph(graph_id)
+        with graph.use():
+            dim, stored = graph.current_dim(), graph.stored_probe()
+        if dim is None:
+            return "no vectors"
+        if stored is None:
+            return "no fingerprint"
+        try:
+            current = self._probe()
+        except Exception as error:
+            logger.warning("embedding fingerprint check failed: %s", error)
+            return "unknown"
+        if not self._same_probe(current, stored):
+            return "other embedder"
+        with graph.use():
+            incomplete = graph.conn.execute(
+                "SELECT 1 FROM meta WHERE key = 'vectors_incomplete'"
+            ).fetchone()
+        return "incomplete" if incomplete else "matches"
+
+    @staticmethod
+    def _same_probe(current: list[float], stored: list[float]) -> bool:
+        return len(current) == len(stored) and _cosine(current, stored) >= PROBE_MATCH
+
+    def vectors_usable(self, graph_id: str) -> bool:
+        """Whether this store's embedder wrote the graph's vectors."""
+
+        state = self.embedding_state(graph_id)
+        if state == "no fingerprint":
+            # Built before fingerprints: keep using its vectors, but say so.
+            self._warn_once(
+                graph_id,
+                "graph %s has no embedding fingerprint; if the embedding model (or its GGUF) "
+                "changed since it was built, run backend/scripts/reembed_graphs.py",
+                graph_id,
+            )
+        elif state == "other embedder":
+            self._warn_once(
+                graph_id,
+                "graph %s was embedded by another embedder; searching it by keywords only "
+                "until backend/scripts/reembed_graphs.py re-embeds it",
+                graph_id,
+            )
+        elif state == "incomplete":
+            self._warn_once(
+                graph_id,
+                "graph %s has rows without vectors (written by another embedder); "
+                "run backend/scripts/reembed_graphs.py",
+                graph_id,
+            )
+        elif state == "unknown":
+            # The query embedding would fail the same way: answer by keywords.
+            self._warn_once(
+                graph_id, "embedding service unavailable; searching graph %s by keywords only", graph_id
+            )
+        return state in ("matches", "no fingerprint", "incomplete")
+
+    def reembed(self, graph_id: str) -> dict[str, int]:
+        """Recompute every vector with this store's embedder.
+
+        A maintenance step: run it while nothing else writes to the graph.
+        """
+
+        graph = self._graph(graph_id)
+        with graph.use() as conn:
+            nodes = conn.execute("SELECT rowid, name, labels, summary FROM nodes").fetchall()
+            edges = conn.execute(
+                "SELECT e.rowid, e.name, e.fact, e.dedupe_key, s.name, t.name FROM edges e "
+                "LEFT JOIN nodes s ON s.uuid = e.source_uuid "
+                "LEFT JOIN nodes t ON t.uuid = e.target_uuid"
+            ).fetchall()
+        node_texts = {row[0]: self._node_text(row[1], json.loads(row[2]), row[3]) for row in nodes}
+        # The texts ingestion embeds: structured facts (_upsert_fact_edge) use
+        # "relation fact", extracted relations (_upsert_edge) name both ends.
+        edge_texts = {
+            row[0]: f"{row[1]} {row[2]}" if row[3].startswith("fact:")
+            else f"{row[4] or ''} {row[1]} {row[5] or ''} {row[2]}"
+            for row in edges
+        }
+        vectors = self._embed(node_texts, edge_texts)
+        with graph.use() as conn, _transaction(conn):
+            graph.drop_vectors()
+            if vectors:
+                self._store_vectors(graph, vectors)
+        self._warned.discard(graph_id)
+        return {"nodes": len(node_texts), "edges": len(edge_texts)}
+
     def _embed(
         self, node_texts: dict[int, str], edge_texts: dict[int, str]
     ) -> dict[str, dict[int, tuple[str, list[float]]]]:
         result: dict[str, dict[int, tuple[str, list[float]]]] = {}
+        if node_texts or edge_texts:
+            self._probe()  # outside the graph lock; _store_vectors records it
         for table, texts in (("vec_nodes", node_texts), ("vec_edges", edge_texts)):
             if texts:
                 rowids = list(texts)
@@ -581,8 +725,22 @@ class LocalGraphStore:
     def _store_vectors(
         self, graph: _Graph, vectors: dict[str, dict[int, tuple[str, list[float]]]]
     ) -> None:
+        stored = graph.stored_probe()
+        if stored is not None and vectors and not self._same_probe(self._probe(), stored):
+            # Keyword search still finds the new rows; reembed restores vectors,
+            # and --check reports the graph as incomplete until then.
+            graph.conn.execute("INSERT OR REPLACE INTO meta VALUES ('vectors_incomplete', '1')")
+            logger.warning(
+                "not storing vectors in %s: another embedder wrote its vectors; "
+                "run backend/scripts/reembed_graphs.py",
+                os.path.basename(graph.path),
+            )
+            return
         for table, by_rowid in vectors.items():
+            new = graph.current_dim() is None
             graph.ensure_vec_tables(len(next(iter(by_rowid.values()))[1]))
+            if new:
+                graph.set_probe(self._probe())
             for rowid, (text, vector) in by_rowid.items():
                 if (
                     table == "vec_nodes"
@@ -950,7 +1108,11 @@ class LocalGraphStore:
             if scope == "nodes"
             else ("edges_fts", "vec_edges", "edges", self._EDGE_COLS)
         )
-        query_vector = self.embedder.embed_query(query) if query.strip() else None
+        query_vector = (
+            self.embedder.embed_query(query)
+            if query.strip() and self.vectors_usable(graph_id)
+            else None
+        )
         expression = match_query(query)
         scores: dict[int, float] = {}
         with graph.use():

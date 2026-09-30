@@ -148,3 +148,44 @@ def make_embedder() -> Embedder:
             else ("passage: " if is_e5 else ""),
         )
     raise ValueError(f"GRAPH_EMBEDDER must be http or hash, got {kind!r}")
+
+
+# English words the broken e5-small GGUF (WordPiece over an XLM-R vocabulary)
+# turns into <unk> (#61).
+TOKENIZER_PROBE = "Taxi drivers oppose the air taxi pilot"
+
+
+def check_embedding_tokenizer(base_url: str | None, timeout: float = 3.0) -> str | None:
+    """A warning when a local llama.cpp embedding server mis-tokenises.
+
+    Only llama.cpp answers ``/tokenize``; other servers (TEI, Ollama, a
+    hosted API) are not checked.
+    """
+
+    from ..profiles import is_local_url
+
+    if not base_url or not is_local_url(base_url):
+        return None
+    root = base_url.rstrip("/")
+    if root.endswith("/v1"):
+        root = root[:-3]
+    try:
+        response = httpx.post(
+            root + "/tokenize",
+            json={"content": TOKENIZER_PROBE, "with_pieces": True},
+            timeout=timeout,
+            trust_env=False,
+        )
+        if response.status_code != 200:
+            return None
+        pieces = [token.get("piece") for token in response.json().get("tokens", [])]
+    except (httpx.HTTPError, ValueError, AttributeError):
+        return None
+    unknown = sum(piece == "<unk>" for piece in pieces)
+    if not unknown:
+        return None
+    return (
+        f"embedding server {base_url} turns {unknown} of {len(pieces)} tokens of "
+        f"{TOKENIZER_PROBE!r} into <unk>: its GGUF has the wrong tokenizer. Convert the "
+        "model with backend/scripts/convert_e5_gguf.py (docs/local-first.md)."
+    )

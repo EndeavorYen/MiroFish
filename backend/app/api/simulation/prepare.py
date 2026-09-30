@@ -139,7 +139,7 @@ def prepare_simulation():
     if problem:
         return jsonify({"success": False, "error": problem}), 503
     import threading
-    from ..models.task import TaskManager, TaskStatus
+    from ...models.task import TaskManager, TaskStatus
     
     try:
         data = request.get_json() or {}
@@ -411,7 +411,7 @@ def get_prepare_status():
             }
         }
     """
-    from ..models.task import TaskManager
+    from ...models.task import TaskManager
     
     try:
         data = request.get_json() or {}

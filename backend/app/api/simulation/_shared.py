@@ -73,7 +73,7 @@ def _check_simulation_prepared(simulation_id: str) -> tuple:
         (is_prepared: bool, info: dict)
     """
     import os
-    from ..config import Config
+    from ...config import Config
     
     simulation_dir = os.path.join(Config.OASIS_SIMULATION_DATA_DIR, simulation_id)
     
@@ -191,8 +191,8 @@ def _get_report_id_for_simulation(simulation_id: str) -> str:
     import json
     
     # reports 目录路径：backend/uploads/reports
-    # __file__ 是 app/api/simulation.py，需要向上两级到 backend/
-    reports_dir = os.path.join(os.path.dirname(__file__), '../../uploads/reports')
+    # __file__ 是 app/api/simulation/_shared.py，需要向上三级到 backend/
+    reports_dir = os.path.join(os.path.dirname(__file__), '../../../uploads/reports')
     if not os.path.exists(reports_dir):
         return None
     

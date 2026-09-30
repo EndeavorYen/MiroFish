@@ -558,7 +558,7 @@ def download_simulation_script(script_name: str):
     """
     try:
         # 脚本位于 backend/scripts/ 目录
-        scripts_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../scripts'))
+        scripts_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../scripts'))
         
         # 验证脚本名称
         allowed_scripts = [

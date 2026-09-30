@@ -320,7 +320,7 @@ def get_simulation_posts(simulation_id: str):
 
         sim_dir = os.path.join(
             os.path.dirname(__file__),
-            f'../../uploads/simulations/{simulation_id}'
+            f'../../../uploads/simulations/{simulation_id}'
         )
 
         db_file = f"{platform}_simulation.db"
@@ -398,7 +398,7 @@ def get_simulation_comments(simulation_id: str):
 
         sim_dir = os.path.join(
             os.path.dirname(__file__),
-            f'../../uploads/simulations/{simulation_id}'
+            f'../../../uploads/simulations/{simulation_id}'
         )
         
         db_path = os.path.join(sim_dir, f"{platform}_simulation.db")

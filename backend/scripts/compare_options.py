@@ -93,6 +93,7 @@ def paired(base: dict[int, dict[str, float]], other: dict[int, dict[str, float]]
     return {
         "mean": round(statistics.mean(diffs), 4),
         "sd": round(statistics.pstdev(diffs), 4),
+        "range": [round(min(diffs), 4), round(max(diffs), 4)],
         "seeds": len(diffs),
         "same_sign": same,
         # Every seed moves the same way; with 3 seeds that is a 1-in-4 chance
@@ -132,7 +133,11 @@ def _diff_text(block: dict[str, Any], scale: float = 1.0, unit: str = "") -> str
     if block["mean"] is None:
         return "—"
     digits = 1 if scale != 1.0 else 2
-    text = f"{block['mean'] * scale:+.{digits}f}{unit}（{block['same_sign']}/{block['seeds']} seed 同向）"
+    low, high = (v * scale for v in block["range"])
+    text = (
+        f"{block['mean'] * scale:+.{digits}f}{unit}（各 seed {low:+.{digits}f}～{high:+.{digits}f}，"
+        f"{block['same_sign']}/{block['seeds']} 同向）"
+    )
     return text if block["distinct"] else text + "，無法區分"
 
 

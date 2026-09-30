@@ -46,7 +46,9 @@ def test_paired_differences_need_every_seed_to_agree():
     better = rows[1]["vs_baseline"]
     assert better["tendency"]["mean"] == pytest.approx(0.1)
     assert better["tendency"]["distinct"] and better["oppose_share"]["distinct"]
+    assert better["tendency"]["range"] == [pytest.approx(0.1), pytest.approx(0.1)]
     assert not rows[2]["vs_baseline"]["tendency"]["distinct"]
     assert rows[0]["most_opposed_posts"] == [{"text": "太貴", "stance": 0.1}]
     text = co.render(rows, "問題")
     assert "無法區分" in text and "local-llm" in text and "（基準）" in text
+    assert "各 seed +0.10～+0.10" in text

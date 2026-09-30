@@ -1,11 +1,5 @@
 """Prompts and tool descriptions of the ReportAgent."""
 
-
-from ..utils.logger import get_logger
-
-logger = get_logger('mirofish.report_agent')
-
-
 TOOL_DESC_INSIGHT_FORGE = """\
 【深度洞察检索 - 强大的检索工具】
 这是我们强大的检索函数，专为深度分析设计。它会：

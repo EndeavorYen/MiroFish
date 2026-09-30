@@ -359,6 +359,12 @@ vLLM 一定要加上最後一行參數。LLM 路徑的 agent 靠 tool call 決�
 
 注意：vLLM 用的是 AWQ 量化，llama.cpp 用的是 GGUF Q4_K_M，兩者不是逐位元相同的模型。同一個比較裡的 A、B 兩組，必須在同一個伺服器上跑，不能混用兩種伺服器的數字。
 
+### 在 Colab 跑大量基準
+
+`notebooks/colab_benchmark.ipynb`：在 Colab GPU 上安裝這個分支與 vLLM，自我檢查（tool call、沒有思考輸出、讀出準確度），先準備情境並量吞吐量、估算時間，再跑 `ab_suite.py --jobs`。每 10 分鐘把結果同步到 Google Drive，中斷後重跑會沿用已完成的 run。建議先用 L4，並設 `PROBE_ONLY=True` 估算要花多少運算單元。
+
+Colab 上用的是 vLLM（BF16）與 `scripts/embed_server.py`（transformers 版的 e5-small，斷詞正確，見 #61），和本機的 llama.cpp 不同。同一個比較的 A、B 兩組都要在 Colab 跑，數字不要和本機的混用。
+
 ## 重現實驗
 
 ```bash

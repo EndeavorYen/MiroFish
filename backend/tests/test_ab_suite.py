@@ -187,3 +187,17 @@ def test_suite_tasks_span_every_scenario_group_and_seed(tmp_path):
     assert len(tasks) == 8
     assert (tmp_path / "s2" / "A", tmp_path / "s2" / "runs" / "A_seed2", "llm", 2, 24, None) in tasks
     assert (tmp_path / "s1" / "B", tmp_path / "s1" / "runs" / "B_seed1", "system_one", 1, 24, "tiered") in tasks
+
+
+def test_prepare_only_stops_before_any_simulation(tmp_path, monkeypatch):
+    from scripts import ab_suite as suite
+
+    prepared, simulated = [], []
+    monkeypatch.setattr(suite, "verify_digest", lambda entry: tmp_path)
+    monkeypatch.setattr(suite, "ensure_prepared", lambda work, fixture, mode, digest: prepared.append((work.name, mode)))
+    monkeypatch.setattr(suite.ab_eval, "simulate_many", lambda *a, **k: simulated.append(a))
+    monkeypatch.setattr(suite.ab_eval, "main", lambda argv: simulated.append(argv))
+    monkeypatch.setattr(suite, "load_manifest", lambda path: [{"name": "s1", "digest": "d"}, {"name": "s2", "digest": "d"}])
+    assert suite.main(["--out", str(tmp_path), "--prepare-only", "--jobs", "4"]) == 0
+    assert prepared == [("A", "llm"), ("B", "template"), ("A", "llm"), ("B", "template")]
+    assert simulated == []

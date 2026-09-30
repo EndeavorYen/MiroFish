@@ -251,6 +251,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--rounds", type=int, default=24)
     parser.add_argument("--quick", action="store_true")
     parser.add_argument("--jobs", type=int, default=1, help="simulations to run at once per scenario")
+    parser.add_argument("--prepare-only", action="store_true", help="prepare A and B of every scenario, then stop")
     parser.add_argument("--bootstrap-reps", type=int, default=ab_eval.BOOTSTRAP_REPS)
     parser.add_argument("--delta", type=float, default=ab_eval.PERSONA_DELTA)
     args = parser.parse_args(argv)
@@ -320,6 +321,9 @@ def main(argv: list[str] | None = None) -> int:
         fixtures[entry["name"]] = fixture = verify_digest(entry)
         ensure_prepared(out / entry["name"] / "A", fixture, "llm", entry["digest"])
         ensure_prepared(out / entry["name"] / "B", fixture, "template", entry["digest"])
+    if args.prepare_only:
+        print(f"prepared {len(entries)} scenarios in {out}")
+        return 0
     if args.jobs > 1:
         # All simulations first, in one pool; ab_eval then reuses them.
         ab_eval.simulate_many(suite_tasks(out, [e["name"] for e in entries], args.seeds, args.rounds), args.jobs)

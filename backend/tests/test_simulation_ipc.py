@@ -61,7 +61,9 @@ def test_no_reply_times_out_and_withdraws_the_command(tmp_path):
     client = SimulationIPCClient(str(tmp_path))
     with pytest.raises(TimeoutError):
         client.send_command(CommandType.CLOSE_ENV, {}, timeout=0.1, poll_interval=0.02)
-    assert os.listdir(tmp_path / "ipc_commands") == []  # a late server will not act on it
+    # Withdrawn: a server that has not polled yet will not act on it (one
+    # that already picked it up still writes a response nobody reads).
+    assert os.listdir(tmp_path / "ipc_commands") == []
 
 
 def test_the_server_takes_the_oldest_command_and_skips_broken_files(tmp_path):
@@ -87,3 +89,27 @@ def test_env_status_follows_the_server(tmp_path):
     assert client.check_env_alive() is False
     (tmp_path / "env_status.json").write_text("{half", encoding="utf-8")
     assert client.check_env_alive() is False  # a torn write reads as not alive
+
+
+def test_the_client_and_the_simulation_process_handler_agree(tmp_path):
+    """The handler the simulation process actually runs (scripts/sim_ipc.py)."""
+
+    from scripts.run_parallel_simulation import ParallelIPCHandler
+
+    client = SimulationIPCClient(str(tmp_path))
+    handler = ParallelIPCHandler(str(tmp_path))
+
+    def run():
+        for _ in range(200):
+            command = handler.poll_command()
+            if command is not None:
+                handler.send_response(command["command_id"], "completed", result={"ok": command["args"]["n"]})
+                return
+            time.sleep(0.01)
+
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    response = client.send_command(CommandType.BATCH_INTERVIEW, {"n": 2}, timeout=5, poll_interval=0.01)
+    thread.join(timeout=5)
+    assert response.status == CommandStatus.COMPLETED and response.result == {"ok": 2}
+    assert os.listdir(tmp_path / "ipc_commands") == [] and os.listdir(tmp_path / "ipc_responses") == []

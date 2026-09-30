@@ -79,8 +79,16 @@ def test_unknown_profile_is_an_error():
 
 
 def test_default_environ_and_config_pick_up_the_profile(monkeypatch):
+    import os
+
     import app.config as config
 
+    # Reloading re-runs apply_profile(), which writes the profile's keys into
+    # os.environ, and replaces the Config class other modules already hold.
+    # Put both back exactly, or later tests see GRAPH_EMBEDDER=http and patch
+    # a Config the code no longer reads (#68).
+    saved_environ = dict(os.environ)
+    saved_module = dict(vars(config))
     for key in ("GRAPH_BACKEND", "REPORT_MODE", "SIM_CONFIG_MODE", "LLM_BASE_URL"):
         monkeypatch.delenv(key, raising=False)
     monkeypatch.setenv("MIROFISH_PROFILE", "local")
@@ -92,8 +100,10 @@ def test_default_environ_and_config_pick_up_the_profile(monkeypatch):
         assert config.Config.SIM_CONFIG_MODE == "structured"
         assert config.Config.LLM_BASE_URL == LOCAL_LLM["LLM_BASE_URL"]
     finally:
-        monkeypatch.delenv("MIROFISH_PROFILE")
-        importlib.reload(config)
+        os.environ.clear()
+        os.environ.update(saved_environ)
+        vars(config).clear()
+        vars(config).update(saved_module)
 
 
 def test_every_profile_key_is_read_somewhere():

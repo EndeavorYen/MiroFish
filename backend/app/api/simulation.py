@@ -1376,9 +1376,7 @@ def download_simulation_script(script_name: str):
     下载模拟运行脚本文件（通用脚本，位于 backend/scripts/）
     
     script_name可选值：
-        - run_twitter_simulation.py
-        - run_reddit_simulation.py
-        - run_parallel_simulation.py
+        - run_parallel_simulation.py（--twitter-only / --reddit-only 跑單一平台）
         - action_logger.py
     """
     try:
@@ -1387,8 +1385,6 @@ def download_simulation_script(script_name: str):
         
         # 验证脚本名称
         allowed_scripts = [
-            "run_twitter_simulation.py",
-            "run_reddit_simulation.py", 
             "run_parallel_simulation.py",
             "action_logger.py"
         ]

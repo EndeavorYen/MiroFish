@@ -473,17 +473,12 @@ class SimulationRunner:
         else:
             cls._graph_memory_enabled[simulation_id] = False
         
-        # 确定运行哪个脚本（脚本位于 backend/scripts/ 目录）
-        if platform == "twitter":
-            script_name = "run_twitter_simulation.py"
-            state.twitter_running = True
-        elif platform == "reddit":
-            script_name = "run_reddit_simulation.py"
-            state.reddit_running = True
-        else:
-            script_name = "run_parallel_simulation.py"
-            state.twitter_running = True
-            state.reddit_running = True
+        # One script for every platform choice (#68): a single platform is
+        # run_parallel_simulation.py --twitter-only / --reddit-only.
+        script_name = "run_parallel_simulation.py"
+        platform_flags = {"twitter": ["--twitter-only"], "reddit": ["--reddit-only"]}.get(platform, [])
+        state.twitter_running = platform != "reddit"
+        state.reddit_running = platform != "twitter"
         
         script_path = os.path.join(cls.SCRIPTS_DIR, script_name)
         
@@ -529,6 +524,7 @@ class SimulationRunner:
                 sys.executable,  # Python解释器
                 script_path,
                 "--config", config_path,  # 使用完整配置文件路径
+                *platform_flags,
             ]
             
             # 如果指定了最大轮数，添加到命令行参数

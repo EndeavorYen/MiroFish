@@ -4,7 +4,7 @@ The scan walks the AST of ``app/``, ``scripts/`` and ``run.py`` for
 ``os.environ.get(...)``, ``os.getenv(...)``, ``os.environ[...]``,
 ``os.environ.setdefault(...)`` and ``"X" in os.environ`` -- also through a
 name bound to ``os.environ`` (``env = os.environ if ... else ...``,
-``dict(os.environ)``) or a parameter called ``env``/``environ`` -- with the
+``dict(os.environ)``, ``os.environ.copy()``) or a name ``env``/``environ`` -- with the
 name given as a string or as a module-level string constant (``ENV_VAR =
 "SIM_AGENT_CONTEXT_TOKENS"``). Each name needs its own table row
 (`` | `NAME` | ``) in docs/configuration.md. Reads through computed keys
@@ -22,11 +22,27 @@ DOC = BACKEND.parent / "docs" / "configuration.md"
 _NAME = re.compile(r"^[A-Z][A-Z0-9_]{2,}$")
 
 
-_ENV_NAMES = {"environ", "env", "environment"}
+_ENV_NAMES = {"environ", "env"}
+
+
+def _is_os_environ(node: ast.AST) -> bool:
+    return isinstance(node, ast.Attribute) and node.attr == "environ"
 
 
 def _mentions_environ(node: ast.AST) -> bool:
-    return any(isinstance(n, ast.Attribute) and n.attr == "environ" for n in ast.walk(node))
+    """The value *is* the environment: ``os.environ``, a conditional with it
+    as a branch, ``dict(os.environ)`` or ``os.environ.copy()``."""
+
+    if _is_os_environ(node):
+        return True
+    if isinstance(node, ast.IfExp):
+        return _is_os_environ(node.body) or _is_os_environ(node.orelse)
+    if isinstance(node, ast.Call):
+        func = node.func
+        if isinstance(func, ast.Name) and func.id == "dict" and node.args:
+            return _is_os_environ(node.args[0])
+        return isinstance(func, ast.Attribute) and func.attr == "copy" and _is_os_environ(func.value)
+    return False
 
 
 def _is_environ(node: ast.AST, aliases: set[str]) -> bool:
@@ -50,8 +66,8 @@ def _reads(tree: ast.AST) -> set[str]:
     aliases = {
         target.id
         for node in ast.walk(tree)
-        if isinstance(node, ast.Assign) and _mentions_environ(node.value)
-        for target in node.targets
+        if isinstance(node, (ast.Assign, ast.AnnAssign)) and node.value is not None and _mentions_environ(node.value)
+        for target in (node.targets if isinstance(node, ast.Assign) else [node.target])
         if isinstance(target, ast.Name)
     }
 
@@ -101,6 +117,11 @@ def test_the_scan_finds_reads_through_constants_and_aliases():
         'def g(env):\n    VAR = "LOCAL_ONLY"\n    return env.get("FOURTH_ONE")\n'
     )
     assert _reads(tree) == {"SOME_SETTING", "OTHER_ONE", "THIRD_ONE", "FOURTH_ONE"}
+    # A dict that merely holds an env value is not the environment.
+    assert _reads(ast.parse(
+        'import os\ncfg = {"k": os.environ.get("REAL_ONE")}\nx = cfg["NOT_ENV_KEY"]\n'
+    )) == {"REAL_ONE"}
+    assert _reads(ast.parse('import os\nchild: dict = dict(os.environ)\nchild.get("ANNOTATED")\n')) == {"ANNOTATED"}
 
 
 def test_every_environment_variable_is_documented():

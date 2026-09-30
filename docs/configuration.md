@@ -130,7 +130,7 @@ profile 只會填「還沒設定」的模式設定，所以 `.env` 裡明確寫�
 
 ## Docker compose 與前端
 
-這些變數不是後端讀的，但寫在同一個 `.env`：
+這些變數不是後端讀的。compose 的變數寫在專案根目錄的 `.env`；前端的變數由 Vite 讀取，本機開發要寫在 `frontend/.env`（或 shell 環境），Docker 映像則經由 `env_file: .env` 帶入：
 
 | 變數 | 預設 | 說明 |
 | --- | --- | --- |
@@ -138,4 +138,4 @@ profile 只會填「還沒設定」的模式設定，所以 `.env` 裡明確寫�
 | `LOCAL_LLM_GPU_MEMORY_UTILIZATION` | `0.90` | vLLM 預先占用的 VRAM 比例。 |
 | `LOCAL_EMBED_MODEL` | `intfloat/multilingual-e5-small` | compose 的 TEI embedding 模型。 |
 | `HF_TOKEN` | 無 | 下載需要授權的 Hugging Face 模型時使用。 |
-| `VITE_API_BASE_URL` | 開發：同源（Vite proxy）；建置：`http://localhost:5001` | 前端呼叫後端 API 的位址（建置時讀取）。 |
+| `VITE_API_BASE_URL` | 開發：同源（Vite proxy）；建置：`http://localhost:5001` | 前端呼叫後端 API 的位址；開發與建置時都會讀取。寫在根目錄 `.env` 對 `npm run dev` 無效。 |

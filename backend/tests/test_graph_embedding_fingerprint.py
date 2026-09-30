@@ -113,3 +113,59 @@ def test_tokenizer_check_warns_on_unknown_tokens(monkeypatch):
     monkeypatch.setattr(model_health.httpx, "post", refused)
     assert model_health.check_embedding_tokenizer("http://127.0.0.1:8001/v1") is None
     assert model_health.check_embedding_tokenizer("https://api.example.com/v1") is None
+
+
+class RecordingEmbedder(HashEmbedder):
+    def __init__(self):
+        super().__init__()
+        self.seen = []
+
+    def embed_documents(self, texts):
+        self.seen.extend(texts)
+        return super().embed_documents(texts)
+
+
+def test_reembed_embeds_the_texts_ingestion_did(tmp_path):
+    from app.graph.store import FactNode, StructuredFact
+
+    embedder = RecordingEmbedder()
+    store = _seed(tmp_path, embedder)  # extracted relations
+    store.add_structured_facts("g1", [StructuredFact(
+        key="post:1",
+        source=FactNode(key="agent:1", name="Alice", label="Agent"),
+        relation="CREATED",
+        target=FactNode(key="post:1", name="post 1", label="Post", summary="凌雲飛行下月載客"),
+        fact="Alice posted about 凌雲飛行",
+    )])
+    ingested = set(embedder.seen) - {local_store.PROBE_TEXT}
+    embedder.seen.clear()
+    store.reembed("g1")
+    assert set(embedder.seen) - {local_store.PROBE_TEXT} == ingested
+    store.close()
+
+
+def test_writes_from_another_embedder_are_not_mixed_in(tmp_path, warnings):
+    _seed(tmp_path, HashEmbedder()).close()
+    store = _store(tmp_path, ShiftedEmbedder())
+    store.add_text_episodes("g1", [TextEpisode("凌雲飛行下月載客。")], durable=True)
+    assert any("not storing vectors" in w for w in warnings)
+    reopened = _store(tmp_path, HashEmbedder())
+    assert reopened.embedding_state("g1") == "matches"  # only A's vectors are stored
+    reopened.close()
+    store.close()
+
+
+def test_an_unavailable_embedder_is_unknown_and_search_uses_keywords(tmp_path, warnings):
+    _seed(tmp_path, HashEmbedder()).close()
+
+    class Down(HashEmbedder):
+        def embed_documents(self, texts):
+            raise httpx.ConnectError("refused")
+
+        def embed_query(self, text):
+            raise httpx.ConnectError("refused")
+
+    store = _store(tmp_path, Down())
+    assert store.embedding_state("g1") == "unknown"
+    assert store.search("g1", "凌雲飛行", scope="nodes", limit=5).nodes
+    store.close()

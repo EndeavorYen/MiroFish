@@ -616,7 +616,8 @@ class LocalGraphStore:
             logger.warning(message, *args)
 
     def embedding_state(self, graph_id: str) -> str:
-        """``matches``, ``other embedder``, ``no fingerprint`` or ``no vectors`` (#61)."""
+        """``matches``, ``other embedder``, ``no fingerprint``, ``no vectors`` or
+        ``unknown`` (the embedder did not answer) (#61)."""
 
         graph = self._graph(graph_id)
         with graph.use():
@@ -627,11 +628,14 @@ class LocalGraphStore:
             return "no fingerprint"
         try:
             current = self._probe()
-        except Exception as error:  # the query embedding will report it
+        except Exception as error:
             logger.warning("embedding fingerprint check failed: %s", error)
-            return "matches"
-        same = len(current) == len(stored) and _cosine(current, stored) >= PROBE_MATCH
-        return "matches" if same else "other embedder"
+            return "unknown"
+        return "matches" if self._same_probe(current, stored) else "other embedder"
+
+    @staticmethod
+    def _same_probe(current: list[float], stored: list[float]) -> bool:
+        return len(current) == len(stored) and _cosine(current, stored) >= PROBE_MATCH
 
     def vectors_usable(self, graph_id: str) -> bool:
         """Whether this store's embedder wrote the graph's vectors."""
@@ -652,6 +656,11 @@ class LocalGraphStore:
                 "until backend/scripts/reembed_graphs.py re-embeds it",
                 graph_id,
             )
+        elif state == "unknown":
+            # The query embedding would fail the same way: answer by keywords.
+            self._warn_once(
+                graph_id, "embedding service unavailable; searching graph %s by keywords only", graph_id
+            )
         return state in ("matches", "no fingerprint")
 
     def reembed(self, graph_id: str) -> dict[str, int]:
@@ -663,9 +672,19 @@ class LocalGraphStore:
         graph = self._graph(graph_id)
         with graph.use() as conn:
             nodes = conn.execute("SELECT rowid, name, labels, summary FROM nodes").fetchall()
-            edges = conn.execute("SELECT rowid, name, fact FROM edges").fetchall()
+            edges = conn.execute(
+                "SELECT e.rowid, e.name, e.fact, e.dedupe_key, s.name, t.name FROM edges e "
+                "LEFT JOIN nodes s ON s.uuid = e.source_uuid "
+                "LEFT JOIN nodes t ON t.uuid = e.target_uuid"
+            ).fetchall()
         node_texts = {row[0]: self._node_text(row[1], json.loads(row[2]), row[3]) for row in nodes}
-        edge_texts = {row[0]: f"{row[1]} {row[2]}" for row in edges}
+        # The texts ingestion embeds: structured facts (_upsert_fact_edge) use
+        # "relation fact", extracted relations (_upsert_edge) name both ends.
+        edge_texts = {
+            row[0]: f"{row[1]} {row[2]}" if row[3].startswith("fact:")
+            else f"{row[4] or ''} {row[1]} {row[5] or ''} {row[2]}"
+            for row in edges
+        }
         vectors = self._embed(node_texts, edge_texts)
         with graph.use() as conn, _transaction(conn):
             graph.drop_vectors()
@@ -690,6 +709,15 @@ class LocalGraphStore:
     def _store_vectors(
         self, graph: _Graph, vectors: dict[str, dict[int, tuple[str, list[float]]]]
     ) -> None:
+        stored = graph.stored_probe()
+        if stored is not None and vectors and not self._same_probe(self._probe(), stored):
+            # Keyword search still finds the new rows; reembed restores vectors.
+            logger.warning(
+                "not storing vectors in %s: another embedder wrote its vectors; "
+                "run backend/scripts/reembed_graphs.py",
+                os.path.basename(graph.path),
+            )
+            return
         for table, by_rowid in vectors.items():
             new = graph.current_dim() is None
             graph.ensure_vec_tables(len(next(iter(by_rowid.values()))[1]))

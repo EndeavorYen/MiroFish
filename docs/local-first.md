@@ -349,11 +349,13 @@ G5 結果（和上面兩張表是同一批 runs）：
 # vLLM（Docker／WSL；會占用大部分 GPU，先停掉 llama-server）
 docker run -d --name mf-vllm --gpus all -p 8030:8000 --ipc=host -v hf-cache:/root/.cache/huggingface \
   vllm/vllm-openai:latest --model SubSir/Qwen3.5-4B-AWQ --served-model-name qwen3.5-4b \
-  --max-model-len 8192 --gpu-memory-utilization 0.75 --max-num-seqs 64 --enable-prefix-caching --max-logprobs 20
+  --max-model-len 8192 --gpu-memory-utilization 0.75 --max-num-seqs 64 --enable-prefix-caching --max-logprobs 20 \n  --enable-auto-tool-choice --tool-call-parser qwen3_coder --default-chat-template-kwargs '{"enable_thinking": false}'
 # 所有情境的模擬放進同一個工作池
 LLM_BASE_URL=http://127.0.0.1:8030/v1 SYSTEM_ONE_BASE_URL=http://127.0.0.1:8030/v1 \
   uv run python scripts/ab_pool.py --dirs <情境目錄> ... --seeds 1 2 3 --jobs 16
 ```
+
+vLLM 一定要加上最後一行參數。LLM 路徑的 agent 靠 tool call 決定動作；沒有 `--enable-auto-tool-choice` 時，每個 LLM 決策都會回 400。Qwen3.5 預設會先寫出思考過程；沒有關掉的話，實測有 18% 的分層貼文以 "Thinking Process:" 開頭，作用和 llama-server 的 `--reasoning off` 相同。`docker-compose.yml` 已經補上這兩項。
 
 注意：vLLM 用的是 AWQ 量化，llama.cpp 用的是 GGUF Q4_K_M，兩者不是逐位元相同的模型。同一個比較裡的 A、B 兩組，必須在同一個伺服器上跑，不能混用兩種伺服器的數字。
 

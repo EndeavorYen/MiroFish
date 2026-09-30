@@ -6,10 +6,6 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 
-from ..utils.logger import get_logger
-
-logger = get_logger('mirofish.simulation_runner')
-
 
 IS_WINDOWS = sys.platform == 'win32'
 

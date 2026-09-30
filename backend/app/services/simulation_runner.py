@@ -733,17 +733,7 @@ class SimulationRunner:
                         error_message = str(monitor_error)
                     elif not manual_stop and exit_code != 0:
                         desired_status = RunnerStatus.FAILED
-                        main_log_path = os.path.join(sim_dir, "simulation.log")
-                        error_info = ""
-                        try:
-                            if os.path.exists(main_log_path):
-                                with open(main_log_path, 'r', encoding='utf-8') as f:
-                                    error_info = f.read()[-2000:]
-                        except Exception:
-                            pass
-                        error_message = (
-                            f"进程退出码: {exit_code}, 错误: {error_info}"
-                        )
+                        error_message = cls._failure_reason(sim_dir, exit_code)
 
                     cls._publish_terminal(simulation_id, state, desired_status, error_message)
                 cls._manual_stop_requests.discard(simulation_id)
@@ -768,6 +758,29 @@ class SimulationRunner:
                     pass
                 cls._stderr_files.pop(simulation_id, None)
     
+    @classmethod
+    def _failure_reason(cls, sim_dir: str, exit_code: int) -> str:
+        """Why a simulation process exited non-zero: its failure.json when it
+        wrote one (the model service stopped answering, #62), else the tail of
+        simulation.log."""
+
+        try:
+            with open(os.path.join(sim_dir, "failure.json"), encoding="utf-8") as f:
+                reason = json.load(f).get("reason")
+            if reason:
+                return str(reason)
+        except (OSError, ValueError):
+            pass
+        error_info = ""
+        try:
+            main_log_path = os.path.join(sim_dir, "simulation.log")
+            if os.path.exists(main_log_path):
+                with open(main_log_path, "r", encoding="utf-8") as f:
+                    error_info = f.read()[-2000:]
+        except OSError:
+            pass
+        return f"进程退出码: {exit_code}, 错误: {error_info}"
+
     @classmethod
     def _publish_terminal(
         cls,
@@ -1500,6 +1513,13 @@ class SimulationRunner:
             "twitter_simulation.db",  # Twitter 平台数据库
             "reddit_simulation.db",   # Reddit 平台数据库
             "env_status.json",        # 环境状态文件
+            # System One decisions, agent states and content metrics would
+            # otherwise pile up across reruns (#62).
+            "decisions.jsonl",
+            "agent_state.db",
+            "content_metrics_twitter.jsonl",
+            "content_metrics_reddit.jsonl",
+            "failure.json",
         ]
         
         # 要删除的目录列表（包含动作日志）

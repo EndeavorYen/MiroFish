@@ -10,6 +10,7 @@ from flask import request, jsonify, send_file
 
 from . import simulation_bp
 from ..config import Config
+from ..utils.model_health import check_model_service
 from ..services.zep_entity_reader import ZepEntityReader
 from ..services.oasis_profile_generator import OasisProfileGenerator
 from ..services.simulation_manager import SimulationManager, SimulationStatus
@@ -427,6 +428,9 @@ def prepare_simulation():
             }
         }
     """
+    problem = _model_service_problem()
+    if problem:
+        return jsonify({"success": False, "error": problem}), 503
     import threading
     import os
     from ..models.task import TaskManager, TaskStatus
@@ -1498,6 +1502,12 @@ def generate_profiles():
 
 # ============== 模拟运行控制接口 ==============
 
+def _model_service_problem() -> str | None:
+    """The configured local model service, checked before a run uses it (#62)."""
+
+    return check_model_service(Config.SYSTEM_ONE_BASE_URL or Config.LLM_BASE_URL)
+
+
 @simulation_bp.route('/start', methods=['POST'])
 def start_simulation():
     """
@@ -1594,6 +1604,13 @@ def start_simulation():
                 "success": False,
                 "error": t('api.simulationNotFound', id=simulation_id)
             }), 404
+
+        # A run on a dead model server used to finish on failed decisions and
+        # report "completed" (#62). Checked before a forced restart clears the
+        # previous run's logs.
+        problem = _model_service_problem()
+        if problem:
+            return jsonify({"success": False, "error": problem}), 503
 
         force_restarted = False
         

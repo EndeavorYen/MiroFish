@@ -332,7 +332,9 @@ def scan_conclusions(sim_dir: str, score_fn: ScoreFn, question: str | None = Non
     ordered = sorted(means.items(), key=lambda kv: (-kv[1], kv[0]))
     # System One runs log an intent per decision; LLM runs do not. The
     # structured prep records stance_raw; the LLM prep (hybrid) does not.
-    local = any(isinstance(row.get("intent"), dict) for row in _jsonl(os.path.join(sim_dir, "decisions.jsonl")))
+    # System One writes decisions.jsonl and the LLM path does not; a run whose
+    # decisions all failed has no intents but is still a local run (#62).
+    local = os.path.exists(os.path.join(sim_dir, "decisions.jsonl"))
     structured = any("stance_raw" in a for a in config.get("agent_configs", []))
     path = ("local" if structured else "hybrid") if local else "llm"
 
@@ -368,7 +370,7 @@ def scan_conclusions(sim_dir: str, score_fn: ScoreFn, question: str | None = Non
         "tendency": {"value": _round(statistics.mean(cache[p["text"]] for p in posts)), **evidence("tendency")},
         "trend": {
             "value": _round(trend) if trend is not None else None,
-            "rounds": [windows[0] * TREND_WINDOW, windows[-1] * TREND_WINDOW + TREND_WINDOW - 1],
+            "rounds": [windows[0] * TREND_WINDOW, max(p["round"] for p in posts)],
             **evidence("trend"),
         },
         "ranking": ranking,
@@ -433,8 +435,28 @@ def _final_emotions(curve: dict[str, dict[str, float]]) -> tuple[str, dict[str, 
     return last, curve[last]
 
 
+def decision_error_rate(sim_dir: str) -> float | None:
+    """Share of System One decisions that failed (``error`` rows); None when
+    the run logged no decisions (the LLM path)."""
+
+    rows = _jsonl(os.path.join(sim_dir, "decisions.jsonl"))
+    if not rows:
+        return None
+    return sum(1 for row in rows if row.get("error")) / len(rows)
+
+
+ERROR_RATE_WARNING = 0.2
+
+
 def render_markdown(metrics: dict[str, Any], summary: str = "") -> str:
     lines = ["# 模擬指標報告", ""]
+    rate = metrics.get("decision_error_rate")
+    if rate is not None and rate > ERROR_RATE_WARNING:
+        lines += [
+            f"> ⚠️ 這次模擬有 {rate:.0%} 的 agent 決策失敗（多半是模型服務沒有回應），"
+            "失敗的決策都成了「不動作」。以下數字不能代表模擬結果，請修復模型服務後重跑。",
+            "",
+        ]
     if summary:
         lines += ["## 摘要", "", summary.strip(), ""]
     lines += [
@@ -447,6 +469,13 @@ def render_markdown(metrics: dict[str, Any], summary: str = "") -> str:
     ]
     if metrics.get("scan"):
         lines += _scan_markdown(metrics["scan"])
+    elif metrics.get("scan_error"):
+        lines += [
+            "## 掃描結論與可信度",
+            "",
+            f"無法產生：{metrics['scan_error']}",
+            "",
+        ]
     lines += [
         "## 動作分布",
         "",
@@ -551,17 +580,22 @@ def write_metrics_report(
     """Compute metrics, write the two files, return (metrics, markdown).
 
     With ``score_fn`` the posts are scored for the scan conclusions; when that
-    fails (no model server) they are left out, like a failed summary."""
+    fails (no model server) the section states the reason."""
 
     from ..utils.llm_usage import usage_stage
 
     metrics = compute_metrics(sim_dir)
+    metrics["decision_error_rate"] = decision_error_rate(sim_dir)
     if score_fn is not None:
         try:
             metrics["scan"] = scan_conclusions(sim_dir, score_fn)
-        except Exception:  # noqa: BLE001 - the metrics report stands alone
+            if metrics["scan"] is None:
+                metrics["scan_error"] = "這次模擬沒有可評分的貼文"
+        except Exception as error:  # noqa: BLE001 - the metrics report stands alone
             logger.warning("scan conclusions failed", exc_info=True)
             metrics["scan"] = None
+            # Say why instead of leaving the section out (#62).
+            metrics["scan_error"] = f"{type(error).__name__}: {error}"
     os.makedirs(report_dir, exist_ok=True)
     with open(os.path.join(report_dir, "report_metrics.json"), "w", encoding="utf-8") as f:
         json.dump(metrics, f, ensure_ascii=False, indent=2, sort_keys=True)

@@ -36,6 +36,7 @@ profile 只會填「還沒設定」的模式設定，所以 `.env` 裡明確寫�
 | `SYSTEM_ONE_API_KEY` | 無 | System One 端點的 API key。 |
 | `SYSTEM_ONE_TOP_K` | `20` | 讀出時取的 logprobs 數量。 |
 | `SYSTEM_ONE_PROMPT_FORMAT` | `chatml` | 讀出提示的格式：`chatml` 或 `plain`。 |
+| `SYSTEM_ONE_CACHE_PROMPT` | `1` | 讀出請求是否重用模型服務的前綴快取。設 `0` 並搭配 `-np 1` 的模型服務，固定 seed 的雙平台模擬可逐位元重播（#82）；每個請求會完整 prefill。 |
 | `SYSTEM_ONE_ENSEMBLE` | 不設 | 讀出集成（#54）：`all` 或以逗號分隔的問題鍵；需搭配 `MODEL_POOL`。 |
 | `MODEL_POOL` | 不設 | 多模型池（#48），JSON；不設就只用 `LLM_*` 一個模型。格式見 `docs/local-first.md`。 |
 

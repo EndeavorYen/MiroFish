@@ -10,6 +10,7 @@ start-up, tasks that were going lost their thread and are marked failed.
 import json
 import os
 import sqlite3
+import time
 import uuid
 import threading
 from datetime import datetime, timedelta
@@ -78,6 +79,10 @@ CREATE INDEX IF NOT EXISTS tasks_created ON tasks(created_at);
 """
 _COLUMNS = "task_id, task_type, status, created_at, updated_at, progress, message, result, error, metadata, progress_detail"
 INTERRUPTED_ERROR = "backend restarted"
+BUSY_TIMEOUT_MS = 2000  # a locked database must not hold every task update for long
+PAUSE_AFTER_ERROR_S = 30.0
+CLEANUP_EVERY_S = 3600.0
+GOING = (TaskStatus.PENDING, TaskStatus.PROCESSING)
 
 
 def _dumps(value) -> str:
@@ -93,7 +98,7 @@ class TaskStore:
         self._conn = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA synchronous=NORMAL")  # progress is written often
-        self._conn.execute("PRAGMA busy_timeout=30000")
+        self._conn.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
         self._conn.executescript(_SCHEMA)
 
     def save(self, task: "Task") -> None:
@@ -121,11 +126,13 @@ class TaskStore:
     def all(self) -> list:
         return [self._task(r) for r in self._conn.execute(f"SELECT {_COLUMNS} FROM tasks")]
 
-    def mark_interrupted(self, message: str) -> list:
+    def mark_interrupted(self, message: str, keep: set) -> list:
+        """Going tasks that are not ``keep`` (this process's own) lost their thread."""
+
         now = datetime.now().isoformat()
         ids = [r[0] for r in self._conn.execute(
             "SELECT task_id FROM tasks WHERE status IN (?, ?)",
-            (TaskStatus.PENDING.value, TaskStatus.PROCESSING.value))]
+            (TaskStatus.PENDING.value, TaskStatus.PROCESSING.value)) if r[0] not in keep]
         self._conn.executemany(
             "UPDATE tasks SET status = ?, message = ?, error = ?, updated_at = ? WHERE task_id = ?",
             [(TaskStatus.FAILED.value, message, INTERRUPTED_ERROR, now, i) for i in ids])
@@ -133,7 +140,7 @@ class TaskStore:
 
     def delete_finished_before(self, cutoff: datetime) -> int:
         return self._conn.execute(
-            "DELETE FROM tasks WHERE created_at < ? AND status IN (?, ?)",
+            "DELETE FROM tasks WHERE updated_at < ? AND status IN (?, ?)",
             (cutoff.isoformat(), TaskStatus.COMPLETED.value, TaskStatus.FAILED.value)).rowcount
 
     def close(self) -> None:
@@ -164,6 +171,8 @@ class TaskManager:
                     cls._instance._tasks: Dict[str, Task] = {}
                     cls._instance._task_lock = threading.Lock()
                     cls._instance._db = None
+                    cls._instance._paused_until = 0.0
+                    cls._instance._last_cleanup = time.monotonic()
         return cls._instance
 
     def _store(self) -> TaskStore:
@@ -173,18 +182,44 @@ class TaskManager:
         if self._db is None or self._db.path != path:
             if self._db is not None:
                 self._db.close()
-                self._tasks.clear()  # the cache belonged to the other database
             self._db = TaskStore(path)
         return self._db
 
     def _save(self, task: Task) -> None:
-        """Under ``_task_lock``. A database error is logged; the task goes on in memory."""
+        """Under ``_task_lock``. Saving never fails a task: on any error it is
+        logged, the task goes on in memory, and saving pauses for a while so a
+        locked database does not slow every progress update."""
 
+        if time.monotonic() < self._paused_until:
+            return
         try:
             self._store().save(task)
-        except sqlite3.Error as error:
+        except Exception as error:
+            self._paused_until = time.monotonic() + PAUSE_AFTER_ERROR_S
             from ..utils.logger import get_logger
-            get_logger('mirofish.task').error(f"could not save task {task.task_id}: {error}")
+            get_logger('mirofish.task').error(
+                f"could not save task {task.task_id} (saving paused {int(PAUSE_AFTER_ERROR_S)} s): {error}")
+
+    def _stored(self, task_id: Optional[str] = None) -> list:
+        """Under ``_task_lock``: tasks from the database that are not in memory.
+        A going task there is not this process's own (those are in memory),
+        so its thread is gone, even if start-up recovery could not run."""
+
+        try:
+            store = self._store()
+            if task_id is None:
+                tasks = store.all()
+            else:
+                task = store.get(task_id)
+                tasks = [task] if task else []
+        except Exception:
+            return []
+        tasks = [task for task in tasks if task.task_id not in self._tasks]
+        for task in tasks:
+            if task.status in GOING:
+                task.status, task.error = TaskStatus.FAILED, INTERRUPTED_ERROR
+                task.message = t('progress.taskFailed')
+        return tasks
     
     def create_task(self, task_type: str, metadata: Optional[Dict] = None) -> str:
         """
@@ -210,8 +245,10 @@ class TaskManager:
         )
         
         with self._task_lock:
-            self._save(task)  # first: opening another database clears the cache
             self._tasks[task_id] = task
+            self._save(task)
+            if time.monotonic() - self._last_cleanup > CLEANUP_EVERY_S:
+                self._cleanup(datetime.now() - timedelta(hours=24))
 
         return task_id
     
@@ -220,12 +257,8 @@ class TaskManager:
         with self._task_lock:
             task = self._tasks.get(task_id)
             if task is None:
-                try:
-                    task = self._store().get(task_id)
-                except sqlite3.Error:
-                    task = None
-                if task is not None:
-                    self._tasks[task_id] = task
+                stored = self._stored(task_id)
+                task = stored[0] if stored else None
             return task
     
     def update_task(
@@ -290,40 +323,44 @@ class TaskManager:
     def list_tasks(self, task_type: Optional[str] = None) -> list:
         """列出任务"""
         with self._task_lock:
-            try:
-                stored = {task.task_id: task for task in self._store().all()}
-            except sqlite3.Error:
-                stored = {}
-            tasks = list({**stored, **self._tasks}.values())
+            tasks = self._stored() + list(self._tasks.values())
             if task_type:
                 tasks = [t for t in tasks if t.task_type == task_type]
             return [t.to_dict() for t in sorted(tasks, key=lambda x: x.created_at, reverse=True)]
     
     def cleanup_old_tasks(self, max_age_hours: int = 24) -> int:
-        """清理旧任务"""
-        cutoff = datetime.now() - timedelta(hours=max_age_hours)
-
+        """清理旧任务（最后更新早于 max_age_hours 的已结束任务）"""
         with self._task_lock:
-            old_ids = [
-                tid for tid, task in self._tasks.items()
-                if task.created_at < cutoff and task.status in [TaskStatus.COMPLETED, TaskStatus.FAILED]
-            ]
-            for tid in old_ids:
-                del self._tasks[tid]
+            return self._cleanup(datetime.now() - timedelta(hours=max_age_hours))
+
+    def _cleanup(self, cutoff: datetime) -> int:
+        """Under ``_task_lock``. Runs at start-up and then about once an hour."""
+
+        self._last_cleanup = time.monotonic()
+        old_ids = [
+            tid for tid, task in self._tasks.items()
+            if task.updated_at < cutoff and task.status in [TaskStatus.COMPLETED, TaskStatus.FAILED]
+        ]
+        for tid in old_ids:
+            del self._tasks[tid]
+        try:
             return self._store().delete_finished_before(cutoff)
+        except Exception:
+            return 0
 
     def recover_at_startup(self, logger: Any) -> None:
         """Tasks that were going when the backend stopped lost their thread:
-        mark them failed, and drop finished tasks older than a day."""
+        mark them failed, and drop finished tasks older than a day. This
+        process's own tasks (in memory, e.g. a second ``create_app``) are left
+        alone."""
 
         if not os.path.exists(_db_path()):
             return  # never used: do not create the database at start-up
         try:
             with self._task_lock:
-                ids = self._store().mark_interrupted(t('progress.taskFailed'))
-                self._tasks.clear()
-            removed = self.cleanup_old_tasks()
-        except sqlite3.Error as error:  # a locked or broken database must not stop the backend
+                ids = self._store().mark_interrupted(t('progress.taskFailed'), keep=set(self._tasks))
+                removed = self._cleanup(datetime.now() - timedelta(hours=24))
+        except Exception as error:  # a locked or broken database must not stop the backend
             logger.error(f"could not recover tasks from {_db_path()}: {error}")
             return
         if ids:

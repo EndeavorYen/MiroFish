@@ -14,6 +14,7 @@ def _restart(manager: TaskManager) -> None:
 
     with manager._task_lock:
         manager._tasks.clear()
+        manager._paused_until = 0.0
         if manager._db is not None:
             manager._db.close()
         manager._db = None
@@ -49,10 +50,12 @@ def test_tasks_going_at_a_restart_are_failed_and_old_ones_dropped(manager):
     manager.complete_task(done, {})
     old = manager.create_task("simulation_prepare")
     manager.fail_task(old, "boom")
+    long_going = manager.create_task("graph_build")  # started long ago, still going at the restart
     with manager._task_lock:  # a day and more ago
-        task = manager._tasks[old]
-        task.created_at = datetime.now() - timedelta(hours=25)
-        manager._save(task)
+        for task_id in (old, long_going):
+            task = manager._tasks[task_id]
+            task.created_at = task.updated_at = datetime.now() - timedelta(hours=25)
+            manager._save(task)
 
     _restart(manager)
     manager.recover_at_startup(logging.getLogger("test"))
@@ -62,6 +65,7 @@ def test_tasks_going_at_a_restart_are_failed_and_old_ones_dropped(manager):
     assert manager.get_task(going).progress == 30  # where it stopped
     assert manager.get_task(done).status == TaskStatus.COMPLETED
     assert manager.get_task(old) is None
+    assert manager.get_task(long_going).error == INTERRUPTED_ERROR  # reported, not dropped in the same pass
 
 
 def test_after_a_restart_the_api_reports_the_task_failed_not_missing(manager):
@@ -86,12 +90,40 @@ def test_start_up_does_not_create_the_database(manager, tmp_path, monkeypatch):
     assert not path.exists()
 
 
-def test_a_database_error_does_not_stop_the_task(manager, monkeypatch, caplog):
+@pytest.mark.parametrize("error", [sqlite3.OperationalError("database is locked"),
+                                   TypeError("keys must be str"), UnicodeEncodeError("utf-8", "", 0, 1, "surrogate")])
+def test_a_save_error_does_not_stop_the_task_and_pauses_saving(manager, monkeypatch, error):
     task_id = manager.create_task("graph_build")
+    calls = []
 
-    def locked(task):
-        raise sqlite3.OperationalError("database is locked")
+    def broken(task):
+        calls.append(task.progress)
+        raise error
 
-    monkeypatch.setattr(manager._store(), "save", locked)
+    monkeypatch.setattr(manager._store(), "save", broken)
     manager.update_task(task_id, status=TaskStatus.PROCESSING, progress=70)
-    assert manager.get_task(task_id).progress == 70  # still tracked in memory
+    manager.update_task(task_id, progress=80)
+    manager.create_task("report_generate")
+    assert manager.get_task(task_id).progress == 80  # still tracked in memory
+    assert calls == [70]  # one failed save, then a pause instead of one stall per update
+
+
+def test_a_going_task_found_only_in_the_database_is_reported_interrupted(manager):
+    """Even if start-up recovery could not run: a going task that this
+    process does not hold in memory has no thread."""
+
+    task_id = manager.create_task("graph_build")
+    manager.update_task(task_id, status=TaskStatus.PROCESSING, progress=40)
+    _restart(manager)  # no recover_at_startup
+    task = manager.get_task(task_id)
+    assert (task.status, task.error, task.progress) == (TaskStatus.FAILED, INTERRUPTED_ERROR, 40)
+    assert manager.list_tasks()[0]["status"] == "failed"
+
+
+def test_start_up_recovery_leaves_this_process_own_tasks_alone(manager):
+    task_id = manager.create_task("graph_build")
+    manager.update_task(task_id, status=TaskStatus.PROCESSING, progress=10)
+    manager.recover_at_startup(logging.getLogger("test"))  # e.g. a second create_app
+    manager.update_task(task_id, progress=60)
+    task = manager.get_task(task_id)
+    assert (task.status, task.progress) == (TaskStatus.PROCESSING, 60)

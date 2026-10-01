@@ -94,6 +94,23 @@ def create_simulation():
         }), 500
 
 
+@simulation_bp.route('/copy', methods=['POST'])
+def copy_simulation():
+    """A ready copy of a prepared simulation, for another seed (#63).
+
+    JSON: {"simulation_id": "sim_xxxx"} -> {"simulation_id": <the copy>}
+    """
+    data = request.get_json(silent=True) or {}
+    source_id = data.get('simulation_id')
+    if not isinstance(source_id, str) or not source_id:
+        return jsonify({"success": False, "error": t('api.requireSimulationId')}), 400
+    try:
+        state = SimulationManager().copy_simulation(source_id)
+    except ValueError as error:
+        return jsonify({"success": False, "error": str(error)}), 404 if "not found" in str(error) else 409
+    return jsonify({"success": True, "data": state.to_dict()})
+
+
 @simulation_bp.route('/prepare', methods=['POST'])
 def prepare_simulation():
     """

@@ -7,6 +7,8 @@ GET  /api/runs/<id>/events     Server-Sent Events: stage_start, progress,
                                stage_done, run_done, run_failed, interrupted
 POST /api/runs/<id>/resume     continue a failed or interrupted run from the
                                first stage it did not finish
+POST /api/runs/<id>/confirm    the roles are confirmed: continue a run paused
+                               with ``confirm_roles``
 """
 
 from __future__ import annotations
@@ -21,13 +23,14 @@ from . import runs_bp
 from ..config import Config
 from ..runs.orchestrator import RunBusy
 from ..runs.service import get_runs
-from ..runs.store import FAILED, INTERRUPTED, TERMINAL
+from ..runs.store import AWAITING, FAILED, INTERRUPTED, TERMINAL
 from ..utils.logger import get_logger
 
 logger = get_logger("mirofish.api.runs")
 
 HEARTBEAT_S = 15.0
 ALLOWED_SUFFIXES = (".txt", ".md", ".markdown", ".pdf")
+DEFAULT_SEEDS, MAX_SEEDS = 3, 8
 
 
 def _json(payload, status=200):
@@ -56,8 +59,10 @@ def _run_dir(run_id: str) -> str:
 @runs_bp.route("", methods=["POST"])
 def create_run():
     """multipart: ``file`` or ``document_text``; ``simulation_requirement``
-    (required); optional ``max_rounds`` (default 24), ``seed``,
-    ``project_name``. The mode is the backend's ``MIROFISH_PROFILE``."""
+    (required); optional ``max_rounds`` (default 24), ``seeds`` (how many,
+    default 3), ``seed`` (the first one, default 1), ``confirm_roles``
+    (pause after the graph), ``project_name``. The mode is the backend's
+    ``MIROFISH_PROFILE``."""
 
     form = request.form if request.files or request.form else (request.get_json(silent=True) or {})
     requirement = form.get("simulation_requirement") or ""
@@ -75,16 +80,26 @@ def create_run():
     try:
         max_rounds = _integer(form.get("max_rounds") or 24)
         seed = None if form.get("seed") in (None, "") else _integer(form.get("seed"))
+        seeds = DEFAULT_SEEDS if form.get("seeds") in (None, "") else _integer(form.get("seeds"))
     except (TypeError, ValueError):
-        return _error("max_rounds and seed must be integers", 400)
+        return _error("max_rounds, seeds and seed must be integers", 400)
     if max_rounds <= 0:
         return _error("max_rounds must be positive", 400)
+    if not 1 <= seeds <= MAX_SEEDS:
+        return _error(f"seeds must be between 1 and {MAX_SEEDS}", 400)
+    confirm_roles = form.get("confirm_roles")
+    if isinstance(confirm_roles, str):
+        confirm_roles = confirm_roles.lower() in ("1", "true", "yes")
+    if not isinstance(confirm_roles, (bool, type(None))):
+        return _error("confirm_roles must be a boolean", 400)
 
     runs = get_runs(current_app._get_current_object())
     params = {
         "simulation_requirement": requirement,
         "max_rounds": max_rounds,
         "seed": seed,
+        "seeds": seeds,
+        "confirm_roles": bool(confirm_roles),
         "project_name": form.get("project_name") or "",
         "profile": os.environ.get("MIROFISH_PROFILE", ""),
         "locale": request.headers.get("Accept-Language", ""),
@@ -134,6 +149,20 @@ def resume_run(run_id: str):
         return _error(f"run not found: {run_id}", 404)
     try:
         runs.orchestrator.start(run_id, from_statuses=(FAILED, INTERRUPTED))
+    except RunBusy as error:
+        return _error(str(error), 409)
+    return _json({"success": True, "data": {"run_id": run_id}}, 202)
+
+
+@runs_bp.route("/<run_id>/confirm", methods=["POST"])
+def confirm_roles(run_id: str):
+    """Edit the roles first with GET/POST /api/graph/<graph_id>/roles (#64)."""
+
+    runs = get_runs(current_app._get_current_object())
+    if runs.store.get(run_id) is None:
+        return _error(f"run not found: {run_id}", 404)
+    try:
+        runs.orchestrator.start(run_id, from_statuses=(AWAITING,), artifacts={"roles_confirmed": True})
     except RunBusy as error:
         return _error(str(error), 409)
     return _json({"success": True, "data": {"run_id": run_id}}, 202)

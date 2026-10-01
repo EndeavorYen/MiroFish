@@ -242,6 +242,44 @@ class SimulationManager:
         
         return state
     
+    PREPARED_FILES = ("simulation_config.json", "reddit_profiles.json", "twitter_profiles.csv")
+
+    def copy_simulation(self, source_id: str) -> SimulationState:
+        """A ready copy of a prepared simulation (same profiles and config),
+        so several seeds share one preparation (#63)."""
+
+        import dataclasses
+        import uuid
+
+        import re
+
+        # Checked before loading: loading an unknown id creates its folder.
+        known = re.fullmatch(r"[A-Za-z0-9_-]+", source_id or "") and os.path.isdir(
+            os.path.join(self.SIMULATION_DATA_DIR, source_id))
+        source = self._load_simulation_state(source_id) if known else None
+        if source is None:
+            raise ValueError(f"simulation not found: {source_id}")
+        if not (source.profiles_generated and source.config_generated):
+            raise ValueError(f"simulation {source_id} is not prepared (status: {source.status.value})")
+        copy_id = f"sim_{uuid.uuid4().hex[:12]}"
+        source_dir, copy_dir = self._get_simulation_dir(source_id), self._get_simulation_dir(copy_id)
+        for name in self.PREPARED_FILES:
+            shutil.copyfile(os.path.join(source_dir, name), os.path.join(copy_dir, name))
+        config_path = os.path.join(copy_dir, "simulation_config.json")
+        with open(config_path, encoding="utf-8") as f:
+            config = json.load(f)
+        config["simulation_id"] = copy_id
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump(config, f, ensure_ascii=False, indent=2)
+        state = dataclasses.replace(
+            source, simulation_id=copy_id, status=SimulationStatus.READY, current_round=0,
+            twitter_status="not_started", reddit_status="not_started", error=None,
+            entity_types=list(source.entity_types),
+            created_at=datetime.now().isoformat())
+        self._save_simulation_state(state)
+        logger.info("copied simulation %s -> %s", source_id, copy_id)
+        return state
+
     def prepare_simulation(
         self,
         simulation_id: str,

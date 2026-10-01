@@ -134,6 +134,7 @@ class SystemOnePolicy:
         stance_prior_weight: float = 0.5,
         stance_dither: bool = False,
         health: Any = None,
+        opinion: Any = None,
     ) -> None:
         if not 0.0 <= stance_prior_weight <= 1.0:
             raise ValueError(f"stance_prior_weight must be within 0..1, got {stance_prior_weight}")
@@ -159,8 +160,18 @@ class SystemOnePolicy:
         self.stance_dither = stance_dither
         # oasis_bridge.DecisionHealth, shared by both platforms of a run (#62).
         self.health = health
+        # opinion.OpinionState (#59): the stance moves with what the role
+        # reads; None keeps the prep's stance_prior for the whole run.
+        self.opinion = opinion
         self._memory: dict[tuple[str, int], dict[str, float]] = {}
         self._memory_lock = threading.Lock()
+
+    def _stance(self, agent_id: int) -> float | None:
+        """The role's stance now: its opinion state, else the prep's."""
+
+        if self.opinion is not None:
+            return self.opinion.stance(agent_id)
+        return self.stance_prior.get(agent_id)
 
     # ----------------------------------------------------------- observation
 
@@ -293,7 +304,7 @@ class SystemOnePolicy:
             }
         response = self.client.ask(SystemOneRequest(state=intent_state, questions=questions))
         readout_stance = score_to_unit(response.answers["stance"].score, len(STANCE_LEVELS))
-        prior = self.stance_prior.get(obs.agent_id)
+        prior = self._stance(obs.agent_id)
         w = self.stance_prior_weight if prior is not None else 0.0
         stance = w * (prior or 0.0) + (1 - w) * readout_stance
         continuous = stance
@@ -399,9 +410,14 @@ class SystemOnePolicy:
         state = f"{base}\n目前情緒：{describe(emotion)}"
         if done:
             state += f"\n這一輪已經做了：{'、'.join(done)}（接下來還會做什麼？）"
+        # Read this round's feed once, before anything uses the stance (#59).
+        opinion_change = (
+            self.opinion.update(obs.agent_id, obs.round_num, obs.feed)
+            if self.opinion is not None and index == 0 else None
+        )
         steps = ask_tree(
             self.client, state, self.taxonomy.tree, rng,
-            stance=self.stance_prior.get(obs.agent_id),
+            stance=self._stance(obs.agent_id),
         )
         path = [step.choice for step in steps]
         leaf = self.taxonomy.leaf(path)
@@ -425,6 +441,7 @@ class SystemOnePolicy:
             "state_hash": hashlib.sha256(state.encode("utf-8")).hexdigest(),
             "emotion": {k: round(v, 6) for k, v in emotion.items()},
             "emotion_readout": {k: round(v, 6) for k, v in readout.items()},
+            **({"opinion": opinion_change} if opinion_change else {}),
         }
 
         action, args = leaf.action, {}

@@ -68,6 +68,7 @@ def build_policy(
     if not 0.0 <= weight <= 1.0:
         raise ValueError(f"SIM_STANCE_PRIOR_WEIGHT must be within 0..1, got {weight}")
     taxonomy = with_priors(load_taxonomy(platform), load_action_priors().get(platform))
+    priors = stance_priors(config)
     return SystemOnePolicy(
         client,
         taxonomy,
@@ -80,11 +81,37 @@ def build_policy(
         decision_log=_shared(DecisionLog, os.path.join(simulation_dir, "decisions.jsonl")),
         extra_action_rate=load_extra_action_rates().get(platform, 0.0),
         activation_counts=load_activation_counts().get(platform),
-        stance_prior=stance_priors(config),
+        stance_prior=priors,
         stance_prior_weight=weight,
         health=_shared(_new_health, os.path.join(simulation_dir, "decision_health")),
         stance_dither=os.environ.get("CONTENT_STANCE_DITHER", "0") == "1",
+        opinion=opinion_state(config, priors),
     )
+
+
+def opinion_state(config: dict[str, Any], priors: dict[int, float], score=None):
+    """Opinion dynamics (#59) when SIM_OPINION_DYNAMICS is on, else None.
+    Posts are scored on the question the report and the comparison use."""
+
+    from .opinion import OpinionState, load_params
+
+    params = load_params()
+    if params is None:
+        return None
+    if score is None:
+        from .tiers import detect_content_lang, event_phrase, stance_check_question, system_one_stance_score
+
+        requirement = str(config.get("base_requirement") or config.get("simulation_requirement") or "")
+        question = stance_check_question(event_phrase(requirement), detect_content_lang(requirement))
+
+        def score(text: str) -> float:
+            return system_one_stance_score(text, question=question)
+
+    types = {
+        a["agent_id"]: str(a.get("entity_type") or "")
+        for a in config.get("agent_configs") or [] if isinstance(a, dict) and isinstance(a.get("agent_id"), int)
+    }
+    return OpinionState(priors, params, score, entity_types=types)
 
 
 def stance_priors(config: dict[str, Any]) -> dict[int, float]:

@@ -337,7 +337,8 @@ def scan_conclusions(sim_dir: str, score_fn: ScoreFn, question: str | None = Non
     # System One writes decisions.jsonl and the LLM path does not; a run whose
     # decisions all failed has no intents but is still a local run (#62).
     local = os.path.exists(os.path.join(sim_dir, "decisions.jsonl"))
-    structured = any("stance_raw" in a for a in config.get("agent_configs", []))
+    # The LLM prep writes the key too, as null: only a value means structured.
+    structured = any(a.get("stance_raw") is not None for a in config.get("agent_configs", []))
     path = ("local" if structured else "hybrid") if local else "llm"
 
     def evidence(key: str) -> dict[str, str]:

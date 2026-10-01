@@ -9,6 +9,7 @@ import threading
 from flask import request, jsonify, send_file
 
 from . import report_bp
+from .. import run_mode
 from ..config import Config
 from ..services.report_agent import ReportAgent, ReportManager, ReportStatus
 from ..services.simulation_manager import SimulationManager
@@ -316,7 +317,7 @@ def generate_report():
                     unregister_graph_reader(graph_id, report_id)
 
             try:
-                thread = threading.Thread(target=run_generate, daemon=True)
+                thread = threading.Thread(target=run_mode.bind(run_generate), daemon=True)  # keeps the run's mode (#66)
                 thread.start()
             except Exception:
                 unregister_graph_reader(graph_id, report_id)

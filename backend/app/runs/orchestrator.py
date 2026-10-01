@@ -14,6 +14,7 @@ import traceback
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+from .. import run_mode
 from ..utils.logger import get_logger
 from .store import AWAITING, COMPLETED, FAILED, RUNNING, RunStore
 
@@ -95,7 +96,10 @@ class RunOrchestrator:
         """All remaining stages, in order; stops at the first failure."""
 
         try:
-            self._run(run_id)
+            record = self.store.get(run_id) or {}
+            # The run's own mode (#66): its preparation, decisions and report.
+            with run_mode.use((record.get("params") or {}).get("profile")):
+                self._run(run_id)
         except Exception as error:  # e.g. the database: never leave the run "running"
             logger.error("run %s crashed: %s", run_id, traceback.format_exc())
             try:

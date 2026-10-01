@@ -14,6 +14,7 @@ from typing import Dict, Any, Optional
 from datetime import datetime
 from queue import Queue
 
+from .. import run_mode
 from ..utils.logger import get_logger
 from ..utils.locale import get_locale, set_locale
 from ..utils.zep import (
@@ -385,7 +386,7 @@ class SimulationRunner(MonitorMixin, ActionQueryMixin, CleanupMixin, InterviewMi
 
             # 设置子进程环境变量，确保 Windows 上使用 UTF-8 编码
             # 这可以修复第三方库（如 OASIS）读取文件时未指定编码的问题
-            env = os.environ.copy()
+            env = run_mode.subprocess_env(os.environ.copy())  # the run's mode (#66)
             env['PYTHONUTF8'] = '1'  # Python 3.7+ 支持，让所有 open() 默认使用 UTF-8
             env['PYTHONIOENCODING'] = 'utf-8'  # 确保 stdout/stderr 使用 UTF-8
             

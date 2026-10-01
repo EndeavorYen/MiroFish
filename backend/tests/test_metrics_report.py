@@ -183,14 +183,14 @@ def test_missing_emotion_table_and_bad_stance_are_ignored(sim_dir):
 def _scan_dir(tmp_path, stances, texts_by_round, structured=True):
     """agent_id -> configured stance 0..1; texts_by_round: [(round, agent_id, text)].
 
-    ``structured`` writes the stance_raw field the structured prep records;
-    the LLM prep (the hybrid profile) has none."""
+    ``structured`` writes the stance_raw the structured prep records; the LLM
+    prep (the hybrid profile) writes the key as null, as the real config does."""
 
     config = {
         "simulation_requirement": "模擬空中計程車試點後，各方的反應。",
         "agent_configs": [
             {"agent_id": a, "entity_name": f"角色{a}", "entity_type": "Person", "sentiment_bias": s * 2 - 1,
-             **({"stance_raw": s} if structured else {})}
+             "stance_raw": s if structured else None}
             for a, s in stances.items()
         ],
     }

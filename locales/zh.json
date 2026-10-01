@@ -108,7 +108,9 @@
     "envRunning": "环境正在运行，可以接收Interview命令",
     "envNotRunningShort": "环境未运行或已关闭",
     "requireGraphIdAndQuery": "请提供 graph_id 和 query",
-    "initReportAgent": "初始化Report Agent..."
+    "initReportAgent": "初始化Report Agent...",
+    "runModeContext": "{mode} 的每个 slot 需要 {need} token 的 context，当前模型服务只有 {have}。请用 -c 65536 -np 8 重新启动 llama-server 再试。",
+    "runModeNotLocal": "这个后端没有使用本机 profile（MIROFISH_PROFILE），不能指定本机模式：模型与图谱服务仍是后端原本的设置。"
   },
   "progress": {
     "initGraphService": "初始化图谱构建服务...",
@@ -693,7 +695,9 @@
       "confirmRoles": "图谱建好后先让我确认角色",
       "seedsHint": "多个 seed 共用同一次准备、并行模拟，结果页会显示 seed 之间是否一致。seed 越多越可靠，也越久。",
       "start": "开始",
-      "starting": "启动中…"
+      "starting": "启动中…",
+      "mode": "模式",
+      "modeDefault": "后端默认"
     },
     "status": {
       "queued": "排队中",
@@ -757,7 +761,11 @@
       "postStats": "转发／引用 {shares} · 赞 {likes}",
       "fullReport": "完整报告",
       "noMetrics": "这份报告没有可信度指标（报告模式不是 metrics）；下面是其余结果与完整报告。",
-      "noScanReason": "没有可评分的帖子"
+      "noScanReason": "没有可评分的帖子",
+      "confirmTitle": "用其他模式确认",
+      "confirmHint": "用同一份文档与设置，换一种较重的模式再跑一次，并和这次的结论并排比较。local-llm 是评估时的参考路径，最慢。",
+      "confirmWithMode": "用 {mode} 确认",
+      "mostOpposedFirst": "最反对的角色"
     },
     "history": {
       "title": "过去的模拟",
@@ -782,6 +790,22 @@
       "twitter": "Twitter",
       "reddit": "Reddit"
     },
-    "refreshFailed": "暂时拿不到最新状态（{reason}），稍后会再试。"
+    "refreshFailed": "暂时拿不到最新状态（{reason}），稍后会再试。",
+    "mode": {
+      "local": "本机（local）",
+      "local-hybrid": "混合（local-hybrid）",
+      "local-llm": "LLM（local-llm）",
+      "unknown": "未指定模式"
+    },
+    "compare": {
+      "title": "这次（{mode}）和原本的结论比较",
+      "agree": "一致",
+      "differ": "不一致",
+      "na": "无法比较",
+      "note": "整体倾向差距在 0.1 以内算一致；走向看正负号；角色看最反对的第一名。",
+      "unavailable": "无法比较：{reason}",
+      "acrossSeeds": "跨 seed 的平均值比较。",
+      "firstSeed": "比较第一个 seed 的结论（有一边只有一个 seed）。"
+    }
   }
 }

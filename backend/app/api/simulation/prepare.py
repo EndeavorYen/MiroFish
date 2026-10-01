@@ -6,6 +6,7 @@ from flask import request, jsonify
 from .. import simulation_bp
 from ...services.entity_reader import EntityReader
 from ...services.simulation_manager import SimulationManager, SimulationStatus
+from ... import run_mode
 from ...utils.logger import get_logger
 from ...utils.locale import t, get_locale, set_locale
 from ...models.project import ProjectManager
@@ -372,7 +373,7 @@ def prepare_simulation():
                     manager._save_simulation_state(state)
         
         # 启动后台线程
-        thread = threading.Thread(target=run_prepare, daemon=True)
+        thread = threading.Thread(target=run_mode.bind(run_prepare), daemon=True)  # keeps the run's mode (#66)
         thread.start()
         
         return jsonify({

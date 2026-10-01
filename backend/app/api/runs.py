@@ -9,28 +9,34 @@ POST /api/runs/<id>/resume     continue a failed or interrupted run from the
                                first stage it did not finish
 POST /api/runs/<id>/confirm    the roles are confirmed: continue a run paused
                                with ``confirm_roles``
+POST /api/runs/<id>/rerun      the same input in another mode, to confirm a run
 """
 
 from __future__ import annotations
 
 import json
 import os
+import shutil
 import time
 
 from flask import Response, current_app, request, stream_with_context
 
 from . import runs_bp
+from .. import run_mode
 from ..config import Config
 from ..runs.orchestrator import RunBusy
 from ..runs.service import get_runs
 from ..runs.store import AWAITING, FAILED, INTERRUPTED, TERMINAL
+from ..utils.locale import t
 from ..utils.logger import get_logger
+from ..utils.model_health import slot_context
 
 logger = get_logger("mirofish.api.runs")
 
 HEARTBEAT_S = 15.0
 ALLOWED_SUFFIXES = (".txt", ".md", ".markdown", ".pdf")
 DEFAULT_SEEDS, MAX_SEEDS = 3, 8
+LLM_SLOT_CONTEXT = 8192
 
 
 def _json(payload, status=200):
@@ -61,8 +67,8 @@ def create_run():
     """multipart: ``file`` or ``document_text``; ``simulation_requirement``
     (required); optional ``max_rounds`` (default 24), ``seeds`` (how many,
     default 3), ``seed`` (the first one, default 1), ``confirm_roles``
-    (pause after the graph), ``project_name``. The mode is the backend's
-    ``MIROFISH_PROFILE``."""
+    (pause after the graph), ``project_name``, ``mode`` (local, local-hybrid
+    or local-llm; default the backend's ``MIROFISH_PROFILE``)."""
 
     form = request.form if request.files or request.form else (request.get_json(silent=True) or {})
     requirement = form.get("simulation_requirement") or ""
@@ -92,8 +98,11 @@ def create_run():
         confirm_roles = confirm_roles.lower() in ("1", "true", "yes")
     if not isinstance(confirm_roles, (bool, type(None))):
         return _error("confirm_roles must be a boolean", 400)
+    mode = form.get("mode") or run_mode.process_profile()
+    problem = _mode_problem(mode) if form.get("mode") else None
+    if problem:
+        return _error(*problem)
 
-    runs = get_runs(current_app._get_current_object())
     params = {
         "simulation_requirement": requirement,
         "max_rounds": max_rounds,
@@ -101,12 +110,11 @@ def create_run():
         "seeds": seeds,
         "confirm_roles": bool(confirm_roles),
         "project_name": form.get("project_name") or "",
-        "profile": os.environ.get("MIROFISH_PROFILE", ""),
+        "profile": mode,
         "locale": request.headers.get("Accept-Language", ""),
     }
-    run_id = runs.store.create(params)
-    try:
-        folder = _run_dir(run_id)
+
+    def write(folder: str) -> str:
         if upload:
             path = os.path.join(folder, "document" + os.path.splitext(upload.filename)[1].lower())
             upload.save(path)
@@ -114,15 +122,72 @@ def create_run():
             path = os.path.join(folder, "document.txt")
             with open(path, "w", encoding="utf-8") as f:
                 f.write(text)
-        params["document_path"] = path  # a resume uploads it again
+        return path
+
+    return _start(params, write)
+
+
+def _mode_problem(mode: str) -> tuple[str, int] | None:
+    """Why a run cannot use ``mode`` now, as (message, HTTP status)."""
+
+    if mode not in run_mode.profiles():
+        return f"mode must be one of {', '.join(run_mode.profiles())}", 400
+    if not run_mode.local_backend():
+        # Only the mode settings change per run; the graph, LLM and embedding
+        # endpoints stay the backend's, so "local" would not be local.
+        return t("api.runModeNotLocal"), 409
+    if mode == "local-llm":
+        # LLM agents need 8K per slot (docs/local-first.md); the local path 4K.
+        context = slot_context(Config.LLM_BASE_URL)
+        if context is not None and context < LLM_SLOT_CONTEXT:
+            return t("api.runModeContext", mode=mode, need=LLM_SLOT_CONTEXT, have=context), 409
+    return None
+
+
+def _start(params: dict, write_document) -> Response:
+    """Create the run, save its document (``write_document(folder) -> path``)
+    and start it; a failure marks the run failed instead of leaving it queued."""
+
+    runs = get_runs(current_app._get_current_object())
+    run_id = runs.store.create(params)
+    try:
+        params["document_path"] = write_document(_run_dir(run_id))  # a resume uploads it again
         runs.store.set_params(run_id, params)
         runs.orchestrator.start(run_id)
     except Exception as error:  # not left "queued" forever
         logger.exception("run %s could not start", run_id)
         runs.store.update(run_id, status=FAILED, error=f"{type(error).__name__}: {error}")
         return _error(f"run could not start: {error}", 500)
-    logger.info("run %s started", run_id)
+    logger.info("run %s started (mode %s)", run_id, params.get("profile") or "-")
     return _json({"success": True, "data": {"run_id": run_id}}, 202)
+
+
+@runs_bp.route("/<run_id>/rerun", methods=["POST"])
+def rerun(run_id: str):
+    """The same document and settings in another mode (``{"mode": ...}``), to
+    confirm a run's conclusions: the new run records ``confirms``."""
+
+    record = get_runs(current_app._get_current_object()).store.get(run_id)
+    if record is None:
+        return _error(f"run not found: {run_id}", 404)
+    body = request.get_json(silent=True)
+    mode = body.get("mode") if isinstance(body, dict) else None
+    if not isinstance(mode, str):
+        return _error("mode is required", 400)
+    problem = _mode_problem(mode)
+    if problem:
+        return _error(*problem)
+    params = {**record["params"], "profile": mode, "confirms": run_id}
+    source = params.pop("document_path", None)
+    if not source or not os.path.exists(source):
+        return _error("the run's document is gone", 409)
+
+    def copy(folder: str) -> str:
+        path = os.path.join(folder, os.path.basename(source))
+        shutil.copyfile(source, path)
+        return path
+
+    return _start(params, copy)
 
 
 @runs_bp.route("", methods=["GET"])
@@ -147,6 +212,10 @@ def resume_run(run_id: str):
     record = runs.store.get(run_id)
     if record is None:
         return _error(f"run not found: {run_id}", 404)
+    profile = record["params"].get("profile")
+    problem = _mode_problem(profile) if profile in run_mode.profiles() else None
+    if problem:  # e.g. local-llm after llama-server came back with 4K slots
+        return _error(*problem)
     try:
         runs.orchestrator.start(run_id, from_statuses=(FAILED, INTERRUPTED))
     except RunBusy as error:

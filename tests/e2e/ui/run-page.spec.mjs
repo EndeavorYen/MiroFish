@@ -323,3 +323,120 @@ test('a reset POST is not sent again', async ({ page }) => {
   await page.waitForTimeout(2000)
   expect(state.requests.filter((r) => r.key === 'POST /api/runs')).toHaveLength(1)
 })
+
+const withProfile = (record, profile, extra = {}) => ({ ...record, params: { ...record.params, profile, ...extra } })
+
+test('a local result can be confirmed with local-llm', async ({ page }) => {
+  const NEW = 'run_bbbbbbbbbbbb'
+  const state = {
+    routes: {
+      [`GET /api/runs/${RUN}`]: json(withProfile(runRecord('completed', { artifacts: DONE_ARTIFACTS }), 'local')),
+      'GET /api/report/report_abc123/metrics': json(METRICS),
+      'GET /api/report/report_abc123': json({ markdown_content: '' }),
+      [`POST /api/runs/${RUN}/rerun`]: { status: 202, contentType: 'application/json', body: JSON.stringify({ success: true, data: { run_id: NEW } }) },
+      [`GET /api/runs/${NEW}`]: json({ ...withProfile(runRecord('running', { stage: 'ontology' }), 'local-llm', { confirms: RUN }), run_id: NEW }),
+      [`GET /api/runs/${NEW}/events`]: { sse: [event(1, 'ontology', 'stage_start')] },
+    },
+  }
+  await mockApi(page, state)
+
+  await page.goto(`/runs/${RUN}`)
+  await expect(page.getByTestId('run-mode')).toHaveText('本機（local）')
+  await expect(page.getByTestId('rerun-local-hybrid')).toBeVisible()
+  await page.getByTestId('rerun-local-llm').click()
+
+  await expect(page).toHaveURL(new RegExp(`/runs/${NEW}$`))
+  const rerun = state.requests.find((r) => r.key === `POST /api/runs/${RUN}/rerun`)
+  expect(JSON.parse(rerun.body)).toEqual({ mode: 'local-llm' })
+})
+
+test('a mode the model service cannot hold says why', async ({ page }) => {
+  const reason = 'local-llm 的每個 slot 需要 8192 token 的 context，目前模型服務只有 4096。請用 -c 65536 -np 8 重新啟動 llama-server 再試。'
+  const state = {
+    routes: {
+      [`GET /api/runs/${RUN}`]: json(withProfile(runRecord('completed', { artifacts: DONE_ARTIFACTS }), 'local')),
+      'GET /api/report/report_abc123/metrics': json(METRICS),
+      'GET /api/report/report_abc123': json({ markdown_content: '' }),
+      [`POST /api/runs/${RUN}/rerun`]: { status: 409, contentType: 'application/json', body: JSON.stringify({ success: false, error: reason }) },
+    },
+  }
+  await mockApi(page, state)
+
+  await page.goto(`/runs/${RUN}`)
+  await page.getByTestId('rerun-local-llm').click()
+  await expect(page.getByTestId('rerun-error')).toHaveText(reason)
+  await expect(page).toHaveURL(new RegExp(`/runs/${RUN}$`))
+})
+
+test('a confirming run shows both conclusions and where they differ', async ({ page }) => {
+  const ORIGINAL = 'run_aaaaaaaaaaaa'
+  const theirs = {
+    ...METRICS.scan,
+    main_camp: { ...METRICS.scan.main_camp, value: 'support' },
+    tendency: { ...METRICS.scan.tendency, value: 0.70 },
+    trend: { ...METRICS.scan.trend, value: -0.04 },
+  }
+  const state = {
+    routes: {
+      // This run: local-llm, confirming ORIGINAL (local).
+      [`GET /api/runs/${RUN}`]: json(withProfile(runRecord('completed', { artifacts: DONE_ARTIFACTS }), 'local-llm', { confirms: ORIGINAL })),
+      'GET /api/report/report_abc123/metrics': json(METRICS),  // support, 0.76, trend +0.05
+      'GET /api/report/report_abc123': json({ markdown_content: '' }),
+      // One seed: the first-seed conclusions are compared.
+      [`GET /api/runs/${ORIGINAL}`]: json({ ...withProfile(runRecord('completed', { artifacts: { ...DONE_ARTIFACTS, consistency: null, report_id: 'report_def456' } }), 'local'), run_id: ORIGINAL }),
+      'GET /api/report/report_def456/metrics': json({ ...METRICS, scan: theirs }),
+    },
+  }
+  await mockApi(page, state)
+
+  await page.goto(`/runs/${RUN}`)
+  const table = page.getByTestId('mode-compare')
+  await expect(table).toContainText('本機（local）')
+  await expect(table.locator('[data-row="mainCamp"]')).toContainText('一致')
+  await expect(table.locator('[data-row="tendency"]')).toContainText('一致')  // 0.70 vs 0.76
+  await expect(table.locator('[data-row="trend"]')).toContainText('不一致')  // -0.04 vs +0.05
+  await expect(page.getByTestId('rerun-local-llm')).toHaveCount(0)  // already local-llm
+})
+
+test('the input page sends the chosen mode', async ({ page }) => {
+  const state = {
+    routes: {
+      'GET /api/runs': json([]),
+      'POST /api/runs': { status: 500, contentType: 'application/json', body: JSON.stringify({ success: false, error: 'stop here' }) },
+    },
+  }
+  await mockApi(page, state)
+
+  await page.goto('/')
+  await page.getByTestId('document-text').fill('文件')
+  await page.getByTestId('requirement').fill('需求')
+  await page.locator('details.advanced summary').click()
+  await page.getByTestId('mode').selectOption('local-hybrid')
+  await page.getByTestId('start').click()
+  await expect(page.getByTestId('input-error')).toBeVisible()
+  const form = state.requests.find((r) => r.key === 'POST /api/runs').body
+  expect(form).toMatch(/name="mode"\r\n\r\nlocal-hybrid/)
+})
+
+test('two multi-seed runs are compared on their seed means, and only heavier modes are offered', async ({ page }) => {
+  const ORIGINAL = 'run_aaaaaaaaaaaa'
+  const ours = { ...DONE_ARTIFACTS.consistency, trend: { mean: -0.2, sd: 0.05 } }
+  const theirs = { ...DONE_ARTIFACTS.consistency, trend: { mean: 0.3, sd: 0.04 } }
+  const state = {
+    routes: {
+      [`GET /api/runs/${RUN}`]: json(withProfile(runRecord('completed', { artifacts: { ...DONE_ARTIFACTS, consistency: ours } }), 'local-hybrid', { confirms: ORIGINAL })),
+      'GET /api/report/report_abc123/metrics': json(METRICS),  // first-seed trend +0.05: would agree with +0.3
+      'GET /api/report/report_abc123': json({ markdown_content: '' }),
+      [`GET /api/runs/${ORIGINAL}`]: json({ ...withProfile(runRecord('completed', { artifacts: { ...DONE_ARTIFACTS, consistency: theirs, report_id: 'report_def456' } }), 'local'), run_id: ORIGINAL }),
+      'GET /api/report/report_def456/metrics': json(METRICS),
+    },
+  }
+  await mockApi(page, state)
+
+  await page.goto(`/runs/${RUN}`)
+  const table = page.getByTestId('mode-compare')
+  await expect(table).toContainText('跨 seed 的平均值比較')
+  await expect(table.locator('[data-row="trend"]')).toContainText('不一致')  // -0.20 vs +0.30
+  await expect(page.getByTestId('rerun-local-llm')).toBeVisible()
+  await expect(page.getByTestId('rerun-local-hybrid')).toHaveCount(0)  // not lighter than this run
+})

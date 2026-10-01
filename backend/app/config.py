@@ -19,7 +19,25 @@ from .profiles import apply_profile  # noqa: E402
 apply_profile()
 
 
-class Config:
+# Defaults when a run's profile leaves a mode unset (as the environment does).
+_RUN_MODE_DEFAULTS = {"ONTOLOGY_MODE": "llm", "PROFILE_MODE": "llm", "SIM_CONFIG_MODE": "llm", "REPORT_MODE": "agent"}
+
+
+class _RunAwareConfig(type):
+    """Inside a run, its own mode (#66, app/run_mode.py) overrides the
+    process's ONTOLOGY_MODE, PROFILE_MODE, SIM_CONFIG_MODE and REPORT_MODE."""
+
+    def __getattribute__(cls, name):
+        if name in _RUN_MODE_DEFAULTS:
+            from . import run_mode
+
+            value = run_mode.get(name)
+            if value is not run_mode._UNSET:
+                return (value or _RUN_MODE_DEFAULTS[name]).strip().lower()
+        return super().__getattribute__(name)
+
+
+class Config(metaclass=_RunAwareConfig):
     """Flask配置类"""
     
     # Flask配置

@@ -12,6 +12,7 @@
 | `GET` | `/api/runs/<id>/events` | SSE 事件串流；run 結束後關閉 |
 | `POST` | `/api/runs/<id>/resume` | 讓失敗或中斷的 run 從第一個沒完成的階段接續 |
 | `POST` | `/api/runs/<id>/confirm` | 角色確認完畢，讓暫停中的 run 繼續（見「確認角色」） |
+| `POST` | `/api/runs/<id>/rerun` | `{"mode": ...}`：同一份文件與設定換一種模式再跑，用來確認結論（見「模式」） |
 
 ### 開始一個 run
 
@@ -25,9 +26,10 @@
 | `seeds` | 否 | 跑幾個 seed，預設 3，最多 8 |
 | `seed` | 否 | 第一個 seed，預設 1；其餘依序加 1000（模擬用 `seed` 和 `seed + 1` 分別驅動兩個平台，相鄰的 seed 會共用亂數序列） |
 | `confirm_roles` | 否 | `true` 時圖譜建好後暫停，等確認角色 |
+| `mode` | 否 | `local`／`local-hybrid`／`local-llm`；預設為後端的 `MIROFISH_PROFILE` |
 | `project_name` | 否 | 專案名稱 |
 
-模式（local／local-hybrid／local-llm）由後端的 `MIROFISH_PROFILE` 決定，會記在 run 的參數裡。`Accept-Language` 也會被記下，各階段用同一種語言。
+模式預設是後端的 `MIROFISH_PROFILE`，也可以每個 run 自己指定（`mode`），記在 run 的參數 `profile`。`Accept-Language` 也會被記下，各階段用同一種語言。
 
 ```bash
 curl -F file=@news.txt -F simulation_requirement="預測使用者對漲價的反應" \
@@ -93,6 +95,14 @@ seed 之間一致，只代表這條路徑自己穩定，不代表和 LLM 路徑�
 ### 確認角色
 
 帶 `confirm_roles=true` 時，圖譜建好後 run 狀態變成 `awaiting_confirmation`，送出 `awaiting_confirmation` 事件，事件串流關閉。這時可以用 `GET`／`POST /api/graph/<graph_id>/roles`（#64）查看、修改角色，再 `POST /api/runs/<id>/confirm` 繼續；重新連上事件串流即可接著收。暫停中的 run 不受後端重啟影響，`resume` 不適用於暫停中的 run。
+
+### 模式
+
+每個 run 用自己的模式準備、模擬與產生報告：本體、人設、模擬設定與報告模式在後端程序內依 run 決定，模擬子程序拿到 run 的 `SIM_DECISION_BACKEND`、`CONTENT_MODE`、`SIM_AGENT_CONTEXT_TOKENS`。所以同一個後端可以同時跑不同模式的 run，互不干擾（`backend/app/run_mode.py`）。
+
+`local-llm` 的 agent 每個 slot 需要 8K context。llama.cpp 模型服務的 `/props` 回報每個 slot 不到 8192 時，建立或 rerun 會回 409，說明要用 `-c 65536 -np 8` 重新啟動；其他模型服務不檢查。
+
+`POST /api/runs/<id>/rerun` 用原 run 的文件與設定建立新的 run，只換模式，並記錄 `confirms: <原 run id>`。結果頁會把兩個 run 的主要陣營、整體傾向、走向與最反對的角色並排比較。2026-10-01 實測（golden 種子、12 回合）：local 與 local-llm 的主要陣營與最反對的角色一致，整體傾向（0.85 對 0.60）與走向（+0.09 對 −0.51）不一致，和評估時本機路徑走向可信度低的結論相符。
 
 ### 失敗與續跑
 

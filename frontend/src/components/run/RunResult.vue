@@ -128,8 +128,12 @@ const { t } = useI18n()
 const router = useRouter()
 const modeLabel = (mode) => t(MODES.includes(mode) ? `run.mode.${mode}` : 'run.mode.unknown')
 
-// The heavier modes this run was not made in; local-llm is the reference.
-const confirmModes = computed(() => ['local-hybrid', 'local-llm'].filter((m) => m !== props.run.params?.profile))
+// Only heavier modes confirm a run; local-llm is the reference. A run in the
+// backend's default mode (no profile recorded) gets both.
+const confirmModes = computed(() => {
+  const at = MODES.indexOf(props.run.params?.profile)
+  return ['local-hybrid', 'local-llm'].filter((m) => MODES.indexOf(m) > at)
+})
 const rerunning = ref(false)
 const rerunError = ref('')
 async function rerun(mode) {

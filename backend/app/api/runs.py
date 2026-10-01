@@ -98,7 +98,7 @@ def create_run():
         confirm_roles = confirm_roles.lower() in ("1", "true", "yes")
     if not isinstance(confirm_roles, (bool, type(None))):
         return _error("confirm_roles must be a boolean", 400)
-    mode = form.get("mode") or os.environ.get("MIROFISH_PROFILE", "")
+    mode = form.get("mode") or run_mode.process_profile()
     problem = _mode_problem(mode) if form.get("mode") else None
     if problem:
         return _error(*problem)
@@ -132,6 +132,10 @@ def _mode_problem(mode: str) -> tuple[str, int] | None:
 
     if mode not in run_mode.profiles():
         return f"mode must be one of {', '.join(run_mode.profiles())}", 400
+    if not run_mode.local_backend():
+        # Only the mode settings change per run; the graph, LLM and embedding
+        # endpoints stay the backend's, so "local" would not be local.
+        return t("api.runModeNotLocal"), 409
     if mode == "local-llm":
         # LLM agents need 8K per slot (docs/local-first.md); the local path 4K.
         context = slot_context(Config.LLM_BASE_URL)
@@ -166,7 +170,8 @@ def rerun(run_id: str):
     record = get_runs(current_app._get_current_object()).store.get(run_id)
     if record is None:
         return _error(f"run not found: {run_id}", 404)
-    mode = (request.get_json(silent=True) or {}).get("mode")
+    body = request.get_json(silent=True)
+    mode = body.get("mode") if isinstance(body, dict) else None
     if not isinstance(mode, str):
         return _error("mode is required", 400)
     problem = _mode_problem(mode)
@@ -207,6 +212,10 @@ def resume_run(run_id: str):
     record = runs.store.get(run_id)
     if record is None:
         return _error(f"run not found: {run_id}", 404)
+    profile = record["params"].get("profile")
+    problem = _mode_problem(profile) if profile in run_mode.profiles() else None
+    if problem:  # e.g. local-llm after llama-server came back with 4K slots
+        return _error(*problem)
     try:
         runs.orchestrator.start(run_id, from_statuses=(FAILED, INTERRUPTED))
     except RunBusy as error:

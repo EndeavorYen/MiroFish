@@ -26,7 +26,7 @@
           </tr>
         </tbody>
       </table>
-      <p class="muted">{{ $t('run.compare.note') }}</p>
+      <p class="muted">{{ $t(acrossSeeds ? 'run.compare.acrossSeeds' : 'run.compare.firstSeed') }} {{ $t('run.compare.note') }}</p>
     </template>
   </section>
 </template>
@@ -39,6 +39,17 @@ import { MODES, getReportMetrics, getRun } from '../../api/runs'
 // This run confirms another one (``params.confirms``) in another mode: the
 // conclusions side by side, and whether they agree.
 const props = defineProps({ run: { type: Object, required: true }, scan: { type: Object, default: null } })
+
+// Both runs over several seeds: compare the seed means (seed noise averages
+// out); otherwise the report's own conclusions, from the first seed.
+const theirSeeds = ref(null)
+const acrossSeeds = computed(() => Boolean(theirSeeds.value && props.run.artifacts?.consistency))
+const fromSeeds = (c) => ({
+  main_camp: { value: c.main_camp.value },
+  tendency: { value: c.tendency.mean },
+  trend: { value: c.trend.mean },
+  ranking: { indistinct: c.ranking.indistinct, most_opposed: (c.ranking.most_opposed || []).map((name) => ({ name })) },
+})
 const { t } = useI18n()
 
 const original = ref(null)
@@ -52,8 +63,8 @@ const number = (v, signed = false) => (v == null ? '—' : `${signed && v > 0 ? 
 const firstOpposed = (s) => s?.ranking?.most_opposed?.[0]?.name || '—'
 
 const rows = computed(() => {
-  const a = theirs.value
-  const b = props.scan
+  const a = acrossSeeds.value ? fromSeeds(theirSeeds.value) : theirs.value
+  const b = acrossSeeds.value ? fromSeeds(props.run.artifacts.consistency) : props.scan
   if (!a || !b) return []
   const trendKnown = a.trend?.value != null && b.trend?.value != null
   return [
@@ -76,6 +87,7 @@ const rows = computed(() => {
 onMounted(async () => {
   try {
     original.value = (await getRun(props.run.params.confirms)).data
+    theirSeeds.value = original.value.artifacts?.consistency || null
     const reportId = original.value.artifacts?.report_id
     if (!reportId) throw new Error(t('run.result.noReport'))
     theirs.value = (await getReportMetrics(reportId)).data.scan

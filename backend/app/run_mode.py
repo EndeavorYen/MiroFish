@@ -48,14 +48,35 @@ def profiles() -> tuple[str, ...]:
     return tuple(PROFILES)
 
 
+def process_profile() -> str:
+    """The backend's own ``MIROFISH_PROFILE``, normalised ('' when unset)."""
+
+    import os
+
+    return (os.environ.get("MIROFISH_PROFILE") or "").strip().lower()
+
+
+def local_backend() -> bool:
+    """A run may choose its mode only on a backend running a local profile:
+    the mode settings change per run, the service endpoints do not."""
+
+    return process_profile() in profiles()
+
+
 @contextmanager
 def use(profile: str | None) -> Iterator[None]:
-    """Within the block, the mode settings are ``profile``'s. ``None`` or an
-    unknown profile: the process's own settings."""
+    """Within the block, the mode settings are ``profile``'s. ``None``, an
+    unknown profile, or the backend's own profile: the process's settings
+    (which keep the .env overrides of that profile)."""
 
     from .profiles import PROFILES
 
-    token = _current.set(profile_settings(profile) if profile in PROFILES else None)
+    profile = (profile or "").strip().lower()
+    settings = None
+    if profile in PROFILES and profile != process_profile():
+        # MIROFISH_PROFILE too: the simulation process applies it again.
+        settings = {**profile_settings(profile), "MIROFISH_PROFILE": profile}
+    token = _current.set(settings)
     try:
         yield
     finally:
@@ -67,7 +88,7 @@ def get(key: str) -> Any:
     ``_UNSET`` outside a run (use the process's value)."""
 
     settings = _current.get()
-    if settings is None or key not in settings:
+    if settings is None or key not in MODE_KEYS:
         return _UNSET
     return settings[key]
 
@@ -88,11 +109,18 @@ def active() -> bool:
 
 
 def bind(target: Callable[..., Any]) -> Callable[..., Any]:
-    """``target`` running in a copy of the current context: give it to a new
-    thread, which would otherwise start without the run's mode."""
+    """``target`` running with the current run's mode: give it to a new
+    thread, which would otherwise start without it. Only the mode is carried;
+    a copy of the whole context would also carry the finished request's."""
 
-    context = contextvars.copy_context()
-    return lambda *args, **kwargs: context.run(target, *args, **kwargs)
+    settings = _current.get()
+
+    def run(*args: Any, **kwargs: Any) -> Any:
+        context = contextvars.Context()
+        context.run(_current.set, settings)
+        return context.run(target, *args, **kwargs)
+
+    return run
 
 
 def subprocess_env(env: MutableMapping[str, str]) -> MutableMapping[str, str]:

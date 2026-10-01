@@ -382,7 +382,8 @@ test('a confirming run shows both conclusions and where they differ', async ({ p
       [`GET /api/runs/${RUN}`]: json(withProfile(runRecord('completed', { artifacts: DONE_ARTIFACTS }), 'local-llm', { confirms: ORIGINAL })),
       'GET /api/report/report_abc123/metrics': json(METRICS),  // support, 0.76, trend +0.05
       'GET /api/report/report_abc123': json({ markdown_content: '' }),
-      [`GET /api/runs/${ORIGINAL}`]: json({ ...withProfile(runRecord('completed', { artifacts: { ...DONE_ARTIFACTS, report_id: 'report_def456' } }), 'local'), run_id: ORIGINAL }),
+      // One seed: the first-seed conclusions are compared.
+      [`GET /api/runs/${ORIGINAL}`]: json({ ...withProfile(runRecord('completed', { artifacts: { ...DONE_ARTIFACTS, consistency: null, report_id: 'report_def456' } }), 'local'), run_id: ORIGINAL }),
       'GET /api/report/report_def456/metrics': json({ ...METRICS, scan: theirs }),
     },
   }
@@ -415,4 +416,27 @@ test('the input page sends the chosen mode', async ({ page }) => {
   await expect(page.getByTestId('input-error')).toBeVisible()
   const form = state.requests.find((r) => r.key === 'POST /api/runs').body
   expect(form).toMatch(/name="mode"\r\n\r\nlocal-hybrid/)
+})
+
+test('two multi-seed runs are compared on their seed means, and only heavier modes are offered', async ({ page }) => {
+  const ORIGINAL = 'run_aaaaaaaaaaaa'
+  const ours = { ...DONE_ARTIFACTS.consistency, trend: { mean: -0.2, sd: 0.05 } }
+  const theirs = { ...DONE_ARTIFACTS.consistency, trend: { mean: 0.3, sd: 0.04 } }
+  const state = {
+    routes: {
+      [`GET /api/runs/${RUN}`]: json(withProfile(runRecord('completed', { artifacts: { ...DONE_ARTIFACTS, consistency: ours } }), 'local-hybrid', { confirms: ORIGINAL })),
+      'GET /api/report/report_abc123/metrics': json(METRICS),  // first-seed trend +0.05: would agree with +0.3
+      'GET /api/report/report_abc123': json({ markdown_content: '' }),
+      [`GET /api/runs/${ORIGINAL}`]: json({ ...withProfile(runRecord('completed', { artifacts: { ...DONE_ARTIFACTS, consistency: theirs, report_id: 'report_def456' } }), 'local'), run_id: ORIGINAL }),
+      'GET /api/report/report_def456/metrics': json(METRICS),
+    },
+  }
+  await mockApi(page, state)
+
+  await page.goto(`/runs/${RUN}`)
+  const table = page.getByTestId('mode-compare')
+  await expect(table).toContainText('跨 seed 的平均值比較')
+  await expect(table.locator('[data-row="trend"]')).toContainText('不一致')  // -0.20 vs +0.30
+  await expect(page.getByTestId('rerun-local-llm')).toBeVisible()
+  await expect(page.getByTestId('rerun-local-hybrid')).toHaveCount(0)  // not lighter than this run
 })

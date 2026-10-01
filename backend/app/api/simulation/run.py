@@ -92,6 +92,10 @@ def start_simulation():
                 "success": False,
                 "error": "force must be a JSON boolean",
             }), 400
+        # Optional seed for the agent activation sequence (#63: one per seed run).
+        seed = data.get('seed')
+        if seed is not None and (isinstance(seed, bool) or not isinstance(seed, int)):
+            return jsonify({"success": False, "error": "seed must be an integer"}), 400
 
         # 验证 max_rounds 参数
         if max_rounds is not None:
@@ -296,7 +300,8 @@ def start_simulation():
                 platform=platform,
                 max_rounds=max_rounds,
                 enable_graph_memory_update=enable_graph_memory_update,
-                graph_id=graph_id
+                graph_id=graph_id,
+                seed=seed,
             )
         
         response_data = run_state.to_dict()

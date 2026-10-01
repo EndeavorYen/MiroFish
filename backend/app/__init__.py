@@ -91,6 +91,9 @@ def create_app(config_class=Config):
     # Runs whose thread died with the previous backend process (#63).
     from .runs.service import mark_interrupted_at_startup
     mark_interrupted_at_startup(logger)
+    # Tasks (graph build, prepare, report) likewise (#68).
+    from .models.task import TaskManager
+    TaskManager().recover_at_startup(logger)
     
     # 健康检查
     @app.route('/health')

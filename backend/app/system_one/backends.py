@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import contextvars
 import json
+import os
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -105,6 +106,13 @@ def _http_post(
             ) from error
 
 
+def _cache_prompt() -> bool:
+    """``SYSTEM_ONE_CACHE_PROMPT=0`` for bit-exact replays (#82), at the cost
+    of prefilling every prompt in full."""
+
+    return os.environ.get("SYSTEM_ONE_CACHE_PROMPT", "1").strip().lower() not in ("0", "false", "no", "off")
+
+
 def parse_top_logprobs(response: dict[str, Any]) -> dict[str, float]:
     """Top-k logprobs of the first generated token.
 
@@ -167,8 +175,10 @@ class LocalReadoutBackend:
             "max_tokens": 1,
             "temperature": 0,
             "logprobs": self.top_k,
-            # llama.cpp keeps the shared state prefix in its KV cache.
-            "cache_prompt": True,
+            # llama.cpp keeps the shared state prefix in its KV cache. Off
+            # for bit-exact replays: which prefix a request reuses depends on
+            # the request before it, and two platforms interleave (#82).
+            "cache_prompt": _cache_prompt(),
         }
 
     def _ask_one(self, state: str, question) -> tuple[Any, int, int]:

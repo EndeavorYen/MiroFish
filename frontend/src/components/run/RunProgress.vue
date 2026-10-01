@@ -55,7 +55,7 @@
       <details v-if="firstSimulation && reachedSimulate" @toggle="togglePosts">
         <summary>{{ $t('run.progress.showPosts') }}</summary>
         <ul class="posts">
-          <li v-for="post in posts" :key="post.post_id">{{ post.content }}</li>
+          <li v-for="post in posts" :key="`${post.platform}-${post.post_id}`">{{ post.content }}</li>
           <li v-if="!posts.length" class="empty">{{ $t('run.progress.noPostsYet') }}</li>
         </ul>
       </details>
@@ -139,12 +139,18 @@ async function loadProfiles() {
 
 const posts = ref([])
 let postTimer = null
+let postsLoading = false
 async function loadPosts() {
+  if (postsLoading) return  // the previous poll is still waiting
+  postsLoading = true
   try {
-    const [twitter, reddit] = await Promise.all(['twitter', 'reddit'].map((p) => getPosts(firstSimulation.value, p, 10)))
-    posts.value = [...(twitter.data.posts || []), ...(reddit.data.posts || [])]
+    const answers = await Promise.all(['twitter', 'reddit'].map((platform) =>
+      getPosts(firstSimulation.value, platform, 10).then((r) => (r.data.posts || []).map((post) => ({ ...post, platform })))))
+    posts.value = answers.flat()
   } catch {
-    posts.value = []
+    // keep the last posts; the next poll tries again
+  } finally {
+    postsLoading = false
   }
 }
 function togglePosts(event) {

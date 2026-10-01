@@ -740,7 +740,9 @@
       "consistencyFailed": "Seed agreement could not be computed: {reason}",
       "topPosts": "Most spread posts",
       "postStats": "{shares} reposts/quotes · {likes} likes",
-      "fullReport": "Full report"
+      "fullReport": "Full report",
+      "noMetrics": "This report has no confidence metrics (the report mode is not metrics); the other results and the full report follow.",
+      "noScanReason": "no posts to score"
     },
     "history": {
       "title": "Past simulations",
@@ -764,6 +766,7 @@
     "platform": {
       "twitter": "Twitter",
       "reddit": "Reddit"
-    }
+    },
+    "refreshFailed": "Could not get the latest status ({reason}); trying again shortly."
   }
 }

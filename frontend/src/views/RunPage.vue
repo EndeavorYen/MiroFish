@@ -14,6 +14,7 @@
         <RunHistory />
       </template>
       <template v-else>
+        <p v-if="run && refreshError" class="notice error" data-test="refresh-error">{{ $t('run.refreshFailed', { reason: refreshError }) }}</p>
         <p v-if="loadError" class="notice error" data-test="load-error">{{ loadError }}</p>
         <p v-else-if="!run" class="notice">{{ $t('run.loading') }}</p>
         <RunResult v-else-if="run.status === 'completed'" :run="run" />
@@ -47,11 +48,16 @@ const router = useRouter()
 const run = ref(null)
 const events = ref([])
 const loadError = ref('')
+const refreshError = ref('')
 const actionError = ref('')
 const busy = ref(false)
 let lastId = 0
 let close = null
 let retry = null
+// Answers for another run, or older than one already applied, are dropped:
+// ``gen`` changes when the page switches run, ``refreshSeq`` on every refresh.
+let gen = 0
+let refreshSeq = 0
 
 function stopFollowing() {
   close?.()
@@ -59,28 +65,48 @@ function stopFollowing() {
   clearTimeout(retry)
 }
 
+/** 'ok', 'stale' (dropped), 'gone' (404) or 'failed'. */
 async function refresh() {
+  const myGen = gen
+  const mySeq = ++refreshSeq
   try {
-    run.value = (await getRun(props.runId)).data
-    loadError.value = ''
+    const data = (await getRun(props.runId)).data
+    if (myGen !== gen || mySeq !== refreshSeq) return 'stale'
+    run.value = data
+    loadError.value = refreshError.value = ''
+    return 'ok'
   } catch (error) {
-    loadError.value = error.message
+    if (myGen !== gen) return 'stale'
+    // Before anything was shown, the page is an error; after, a notice.
+    if (run.value) refreshError.value = error.message
+    else loadError.value = error.message
+    return error.response?.status === 404 ? 'gone' : 'failed'
   }
 }
 
 function follow() {
   stopFollowing()
+  const myGen = gen
   close = followRun(props.runId, lastId, {
     onEvent(event) {
+      if (myGen !== gen) return
       lastId = event.id
-      events.value.push(event)
+      const last = events.value[events.value.length - 1]
+      // Only the latest progress of a stage matters: the log stays short.
+      if (event.kind === 'progress' && last?.kind === 'progress' && last.stage === event.stage) {
+        events.value[events.value.length - 1] = event
+      } else {
+        events.value.push(event)
+      }
       if (['stage_done', 'run_done', 'run_failed', 'interrupted', 'awaiting_confirmation'].includes(event.kind)) {
         refresh()  // status and artifacts
       }
     },
     async onEnd() {
+      if (myGen !== gen) return
       close = null
-      await refresh()
+      const result = await refresh()
+      if (myGen !== gen || result === 'gone') return
       // Still going (a network drop, or the backend restarted): follow on
       // from the last event; a stopped run's stream ended on purpose.
       if (run.value && !STOPPED.includes(run.value.status)) {
@@ -91,23 +117,26 @@ function follow() {
 }
 
 async function load() {
+  gen += 1
   stopFollowing()
   run.value = null
   events.value = []
   lastId = 0
-  loadError.value = ''
+  loadError.value = refreshError.value = ''
   if (!props.runId) return
+  const myGen = gen
   await refresh()
-  if (run.value && run.value.status !== 'completed') follow()
+  if (myGen === gen && run.value && run.value.status !== 'completed') follow()
 }
 
 async function act(call) {
+  const myGen = gen
   busy.value = true
   actionError.value = ''
   try {
     await call(props.runId)
     await refresh()
-    follow()
+    if (myGen === gen) follow()
   } catch (error) {
     actionError.value = error.message
   } finally {

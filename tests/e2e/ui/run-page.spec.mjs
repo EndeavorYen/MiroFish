@@ -190,3 +190,136 @@ test('a reset connection is retried instead of leaving a stale page', async ({ p
   await expect(page.getByTestId('card-main-camp')).toContainText('支持')
   expect(attempts).toBe(3)
 })
+
+test('a report without metrics still shows the seeds, posts and full report', async ({ page }) => {
+  // REPORT_MODE=agent writes no report_metrics.json.
+  const state = {
+    routes: {
+      [`GET /api/runs/${RUN}`]: json(runRecord('completed', { artifacts: DONE_ARTIFACTS })),
+      'GET /api/report/report_abc123/metrics': { status: 404, contentType: 'application/json', body: JSON.stringify({ success: false, error: 'not found' }) },
+      'GET /api/report/report_abc123': json({ markdown_content: '# 分析報告\n\n完整內容。' }),
+    },
+  }
+  await mockApi(page, state)
+
+  await page.goto(`/runs/${RUN}`)
+  await expect(page.getByTestId('no-metrics')).toBeVisible()
+  await expect(page.getByTestId('consistency')).toContainText('3/3')
+  await page.locator('details.report summary').click()
+  await expect(page.locator('.report-text')).toContainText('完整內容')
+  await expect(page.getByTestId('result-error')).toHaveCount(0)
+})
+
+const pausedRun = () => runRecord('awaiting_confirmation', { stage: 'prepare', artifacts: { done_stages: ['ontology', 'graph'], graph_id: 'mirofish_g1' } })
+const accepted = { status: 202, contentType: 'application/json', body: JSON.stringify({ success: true, data: { run_id: RUN } }) }
+
+test('a role excluded earlier can be included again with a type', async ({ page }) => {
+  const roles = [
+    { uuid: 'u1', name: '鄭國棟', type: 'GovernmentOfficial', summary: '', excluded: false, aliases: [] },
+    { uuid: 'u2', name: '北港工商發展協會', type: null, summary: '', excluded: true, aliases: [] },  // excluded before: no type
+  ]
+  const payload = { graph_id: 'mirofish_g1', entity_types: ['GovernmentOfficial', 'Company'], roles }
+  const state = {
+    routes: {
+      [`GET /api/runs/${RUN}`]: json(pausedRun()),
+      [`GET /api/runs/${RUN}/events`]: { sse: [event(1, 'prepare', 'awaiting_confirmation', { graph_id: 'mirofish_g1' })] },
+      'GET /api/graph/mirofish_g1/roles': json(payload),
+      'POST /api/graph/mirofish_g1/roles': json(payload),
+      [`POST /api/runs/${RUN}/confirm`]: accepted,
+    },
+  }
+  await mockApi(page, state)
+
+  await page.goto(`/runs/${RUN}`)
+  const row = page.getByTestId('roles-confirm').locator('li').nth(1)
+  await row.locator('input[type="checkbox"]').check()
+  await row.getByTestId('role-type').selectOption('Company')
+  await page.getByTestId('confirm-roles').click()
+
+  await expect.poll(() => state.requests.some((r) => r.key === `POST /api/runs/${RUN}/confirm`)).toBe(true)
+  const edit = state.requests.find((r) => r.key === 'POST /api/graph/mirofish_g1/roles')
+  expect(JSON.parse(edit.body)).toEqual({ ops: [{ op: 'include', uuid: 'u2', type: 'Company' }] })
+})
+
+test('a partly applied role edit shows what the graph has and does not continue', async ({ page }) => {
+  let reads = 0
+  const before = [
+    { uuid: 'u1', name: '鄭國棟', type: 'GovernmentOfficial', summary: '', excluded: false, aliases: [] },
+    { uuid: 'u2', name: '北港', type: 'Location', summary: '', excluded: false, aliases: [] },
+  ]
+  const after = [before[0], { ...before[1], type: null, excluded: true }]  // the exclude went through
+  const state = {
+    routes: {
+      [`GET /api/runs/${RUN}`]: json(pausedRun()),
+      [`GET /api/runs/${RUN}/events`]: { sse: [event(1, 'prepare', 'awaiting_confirmation', { graph_id: 'mirofish_g1' })] },
+      'GET /api/graph/mirofish_g1/roles': () => json({ graph_id: 'mirofish_g1', entity_types: [], roles: ++reads === 1 ? before : after }),
+      'POST /api/graph/mirofish_g1/roles': { status: 400, contentType: 'application/json', body: JSON.stringify({ success: false, error: 'name already used', failed_op: 1 }) },
+      [`POST /api/runs/${RUN}/confirm`]: accepted,
+    },
+  }
+  await mockApi(page, state)
+
+  await page.goto(`/runs/${RUN}`)
+  const panel = page.getByTestId('roles-confirm')
+  await expect(panel.locator('li')).toHaveCount(2)
+  await panel.locator('li').nth(1).locator('input[type="checkbox"]').uncheck()
+  await panel.locator('input.name').first().fill('北港')
+  await page.getByTestId('confirm-roles').click()
+
+  await expect(page.getByTestId('roles-error')).toContainText('name already used')
+  await expect.poll(() => reads).toBe(2)  // reloaded from the graph
+  await expect(panel.locator('li').nth(1)).toHaveClass(/excluded/)
+  expect(state.requests.some((r) => r.key === `POST /api/runs/${RUN}/confirm`)).toBe(false)
+})
+
+test('a failed status refresh keeps the progress on screen', async ({ page }) => {
+  let reads = 0
+  const running = runRecord('running', { stage: 'simulate', artifacts: { done_stages: STAGES.slice(0, 3) } })
+  const busy = { status: 503, contentType: 'application/json', body: JSON.stringify({ success: false, error: 'busy' }) }
+  const state = {
+    routes: {
+      // The first read works; afterwards the backend answers with an error.
+      [`GET /api/runs/${RUN}`]: () => (++reads === 1 ? json(running) : busy),
+      [`GET /api/runs/${RUN}/events`]: { sse: [event(1, 'simulate', 'stage_start'), event(2, 'simulate', 'progress', { progress: 40, message: 'round 5/12' })] },
+    },
+  }
+  await mockApi(page, state)
+
+  await page.goto(`/runs/${RUN}`)
+  await expect(page.getByTestId('refresh-error')).toBeVisible()
+  await expect(page.locator('[data-stage="simulate"]')).toContainText('round 5/12')
+  await expect(page.getByTestId('load-error')).toHaveCount(0)
+})
+
+test('leaving a run stops following it', async ({ page }) => {
+  const running = runRecord('running', { stage: 'simulate', artifacts: { done_stages: STAGES.slice(0, 3) } })
+  const state = {
+    routes: {
+      'GET /api/runs': json([]),
+      [`GET /api/runs/${RUN}`]: json(running),
+      [`GET /api/runs/${RUN}/events`]: { sse: [event(1, 'simulate', 'stage_start')] },  // ends: the page re-follows
+    },
+  }
+  await mockApi(page, state)
+
+  await page.goto(`/runs/${RUN}`)
+  await expect(page.getByTestId('run-status')).toBeVisible()
+  await page.getByRole('link', { name: '新的模擬' }).click()
+  await expect(page.getByTestId('start')).toBeVisible()
+  const seen = state.requests.length
+  await page.waitForTimeout(5000)  // longer than the 2 s re-follow
+  expect(state.requests.slice(seen).filter((r) => r.key.includes(RUN))).toEqual([])
+})
+
+test('a reset POST is not sent again', async ({ page }) => {
+  const state = { routes: { 'GET /api/runs': json([]), 'POST /api/runs': { abort: 'connectionreset' } } }
+  await mockApi(page, state)
+
+  await page.goto('/')
+  await page.getByTestId('document-text').fill('文件')
+  await page.getByTestId('requirement').fill('需求')
+  await page.getByTestId('start').click()
+  await expect(page.getByTestId('input-error')).toBeVisible()
+  await page.waitForTimeout(2000)
+  expect(state.requests.filter((r) => r.key === 'POST /api/runs')).toHaveLength(1)
+})

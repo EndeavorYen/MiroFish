@@ -13,7 +13,7 @@
     <table v-else>
       <tbody>
         <tr v-for="item in visible" :key="item.run_id" @click="router.push(`/runs/${item.run_id}`)">
-          <td class="when">{{ item.created_at.slice(0, 16).replace('T', ' ') }}</td>
+          <td class="when">{{ when(item.created_at) }}</td>
           <td class="what">{{ item.params.simulation_requirement }}</td>
           <td class="seeds">{{ $t('run.history.seeds', { n: item.params.seeds || 1 }) }}</td>
           <td class="status" :class="item.status">{{ $t(`run.status.${item.status}`) }}</td>
@@ -29,6 +29,9 @@ import { useRouter } from 'vue-router'
 import { listRuns } from '../../api/runs'
 
 const router = useRouter()
+
+// created_at is UTC; shown in the viewer's time.
+const when = (iso) => new Date(iso).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' })
 const runs = ref([])
 const query = ref('')
 const showAll = ref(false)

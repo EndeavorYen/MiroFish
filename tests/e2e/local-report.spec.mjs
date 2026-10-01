@@ -21,8 +21,11 @@ const ROUNDS = Number(process.env.E2E_ROUNDS || 10)
 const SEEDS = Number(process.env.E2E_SEEDS || 2)
 const shots = process.env.E2E_SHOTS || path.resolve(here, 'artifacts')
 
-test('local profile: one click on Start reaches the result page', async ({ page }) => {
+test('local profile: one click on Start reaches the result page', async ({ page, request }) => {
   fs.mkdirSync(shots, { recursive: true })
+  const api = process.env.E2E_API_URL || 'http://127.0.0.1:5001'
+  const runIds = async () => (await (await request.get(`${api}/api/runs?limit=500`)).json()).data.map((r) => r.run_id)
+  const before = new Set(await runIds())
 
   await page.goto('/')
   await page.getByTestId('document-text').fill(seedText)
@@ -43,4 +46,7 @@ test('local profile: one click on Start reaches the result page', async ({ page 
   await expect(page.getByTestId('card-main-camp')).toContainText(/支持|中立|反對|Support|Neutral|Oppose/)
   if (SEEDS > 1) await expect(page.getByTestId('consistency')).toBeVisible()
   await page.screenshot({ path: path.join(shots, '3-result.png'), fullPage: true })
+
+  // One click, one run: no request was sent twice.
+  expect((await runIds()).filter((id) => !before.has(id))).toHaveLength(1)
 })

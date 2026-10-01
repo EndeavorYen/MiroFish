@@ -755,7 +755,9 @@
       "consistencyFailed": "没有算出 seed 一致性：{reason}",
       "topPosts": "扩散最广的帖子",
       "postStats": "转发／引用 {shares} · 赞 {likes}",
-      "fullReport": "完整报告"
+      "fullReport": "完整报告",
+      "noMetrics": "这份报告没有可信度指标（报告模式不是 metrics）；下面是其余结果与完整报告。",
+      "noScanReason": "没有可评分的帖子"
     },
     "history": {
       "title": "过去的模拟",
@@ -779,6 +781,7 @@
     "platform": {
       "twitter": "Twitter",
       "reddit": "Reddit"
-    }
+    },
+    "refreshFailed": "暂时拿不到最新状态（{reason}），稍后会再试。"
   }
 }

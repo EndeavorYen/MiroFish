@@ -5,13 +5,15 @@
       <span class="meta">{{ $t('run.result.meta', { seeds: seedCount, rounds: run.artifacts?.rounds ?? run.params?.max_rounds }) }}</span>
     </div>
 
-    <p v-if="error" class="error" data-test="result-error">{{ error }}</p>
+    <!-- Confidence first: each conclusion with how far it can be trusted. A
+         report without metrics (REPORT_MODE=agent) shows the rest anyway. -->
+    <p v-if="metricsMissing" class="muted" data-test="no-metrics">{{ $t('run.result.noMetrics') }}</p>
+    <p v-else-if="error" class="error" data-test="result-error">{{ error }}</p>
     <p v-else-if="!metrics" class="muted">{{ $t('run.loading') }}</p>
+    <p v-else-if="!scan" class="muted" data-test="no-scan">{{ $t('run.result.noScan', { reason: metrics.scan_error || $t('run.result.noScanReason') }) }}</p>
 
-    <template v-else>
-      <!-- Confidence first: each conclusion with how far it can be trusted. -->
-      <p v-if="!scan" class="muted" data-test="no-scan">{{ $t('run.result.noScan', { reason: metrics.scan_error || '' }) }}</p>
-      <div v-else class="cards" data-test="confidence-cards">
+    <template v-if="metrics || metricsMissing || error">
+      <div v-if="scan" class="cards" data-test="confidence-cards">
         <article class="card" data-test="card-main-camp">
           <header>
             <h2>{{ $t('run.result.mainCamp') }}</h2>
@@ -44,7 +46,7 @@
             <span class="badge" :class="scan.trend.confidence">{{ $t(`run.confidence.${scan.trend.confidence}`) }}</span>
           </header>
           <p class="value" :class="{ quiet: scan.trend.value == null }">{{ trendText }}</p>
-          <p v-if="scan.trend.rounds" class="sub">{{ $t('run.result.trendRounds', { from: scan.trend.rounds[0], to: scan.trend.rounds[1] }) }}</p>
+          <p v-if="scan.trend.value != null && scan.trend.rounds" class="sub">{{ $t('run.result.trendRounds', { from: scan.trend.rounds[0], to: scan.trend.rounds[1] }) }}</p>
           <p class="evidence">{{ scan.trend.evidence }}</p>
         </article>
 
@@ -105,6 +107,7 @@ const props = defineProps({ run: { type: Object, required: true } })
 const { t } = useI18n()
 
 const metrics = ref(null)
+const metricsMissing = ref(false)
 const reportText = ref('')
 const error = ref('')
 
@@ -137,7 +140,8 @@ onMounted(async () => {
   try {
     metrics.value = (await getReportMetrics(reportId)).data
   } catch (err) {
-    error.value = err.message
+    if (err.response?.status === 404) metricsMissing.value = true
+    else error.value = err.message
   }
 })
 </script>

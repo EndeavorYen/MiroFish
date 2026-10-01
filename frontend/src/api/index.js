@@ -6,14 +6,19 @@ const GET_RETRIES = 6
 // 创建axios实例
 const service = axios.create({
   // Straight to the backend on :5001 of the same host (the Docker image
-  // publishes it too). #49 sent dev requests through the Vite /api proxy
-  // instead, after a direct POST had died with ERR_CONNECTION_RESET; on
-  // 2026-10-01 (Vite 7, Node 24, Werkzeug 3.1, Windows) it was the proxy that
-  // lost about half of the responses, and the browser re-sent one POST
-  // /api/runs three times. The backend now answers "Connection: close", so
-  // the browser does not reuse a closed connection (#66).
-  // VITE_API_BASE_URL='' goes back through the proxy.
-  baseURL: import.meta.env.VITE_API_BASE_URL ?? `${window.location.protocol}//${window.location.hostname}:5001`,
+  // publishes that port too). #49 had sent dev requests through the Vite
+  // /api proxy after a direct POST died with ERR_CONNECTION_RESET. Measured
+  // on 2026-10-01 (Vite 7, Node 24, Werkzeug 3.1, Windows) it was the other
+  // way round: through the proxy about half of the responses were lost and
+  // the browser re-sent one POST /api/runs three times; direct, a whole run
+  // had no failed request and created one run (#66). The Werkzeug dev server
+  // answered "Connection: close" there, so the browser did not reuse a
+  // closed connection.
+  // An https page cannot call the plain-http :5001, so it stays same-origin
+  // (a reverse proxy in front). VITE_API_BASE_URL overrides both; '' goes
+  // through the dev proxy.
+  baseURL: import.meta.env.VITE_API_BASE_URL
+    ?? (window.location.protocol === 'https:' ? '' : `http://${window.location.hostname}:5001`),
   timeout: 300000, // 5分钟超时（本体生成可能需要较长时间）
   headers: {
     'Content-Type': 'application/json'
@@ -46,12 +51,13 @@ service.interceptors.response.use(
     return res
   },
   error => {
-    // A read that never got an answer (connection reset, often through the
-    // dev server's /api proxy, #66): try again a few times. Writes are not
-    // retried; the server may have acted on them.
+    // A read that never got an answer (a connection reset, a backend
+    // restart, #66): try again a few times. Writes are not retried; the
+    // server may have acted on them.
     const config = error.config
-    // The proxy's own failure is a 5xx without the backend's JSON body.
-    const unanswered = !error.response || (error.response.status >= 500 && typeof error.response.data !== 'object')
+    // No answer at all; not a timeout (that already waited minutes) and not
+    // an error the server chose to send.
+    const unanswered = !error.response && error.code !== 'ECONNABORTED'
     if (config && unanswered && (config.method || 'get') === 'get' && (config.retries ?? 0) < GET_RETRIES) {
       config.retries = (config.retries ?? 0) + 1
       return new Promise((resolve) => setTimeout(resolve, 250 * config.retries)).then(() => service(config))

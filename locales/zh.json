@@ -697,7 +697,15 @@
       "start": "开始",
       "starting": "启动中…",
       "mode": "模式",
-      "modeDefault": "后端默认"
+      "modeDefault": "后端默认",
+      "compareOptions": "比较几个方案（2–4 个）",
+      "optionsHint": "每个方案用同一份文档与同样的 seed 模拟，只差在公布的方案内容。第一个是基准，其他方案都和它比。",
+      "baselineName": "基准名称，例如：维持现状",
+      "optionName": "方案名称",
+      "optionText": "方案内容，例如：三年分三次调涨",
+      "addOption": "＋ 加一个方案",
+      "optionsIncomplete": "每个方案都要有名称与内容，才能开始。",
+      "optionsDuplicate": "方案名称不能重复。"
     },
     "status": {
       "queued": "排队中",
@@ -806,6 +814,20 @@
       "unavailable": "无法比较：{reason}",
       "acrossSeeds": "跨 seed 的平均值比较。",
       "firstSeed": "比较第一个 seed 的结论（有一边只有一个 seed）。"
+    },
+    "options": {
+      "title": "方案比较",
+      "option": "方案",
+      "baseline": "基准",
+      "opposeShare": "反对帖子比例",
+      "vsTendency": "倾向差（对基准）",
+      "vsOppose": "反对比例差（对基准）",
+      "points": " 个百分点",
+      "sameSign": "{same}/{seeds} 个 seed 同向",
+      "unclear": "无法区分",
+      "note": "差距要在至少 3 个 seed 都同向时才算可区分（3 个 seed 时，没有差异也有 1/4 的概率全部同向，差距小时请用 5 个 seed）。要依结果做决定，请把前两名用 local-llm 确认。",
+      "mostOpposed": "各方案最反对的帖子",
+      "fewSeeds": "seed 太少，无法区分"
     }
   }
 }

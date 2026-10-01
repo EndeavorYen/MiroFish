@@ -123,15 +123,46 @@ def graph(ctx: StageContext) -> dict[str, Any]:
 
 
 def prepare(ctx: StageContext) -> dict[str, Any]:
-    simulation_id = ctx.artifacts.get("simulation_id") or _call(ctx, "post", "/api/simulation/create", json={
+    """The prepared simulation; with ``options``, one per option on the
+    shared graph, each with the option announced (#56, #66)."""
+
+    options = ctx.params.get("options")
+    if not options:
+        def remember(simulation_id):
+            ctx.store.update(ctx.run_id, artifacts={"simulation_id": simulation_id})  # a resume reuses it
+
+        return {"simulation_id": _prepare_one(ctx, ctx.artifacts.get("simulation_id"), None, remember)}
+
+    ids = {p["option"]: p["simulation_id"] for p in ctx.artifacts.get("option_simulations") or []}
+
+    def listed():
+        return [{"option": o["name"], "simulation_id": ids[o["name"]]} for o in options if o["name"] in ids]
+
+    for i, option in enumerate(options, 1):
+        ctx.emit("progress", {"message": f"{i}/{len(options)} {option['name']}"})
+
+        def remember(simulation_id, name=option["name"]):
+            ids[name] = simulation_id
+            ctx.store.update(ctx.run_id, artifacts={"option_simulations": listed()})  # a resume reuses them all
+
+        _prepare_one(ctx, ids.get(option["name"]), option, remember)
+    prepared = listed()
+    return {"simulation_id": prepared[0]["simulation_id"], "option_simulations": prepared}
+
+
+def _prepare_one(ctx: StageContext, simulation_id: str | None, option: dict[str, str] | None,
+                 remember: Callable[[str], None]) -> str:
+    simulation_id = simulation_id or _call(ctx, "post", "/api/simulation/create", json={
         "project_id": ctx.artifacts["project_id"],
         "graph_id": ctx.artifacts["graph_id"],
         "enable_twitter": True,
         "enable_reddit": True,
     })["simulation_id"]
-    ctx.store.update(ctx.run_id, artifacts={"simulation_id": simulation_id})  # a resume reuses it
-    data = _call(ctx, "post", "/api/simulation/prepare", json={
-        "simulation_id": simulation_id, "use_llm_for_profiles": True, "parallel_profile_count": 5})
+    remember(simulation_id)
+    body = {"simulation_id": simulation_id, "use_llm_for_profiles": True, "parallel_profile_count": 5}
+    if option:
+        body["option"] = option
+    data = _call(ctx, "post", "/api/simulation/prepare", json=body)
     if not data.get("already_prepared"):
         task_id = data.get("task_id")
         _poll(ctx, lambda: _call(ctx, "post", "/api/simulation/prepare/status",
@@ -139,7 +170,7 @@ def prepare(ctx: StageContext) -> dict[str, Any]:
               done=lambda d: d.get("status") in ("completed", "ready"),
               failed=lambda d: (d.get("error") or d.get("message") or "preparation failed") if d.get("status") == "failed" else None,
               timeout_s=ctx.extra.get("prepare_timeout_s", 3600), what="preparation")
-    return {"simulation_id": simulation_id}
+    return simulation_id
 
 
 # The simulation seeds Twitter with ``seed`` and Reddit with ``seed + 1``
@@ -176,15 +207,22 @@ def simulate(ctx: StageContext) -> dict[str, Any]:
     first seed's stays open for the report and interviews."""
 
     seeds = seed_values(ctx.params)
+    # With options, every option runs on the same seeds; its first seed uses
+    # the option's prepared simulation, the others copies of it.
+    bases = ctx.artifacts.get("option_simulations") or [{"option": None, "simulation_id": ctx.artifacts["simulation_id"]}]
     runs = list(ctx.artifacts.get("seed_simulations") or [])
-    known = {r["seed"] for r in runs}
-    for seed in seeds:
-        if seed in known:
-            continue
-        simulation_id = ctx.artifacts["simulation_id"] if not runs else _call(
-            ctx, "post", "/api/simulation/copy", json={"simulation_id": ctx.artifacts["simulation_id"]})["simulation_id"]
-        runs.append({"seed": seed, "simulation_id": simulation_id})
-        ctx.store.update(ctx.run_id, artifacts={"seed_simulations": runs})  # a resume reuses the copies
+    known = {(r.get("option"), r["seed"]) for r in runs}
+    for base in bases:
+        for i, seed in enumerate(seeds):
+            if (base["option"], seed) in known:
+                continue
+            simulation_id = base["simulation_id"] if i == 0 else _call(
+                ctx, "post", "/api/simulation/copy", json={"simulation_id": base["simulation_id"]})["simulation_id"]
+            run = {"seed": seed, "simulation_id": simulation_id}
+            if base["option"] is not None:
+                run["option"] = base["option"]
+            runs.append(run)
+            ctx.store.update(ctx.run_id, artifacts={"seed_simulations": runs})  # a resume reuses the copies
 
     def status(run):
         return _call(ctx, "get", f"/api/simulation/{run['simulation_id']}/run-status")
@@ -193,7 +231,8 @@ def simulate(ctx: StageContext) -> dict[str, Any]:
     pending = [r for r in runs if states[r["simulation_id"]].get("runner_status") != "completed"]  # a resume skips finished seeds
     limit = parallel_limit(len(pending))
     if pending:
-        ctx.emit("progress", {"progress": 0, "message": f"{len(runs)} seeds, {limit} at a time"})
+        per = f"{len(seeds)} seeds" + (f" x {len(bases)} options" if len(bases) > 1 else "")
+        ctx.emit("progress", {"progress": 0, "message": f"{per}, {limit} at a time"})
     going: list[dict[str, Any]] = []
     timeout_s = ctx.extra.get("simulate_timeout_s", 6 * 3600)
     deadline = time.monotonic() + timeout_s
@@ -286,32 +325,59 @@ def report(ctx: StageContext) -> dict[str, Any]:
 
 
 def consistency(ctx: StageContext) -> dict[str, Any]:
-    """How far the seeds agree (main camp, tendency, trend, role ranking);
-    ``scripts/scan.py``'s conclusions, for this run. One seed: nothing to
-    compare."""
+    """How far the seeds agree (main camp, tendency, trend, role ranking;
+    ``scripts/scan.py``'s conclusions) and, with ``options``, how the options
+    differ from the baseline (``scripts/compare_options.py``). Every post is
+    scored on the same question, the base requirement's event, so options
+    are compared on the same scale."""
 
     runs = ctx.artifacts.get("seed_simulations") or []
+    options = ctx.params.get("options") or []
+    baseline = options[0]["name"] if options else None
     if len(runs) < 2:
         return {"consistency": None}
     from ..services.metrics_report import default_score_fn, scan_conclusions
+    from ..services.option_compare import compare
     from ..services.seed_consistency import aggregate
     from ..services.simulation_manager import SimulationManager
+    from ..simulation_policy.tiers import detect_content_lang, event_phrase, stance_check_question
 
+    requirement = ctx.params.get("simulation_requirement") or ""
+    question = stance_check_question(event_phrase(requirement), detect_content_lang(requirement))
     # The simulations and the report are done: a scoring problem (e.g. no
     # System One model) is recorded, not turned into a failed run.
-    scans = []
+    scans: dict[Any, dict[int, dict]] = {}
+    failed = []
     try:
         score_fn = default_score_fn()
-        for i, run in enumerate(runs, 1):
-            ctx.emit("progress", {"progress": round(100 * (i - 1) / len(runs)), "message": f"seed {i}/{len(runs)}"})
-            scan = scan_conclusions(os.path.join(SimulationManager.SIMULATION_DATA_DIR, run["simulation_id"]), score_fn)
-            if scan:
-                scans.append(scan)
     except Exception as error:
         return {"consistency": None, "consistency_error": f"{type(error).__name__}: {error}"}
-    if len(scans) < 2:
-        return {"consistency": None, "consistency_error": f"only {len(scans)} of {len(runs)} seeds have posts to compare"}
-    return {"consistency": aggregate(ctx.run_id, scans)}
+    for i, run in enumerate(runs, 1):
+        ctx.emit("progress", {"progress": round(100 * (i - 1) / len(runs)), "message": f"run {i}/{len(runs)}"})
+        try:  # one run that cannot be scored does not lose the others
+            scan = scan_conclusions(os.path.join(SimulationManager.SIMULATION_DATA_DIR, run["simulation_id"]),
+                                    score_fn, question=question)
+        except Exception as error:
+            failed.append(f"{run.get('option') or ''}#{run['seed']}: {type(error).__name__}: {error}".lstrip("#"))
+            continue
+        if scan:
+            scans.setdefault(run.get("option"), {})[run["seed"]] = scan
+
+    out: dict[str, Any] = {"consistency": None}
+    if failed:
+        out["scoring_errors"] = failed
+    seeds = list((scans.get(baseline) or {}).values())
+    if len(seeds) >= 2:
+        out["consistency"] = aggregate(ctx.run_id, seeds)
+    elif failed:
+        out["consistency_error"] = f"{len(failed)} of {len(runs)} runs could not be scored: {failed[0]}"
+    elif len(seed_values(ctx.params)) >= 2:
+        out["consistency_error"] = f"only {len(seeds)} seeds have posts to compare"
+    if options:
+        out["options_comparison"] = compare(scans, [o["name"] for o in options])
+        if not out["options_comparison"]:
+            out["options_error"] = f"the baseline {baseline!r} has no posts to compare"
+    return out
 
 
 REAL_STAGES = {"ontology": ontology, "graph": graph, "prepare": prepare, "simulate": simulate, "report": report,

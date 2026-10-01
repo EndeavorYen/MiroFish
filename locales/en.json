@@ -682,7 +682,15 @@
       "start": "Start",
       "starting": "Starting…",
       "mode": "Mode",
-      "modeDefault": "Backend default"
+      "modeDefault": "Backend default",
+      "compareOptions": "Compare options (2–4)",
+      "optionsHint": "Every option runs on the same document and seeds; only the announced plan differs. The first is the baseline the others are compared with.",
+      "baselineName": "Baseline name, e.g. no change",
+      "optionName": "Option name",
+      "optionText": "The option, e.g. three rises over three years",
+      "addOption": "+ Add an option",
+      "optionsIncomplete": "Every option needs a name and a text before you start.",
+      "optionsDuplicate": "Option names must be different."
     },
     "status": {
       "queued": "Queued",
@@ -791,6 +799,20 @@
       "unavailable": "Cannot compare: {reason}",
       "acrossSeeds": "Seed means compared.",
       "firstSeed": "First-seed conclusions compared (one of the runs has a single seed)."
+    },
+    "options": {
+      "title": "Options compared",
+      "option": "Option",
+      "baseline": "baseline",
+      "opposeShare": "Opposing posts",
+      "vsTendency": "Tendency vs baseline",
+      "vsOppose": "Opposing share vs baseline",
+      "points": " points",
+      "sameSign": "{same}/{seeds} seeds agree",
+      "unclear": "cannot tell apart",
+      "note": "A difference counts only when at least 3 seeds all move the same way (with 3 that still happens 1 time in 4 with no difference at all; use 5 seeds for small differences). Before deciding, confirm the top two with local-llm.",
+      "mostOpposed": "Most opposed posts per option",
+      "fewSeeds": "too few seeds to tell"
     }
   }
 }

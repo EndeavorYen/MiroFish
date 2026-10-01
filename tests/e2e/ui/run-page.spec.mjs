@@ -440,3 +440,61 @@ test('two multi-seed runs are compared on their seed means, and only heavier mod
   await expect(page.getByTestId('rerun-local-llm')).toBeVisible()
   await expect(page.getByTestId('rerun-local-hybrid')).toHaveCount(0)  // not lighter than this run
 })
+
+test('options are filled in before Start and sent with the run', async ({ page }) => {
+  const state = {
+    routes: {
+      'GET /api/runs': json([]),
+      'POST /api/runs': { status: 500, contentType: 'application/json', body: JSON.stringify({ success: false, error: 'stop here' }) },
+    },
+  }
+  await mockApi(page, state)
+
+  await page.goto('/')
+  await page.getByTestId('document-text').fill('北港市擬調漲水費。')
+  await page.getByTestId('requirement').fill('預測反應')
+  await page.locator('details.advanced summary').click()
+  await page.getByTestId('compare-options').check()
+  await expect(page.getByTestId('start')).toBeDisabled()  // two empty options
+  await expect(page.getByTestId('options-problem')).toContainText('名稱與內容')
+  await page.getByTestId('option-name-0').fill('維持現狀')
+  await page.getByTestId('option-text-0').fill('水費不調整。')
+  await page.getByTestId('option-name-1').fill('分階段')
+  await page.getByTestId('option-text-1').fill('三年分三次調漲。')
+  await expect(page.getByTestId('start')).toBeEnabled()
+  await page.getByTestId('option-name-1').fill('維持現狀')  // the same name twice
+  await expect(page.getByTestId('options-problem')).toContainText('不能重複')
+  await expect(page.getByTestId('start')).toBeDisabled()
+  await page.getByTestId('option-name-1').fill('分階段')
+  await page.getByTestId('start').click()
+
+  await expect(page.getByTestId('input-error')).toBeVisible()
+  const form = state.requests.find((r) => r.key === 'POST /api/runs').body
+  const sent = form.match(/name="options"\r\n\r\n(.*)\r\n/)[1]
+  expect(JSON.parse(sent)).toEqual([{ name: '維持現狀', text: '水費不調整。' }, { name: '分階段', text: '三年分三次調漲。' }])
+})
+
+test('the result compares each option with the baseline', async ({ page }) => {
+  const block = (mean, same, distinct) => ({ mean, sd: 0.01, range: [mean - 0.01, mean + 0.01], seeds: 3, same_sign: same, distinct })
+  const comparison = [
+    { option: '維持現狀', seeds: [1, 1001, 2001], tendency: 0.42, oppose_share: 0.38, most_opposed_posts: [{ stance: 0.1, text: '漲價毫無道理' }] },
+    { option: '分階段', seeds: [1, 1001, 2001], tendency: 0.55, oppose_share: 0.22, most_opposed_posts: [], vs_baseline: { tendency: block(0.13, 3, true), oppose_share: block(-0.16, 3, true) } },
+    { option: '低收入減免', seeds: [1, 1001, 2001], tendency: 0.44, oppose_share: 0.36, most_opposed_posts: [], vs_baseline: { tendency: block(0.02, 2, false), oppose_share: block(-0.02, 2, false) } },
+  ]
+  const state = {
+    routes: {
+      [`GET /api/runs/${RUN}`]: json(runRecord('completed', { artifacts: { ...DONE_ARTIFACTS, options_comparison: comparison } })),
+      'GET /api/report/report_abc123/metrics': json(METRICS),
+      'GET /api/report/report_abc123': json({ markdown_content: '' }),
+    },
+  }
+  await mockApi(page, state)
+
+  await page.goto(`/runs/${RUN}`)
+  const table = page.getByTestId('options-compare')
+  await expect(table.locator('[data-option="維持現狀"]')).toContainText('基準')
+  await expect(table.locator('[data-option="分階段"]')).toContainText('+0.13 (3/3 個 seed 同向)')
+  await expect(table.locator('[data-option="分階段"]')).toContainText('-16.0 個百分點')
+  await expect(table.locator('[data-option="低收入減免"]')).toContainText('無法區分')
+  await expect(page.locator('.head .meta')).toContainText('3 個 seed')  // per option, not 3 options x 3 seeds
+})

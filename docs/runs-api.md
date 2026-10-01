@@ -27,6 +27,7 @@
 | `seed` | 否 | 第一個 seed，預設 1；其餘依序加 1000（模擬用 `seed` 和 `seed + 1` 分別驅動兩個平台，相鄰的 seed 會共用亂數序列） |
 | `confirm_roles` | 否 | `true` 時圖譜建好後暫停，等確認角色 |
 | `mode` | 否 | `local`／`local-hybrid`／`local-llm`；預設為後端的 `MIROFISH_PROFILE` |
+| `options` | 否 | 2–4 個方案 `{"name", "text"}`，第一個是基準（見「方案比較」） |
 | `project_name` | 否 | 專案名稱 |
 
 模式預設是後端的 `MIROFISH_PROFILE`，也可以每個 run 自己指定（`mode`），記在 run 的參數 `profile`。`Accept-Language` 也會被記下，各階段用同一種語言。
@@ -91,6 +92,16 @@ curl -N http://localhost:5001/api/runs/run_xxxxxxxxxxxx/events
 | `confirm` | 需要用 `local-llm` 確認的原因；空的代表 seed 間一致 |
 
 seed 之間一致，只代表這條路徑自己穩定，不代表和 LLM 路徑一致（見 docs/local-first.md 的 G5）。
+
+### 方案比較
+
+`options`（2–4 個 `{"name", "text"}`，第一個是基準；multipart 時是 JSON 字串）讓一個 run 比較幾個方案的反應（`scripts/compare_options.py` 的流程）：
+
+- 所有方案共用同一張圖譜；每個方案各準備一次，方案內容同時寫進需求與文件（`POST /api/simulation/prepare` 的 `option`）。
+- 每個方案跑同一組 seed，產物 `seed_simulations` 的每一筆多了 `option`；報告用基準方案的第一個 seed。
+- `consistency` 階段用**基準需求**的同一題為所有貼文評分，產出基準方案的 seed 一致性（`consistency`），以及 `options_comparison`：每個方案的整體傾向、反對貼文比例，和基準的逐 seed 配對差距（平均、範圍、幾個 seed 同向）。至少 3 個 seed 全部同向才標為可區分。
+
+模擬數 = 方案數 × seed 數，同時跑幾個仍由記憶體上限決定。
 
 ### 確認角色
 

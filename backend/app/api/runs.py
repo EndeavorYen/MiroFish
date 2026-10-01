@@ -25,6 +25,7 @@ from . import runs_bp
 from .. import run_mode
 from ..config import Config
 from ..runs.orchestrator import RunBusy
+from ..services import option_compare
 from ..runs.service import get_runs
 from ..runs.store import AWAITING, FAILED, INTERRUPTED, TERMINAL
 from ..utils.locale import t
@@ -68,7 +69,9 @@ def create_run():
     (required); optional ``max_rounds`` (default 24), ``seeds`` (how many,
     default 3), ``seed`` (the first one, default 1), ``confirm_roles``
     (pause after the graph), ``project_name``, ``mode`` (local, local-hybrid
-    or local-llm; default the backend's ``MIROFISH_PROFILE``)."""
+    or local-llm; default the backend's ``MIROFISH_PROFILE``), ``options``
+    (2-4 ``{"name", "text"}``, the first the baseline; a JSON string in a
+    form) to compare how each option is received."""
 
     form = request.form if request.files or request.form else (request.get_json(silent=True) or {})
     requirement = form.get("simulation_requirement") or ""
@@ -98,6 +101,15 @@ def create_run():
         confirm_roles = confirm_roles.lower() in ("1", "true", "yes")
     if not isinstance(confirm_roles, (bool, type(None))):
         return _error("confirm_roles must be a boolean", 400)
+    options = form.get("options")
+    try:
+        if isinstance(options, str):
+            options = json.loads(options) if options.strip() else None
+        options = option_compare.validate(options) if options not in (None, []) else None
+    except (ValueError, TypeError) as error:  # json.JSONDecodeError is a ValueError
+        return _error(f"options: {error}", 400)
+    if options and len(options) * seeds > option_compare.MAX_RUNS:
+        return _error(f"options x seeds must be at most {option_compare.MAX_RUNS}", 400)
     mode = form.get("mode") or run_mode.process_profile()
     problem = _mode_problem(mode) if form.get("mode") else None
     if problem:
@@ -109,6 +121,7 @@ def create_run():
         "seed": seed,
         "seeds": seeds,
         "confirm_roles": bool(confirm_roles),
+        "options": options,
         "project_name": form.get("project_name") or "",
         "profile": mode,
         "locale": request.headers.get("Accept-Language", ""),

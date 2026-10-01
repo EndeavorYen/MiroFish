@@ -83,6 +83,8 @@
       </section>
       <p v-else-if="run.artifacts?.consistency_error" class="muted">{{ $t('run.result.consistencyFailed', { reason: run.artifacts.consistency_error }) }}</p>
 
+      <OptionsCompare v-if="run.artifacts?.options_comparison?.length" :rows="run.artifacts.options_comparison" />
+
       <!-- This run confirms another one: the two side by side. -->
       <ModeCompare v-if="run.params?.confirms && scan" :run="run" :scan="scan" />
 
@@ -121,6 +123,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import ModeCompare from './ModeCompare.vue'
+import OptionsCompare from './OptionsCompare.vue'
 import { MODES, getReport, getReportMetrics, rerunRun } from '../../api/runs'
 
 const props = defineProps({ run: { type: Object, required: true } })
@@ -156,7 +159,8 @@ const error = ref('')
 
 const scan = computed(() => metrics.value?.scan || null)
 const consistency = computed(() => props.run.artifacts?.consistency || null)
-const seedCount = computed(() => props.run.artifacts?.seed_simulations?.length || props.run.params?.seeds || 1)
+// Seeds per option: seed_simulations holds every option's seeds.
+const seedCount = computed(() => props.run.params?.seeds || new Set((props.run.artifacts?.seed_simulations || []).map((r) => r.seed)).size || 1)
 
 const signed = (value) => `${value > 0 ? '+' : ''}${value.toFixed(2)}`
 const names = (list) => (list || []).map((r) => r.name).join('、')

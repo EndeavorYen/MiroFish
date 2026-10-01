@@ -697,7 +697,15 @@
       "start": "開始",
       "starting": "啟動中…",
       "mode": "模式",
-      "modeDefault": "後端預設"
+      "modeDefault": "後端預設",
+      "compareOptions": "比較幾個方案（2–4 個）",
+      "optionsHint": "每個方案用同一份文件與同樣的 seed 模擬，只差在公布的方案內容。第一個是基準，其他方案都和它比。",
+      "baselineName": "基準名稱，例如：維持現狀",
+      "optionName": "方案名稱",
+      "optionText": "方案內容，例如：三年分三次調漲",
+      "addOption": "＋ 加一個方案",
+      "optionsIncomplete": "每個方案都要有名稱與內容，才能開始。",
+      "optionsDuplicate": "方案名稱不能重複。"
     },
     "status": {
       "queued": "排隊中",
@@ -806,6 +814,20 @@
       "unavailable": "無法比較：{reason}",
       "acrossSeeds": "跨 seed 的平均值比較。",
       "firstSeed": "比較第一個 seed 的結論（有一邊只有一個 seed）。"
+    },
+    "options": {
+      "title": "方案比較",
+      "option": "方案",
+      "baseline": "基準",
+      "opposeShare": "反對貼文比例",
+      "vsTendency": "傾向差（對基準）",
+      "vsOppose": "反對比例差（對基準）",
+      "points": " 個百分點",
+      "sameSign": "{same}/{seeds} 個 seed 同向",
+      "unclear": "無法區分",
+      "note": "差距要在至少 3 個 seed 都同向時才算可區分（3 個 seed 時，沒有差異也有 1/4 的機率全部同向，差距小時請用 5 個 seed）。要依結果做決定，請把前兩名用 local-llm 確認。",
+      "mostOpposed": "各方案最反對的貼文",
+      "fewSeeds": "seed 太少，無法區分"
     }
   }
 }

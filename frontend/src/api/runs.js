@@ -9,7 +9,7 @@ export const STOPPED = ['completed', 'failed', 'interrupted', 'awaiting_confirma
 
 export const MODES = ['local', 'local-hybrid', 'local-llm']
 
-export const createRun = ({ file, text, requirement, maxRounds, seeds, confirmRoles, mode }) => {
+export const createRun = ({ file, text, requirement, maxRounds, seeds, confirmRoles, mode, options }) => {
   const form = new FormData()
   if (file) form.append('file', file)
   else form.append('document_text', text)
@@ -18,6 +18,7 @@ export const createRun = ({ file, text, requirement, maxRounds, seeds, confirmRo
   form.append('seeds', String(seeds))
   form.append('confirm_roles', confirmRoles ? 'true' : 'false')
   if (mode) form.append('mode', mode)  // empty: the backend's MIROFISH_PROFILE
+  if (options) form.append('options', JSON.stringify(options))  // the first is the baseline
   return service.post('/api/runs', form, { headers: { 'Content-Type': 'multipart/form-data' } })
 }
 

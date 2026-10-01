@@ -60,6 +60,23 @@
           </label>
         </div>
         <p class="hint">{{ $t('run.input.seedsHint') }}</p>
+
+        <label class="check compare-toggle">
+          <input v-model="compare" type="checkbox" data-test="compare-options" />
+          {{ $t('run.input.compareOptions') }}
+        </label>
+        <div v-if="compare" class="options" data-test="options">
+          <p class="hint">{{ $t('run.input.optionsHint') }}</p>
+          <div v-for="(option, i) in options" :key="i" class="option-row">
+            <input v-model="option.name" type="text" maxlength="40" :placeholder="i === 0 ? $t('run.input.baselineName') : $t('run.input.optionName')" :data-test="`option-name-${i}`" />
+            <input v-model="option.text" type="text" maxlength="300" :placeholder="$t('run.input.optionText')" :data-test="`option-text-${i}`" />
+            <button v-if="options.length > 2" type="button" class="remove" @click="options.splice(i, 1)">×</button>
+          </div>
+          <p v-if="optionsProblem" class="hint warn" data-test="options-problem">{{ $t(`run.input.${optionsProblem}`) }}</p>
+          <button v-if="options.length < 4" type="button" class="add" data-test="add-option" @click="options.push({ name: '', text: '' })">
+            {{ $t('run.input.addOption') }}
+          </button>
+        </div>
       </details>
 
       <p v-if="error" class="error" data-test="input-error">{{ error }}</p>
@@ -84,11 +101,22 @@ const maxRounds = ref(24)
 const seeds = ref(3)
 const confirmRoles = ref(false)
 const mode = ref('')
+const compare = ref(false)
+const options = ref([{ name: '', text: '' }, { name: '', text: '' }])
+// Compared options must all be filled in: 2 to 4, the first the baseline.
+const filledOptions = computed(() => options.value.map((o) => ({ name: o.name.trim(), text: o.text.trim() })))
+const optionsProblem = computed(() => {
+  if (!compare.value) return ''
+  if (!filledOptions.value.every((o) => o.name && o.text)) return 'optionsIncomplete'
+  if (new Set(filledOptions.value.map((o) => o.name)).size !== filledOptions.value.length) return 'optionsDuplicate'
+  return ''
+})
+const optionsReady = computed(() => !optionsProblem.value)
 const starting = ref(false)
 const error = ref('')
 
 const ready = computed(() =>
-  requirement.value.trim() && (source.value === 'text' ? text.value.trim() : file.value))
+  requirement.value.trim() && (source.value === 'text' ? text.value.trim() : file.value) && optionsReady.value)
 
 function pickFile(event) {
   file.value = event.target.files?.[0] || null
@@ -106,6 +134,7 @@ async function start() {
       seeds: seeds.value,
       confirmRoles: confirmRoles.value,
       mode: mode.value,
+      options: compare.value ? filledOptions.value : null,
     })
     emit('started', response.data.run_id)
   } catch (err) {
@@ -215,6 +244,50 @@ input:focus {
   font-size: 12px;
   color: #777;
   margin-top: 8px;
+}
+
+.hint.warn {
+  color: #8a6d00;
+}
+
+.compare-toggle {
+  margin-top: 16px;
+  font-size: 13px;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.option-row {
+  display: grid;
+  grid-template-columns: 160px 1fr 28px;
+  gap: 6px;
+}
+
+.option-row input {
+  font: inherit;
+  font-size: 13px;
+  border: 1px solid #ccc;
+  padding: 6px 8px;
+}
+
+.remove,
+.add {
+  border: 1px solid #999;
+  background: #fff;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.add {
+  align-self: flex-start;
+  padding: 4px 10px;
 }
 
 .error {

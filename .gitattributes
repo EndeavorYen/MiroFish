@@ -1,0 +1,2 @@
+# 倉庫內一律存 LF；Windows checkout 也用 LF，避免 hash／腳本因 CRLF 出錯
+* text=auto eol=lf

@@ -3,6 +3,7 @@ import { defineConfig } from '@playwright/test'
 export default defineConfig({
   testDir: '.',
   testMatch: /\.spec\.mjs$/,
+  testIgnore: /[\\/]ui[\\/]/,  // the mocked UI tests have their own config (ui/)
   timeout: 90 * 60_000,
   workers: 1,
   reporter: [['list']],

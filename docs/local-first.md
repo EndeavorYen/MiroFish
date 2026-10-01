@@ -466,12 +466,16 @@ uv run python scripts/calibrate_model.py --base-url http://127.0.0.1:8002/v1 --m
   --prompt-format plain --out phi.json [--write]
 ```
 
-瀏覽器端到端（需要本機模型服務、`MIROFISH_PROFILE=local` 的後端與前端，不放進預設 CI）：
+瀏覽器端到端：
 
 ```bash
 npm install && npx playwright install chromium-headless-shell
-npm run test:e2e        # E2E_ROUNDS 可調回合數（預設 10），截圖在 tests/e2e/artifacts/
+npm run test:ui         # 前端對假的 API：一次「開始」到結果、失敗畫面、確認角色、連線重設；不需要任何服務
+npm run test:e2e        # 真的跑一次：需要本機模型服務、MIROFISH_PROFILE=local 的後端與前端（不放進預設 CI）
+                        # E2E_ROUNDS（預設 10）、E2E_SEEDS（預設 2）；截圖在 tests/e2e/artifacts/
 ```
+
+2026-10-01 實測新的單頁 UI（#66，golden 種子、6 回合、2 個 seed）：按一次「開始」，1.1 分鐘到結果頁，可信度卡片與 seed 一致性都有內容，只建立了一個 run。
 
 2026-09-28 實測（llama.cpp 路徑、golden 種子、10 回合）：通過，耗時 2.3 分鐘。報告頁 6/6 章節都有內容，狀態 Completed，完成後停止輪詢。
 

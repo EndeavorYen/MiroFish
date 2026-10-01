@@ -102,13 +102,14 @@ def create_run():
     if not isinstance(confirm_roles, (bool, type(None))):
         return _error("confirm_roles must be a boolean", 400)
     options = form.get("options")
-    if options not in (None, "", []):
-        try:
-            options = option_compare.validate(json.loads(options) if isinstance(options, str) else options)
-        except (ValueError, TypeError) as error:  # json.JSONDecodeError is a ValueError
-            return _error(f"options: {error}", 400)
-    else:
-        options = None
+    try:
+        if isinstance(options, str):
+            options = json.loads(options) if options.strip() else None
+        options = option_compare.validate(options) if options not in (None, []) else None
+    except (ValueError, TypeError) as error:  # json.JSONDecodeError is a ValueError
+        return _error(f"options: {error}", 400)
+    if options and len(options) * seeds > option_compare.MAX_RUNS:
+        return _error(f"options x seeds must be at most {option_compare.MAX_RUNS}", 400)
     mode = form.get("mode") or run_mode.process_profile()
     problem = _mode_problem(mode) if form.get("mode") else None
     if problem:

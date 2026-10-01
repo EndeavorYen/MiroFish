@@ -133,17 +133,20 @@ def prepare(ctx: StageContext) -> dict[str, Any]:
 
         return {"simulation_id": _prepare_one(ctx, ctx.artifacts.get("simulation_id"), None, remember)}
 
-    known = {p["option"]: p["simulation_id"] for p in ctx.artifacts.get("option_simulations") or []}
-    prepared: list[dict[str, str]] = []
+    ids = {p["option"]: p["simulation_id"] for p in ctx.artifacts.get("option_simulations") or []}
+
+    def listed():
+        return [{"option": o["name"], "simulation_id": ids[o["name"]]} for o in options if o["name"] in ids]
+
     for i, option in enumerate(options, 1):
-        ctx.emit("progress", {"progress": round(100 * (i - 1) / len(options)), "message": f"{i}/{len(options)} {option['name']}"})
+        ctx.emit("progress", {"message": f"{i}/{len(options)} {option['name']}"})
 
         def remember(simulation_id, name=option["name"]):
-            mine = {"option": name, "simulation_id": simulation_id}
-            ctx.store.update(ctx.run_id, artifacts={"option_simulations": [*prepared, mine]})  # a resume reuses it
+            ids[name] = simulation_id
+            ctx.store.update(ctx.run_id, artifacts={"option_simulations": listed()})  # a resume reuses them all
 
-        simulation_id = _prepare_one(ctx, known.get(option["name"]), option, remember)
-        prepared.append({"option": option["name"], "simulation_id": simulation_id})
+        _prepare_one(ctx, ids.get(option["name"]), option, remember)
+    prepared = listed()
     return {"simulation_id": prepared[0]["simulation_id"], "option_simulations": prepared}
 
 
@@ -228,7 +231,8 @@ def simulate(ctx: StageContext) -> dict[str, Any]:
     pending = [r for r in runs if states[r["simulation_id"]].get("runner_status") != "completed"]  # a resume skips finished seeds
     limit = parallel_limit(len(pending))
     if pending:
-        ctx.emit("progress", {"progress": 0, "message": f"{len(runs)} seeds, {limit} at a time"})
+        per = f"{len(seeds)} seeds" + (f" x {len(bases)} options" if len(bases) > 1 else "")
+        ctx.emit("progress", {"progress": 0, "message": f"{per}, {limit} at a time"})
     going: list[dict[str, Any]] = []
     timeout_s = ctx.extra.get("simulate_timeout_s", 6 * 3600)
     deadline = time.monotonic() + timeout_s
@@ -343,25 +347,36 @@ def consistency(ctx: StageContext) -> dict[str, Any]:
     # The simulations and the report are done: a scoring problem (e.g. no
     # System One model) is recorded, not turned into a failed run.
     scans: dict[Any, dict[int, dict]] = {}
+    failed = []
     try:
         score_fn = default_score_fn()
-        for i, run in enumerate(runs, 1):
-            ctx.emit("progress", {"progress": round(100 * (i - 1) / len(runs)), "message": f"run {i}/{len(runs)}"})
-            scan = scan_conclusions(os.path.join(SimulationManager.SIMULATION_DATA_DIR, run["simulation_id"]),
-                                    score_fn, question=question)
-            if scan:
-                scans.setdefault(run.get("option"), {})[run["seed"]] = scan
     except Exception as error:
         return {"consistency": None, "consistency_error": f"{type(error).__name__}: {error}"}
+    for i, run in enumerate(runs, 1):
+        ctx.emit("progress", {"progress": round(100 * (i - 1) / len(runs)), "message": f"run {i}/{len(runs)}"})
+        try:  # one run that cannot be scored does not lose the others
+            scan = scan_conclusions(os.path.join(SimulationManager.SIMULATION_DATA_DIR, run["simulation_id"]),
+                                    score_fn, question=question)
+        except Exception as error:
+            failed.append(f"{run.get('option') or ''}#{run['seed']}: {type(error).__name__}: {error}".lstrip("#"))
+            continue
+        if scan:
+            scans.setdefault(run.get("option"), {})[run["seed"]] = scan
 
     out: dict[str, Any] = {"consistency": None}
+    if failed:
+        out["scoring_errors"] = failed
     seeds = list((scans.get(baseline) or {}).values())
     if len(seeds) >= 2:
         out["consistency"] = aggregate(ctx.run_id, seeds)
+    elif failed:
+        out["consistency_error"] = f"{len(failed)} of {len(runs)} runs could not be scored: {failed[0]}"
     elif len(seed_values(ctx.params)) >= 2:
         out["consistency_error"] = f"only {len(seeds)} seeds have posts to compare"
     if options:
         out["options_comparison"] = compare(scans, [o["name"] for o in options])
+        if not out["options_comparison"]:
+            out["options_error"] = f"the baseline {baseline!r} has no posts to compare"
     return out
 
 

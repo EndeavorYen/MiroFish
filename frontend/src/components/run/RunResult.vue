@@ -159,7 +159,8 @@ const error = ref('')
 
 const scan = computed(() => metrics.value?.scan || null)
 const consistency = computed(() => props.run.artifacts?.consistency || null)
-const seedCount = computed(() => props.run.artifacts?.seed_simulations?.length || props.run.params?.seeds || 1)
+// Seeds per option: seed_simulations holds every option's seeds.
+const seedCount = computed(() => props.run.params?.seeds || new Set((props.run.artifacts?.seed_simulations || []).map((r) => r.seed)).size || 1)
 
 const signed = (value) => `${value > 0 ? '+' : ''}${value.toFixed(2)}`
 const names = (list) => (list || []).map((r) => r.name).join('、')

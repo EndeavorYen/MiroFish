@@ -16,6 +16,8 @@ import statistics
 from typing import Any
 
 MIN_OPTIONS, MAX_OPTIONS = 2, 4
+MAX_TEXT = 300  # an option is announced in the requirement: keep the prompts small
+MAX_RUNS = 16  # options x seeds
 # All seeds moving the same way by chance: 1 in 2 with two seeds, 1 in 4 with
 # three. Fewer than three seeds never tell options apart.
 MIN_SEEDS_TO_DISTINGUISH = 3
@@ -44,17 +46,40 @@ def validate_one(option: Any) -> dict[str, str]:
         raise ValueError("every option needs a name and a text")
     if len(name.strip()) > MAX_NAME:
         raise ValueError(f"an option name has at most {MAX_NAME} characters")
+    if len(text.strip()) > MAX_TEXT:
+        raise ValueError(f"an option text has at most {MAX_TEXT} characters")
     return {"name": name.strip(), "text": text.strip()}
 
 
 def with_option(requirement: str, document: str, option: dict[str, str]) -> tuple[str, str]:
-    """The requirement and the document with the option announced in both."""
+    """The requirement and the document with the option announced first in
+    both: the local prep reads the first 300 characters of the requirement and
+    opens the simulation with the document's first sentences, so an option
+    added at the end would not reach the agents."""
 
-    english = bool(re.search(r"[A-Za-z]{4,}", requirement)) and not re.search(r"[一-鿿]", requirement)
-    label = "Announced plan" if english else "公布的方案"
-    addition = f"{label}：{option['text']}"
-    requirement = f"{requirement} {addition}" if english else f"{requirement}{addition}"
-    return requirement, f"{document.rstrip()}\n\n{addition}\n"
+    from ..simulation_policy.tiers import detect_content_lang
+
+    english = detect_content_lang(requirement) == "en"
+    text = option["text"].rstrip()
+    if text[-1] not in ".。!！?？":
+        text += "." if english else "。"
+    addition = f"Announced plan: {text}" if english else f"公布的方案：{text}"
+    return f"{addition}\n{requirement}", f"{addition}\n\n{document.strip()}\n"
+
+
+def record(config_path: str, base_requirement: str, option: dict[str, str]) -> None:
+    """Note in a prepared simulation's config which option it was prepared
+    with, and the requirement without it: the report scores its posts on the
+    base requirement's question, like the comparison does."""
+
+    import json
+
+    with open(config_path, encoding="utf-8") as f:
+        config = json.load(f)
+    config["option"] = option
+    config["base_requirement"] = base_requirement
+    with open(config_path, "w", encoding="utf-8") as f:
+        json.dump(config, f, ensure_ascii=False, indent=2)
 
 
 def run_measures(scan: dict[str, Any]) -> dict[str, float]:

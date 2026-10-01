@@ -703,7 +703,9 @@
       "baselineName": "基准名称，例如：维持现状",
       "optionName": "方案名称",
       "optionText": "方案内容，例如：三年分三次调涨",
-      "addOption": "＋ 加一个方案"
+      "addOption": "＋ 加一个方案",
+      "optionsIncomplete": "每个方案都要有名称与内容，才能开始。",
+      "optionsDuplicate": "方案名称不能重复。"
     },
     "status": {
       "queued": "排队中",

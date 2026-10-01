@@ -69,9 +69,10 @@
           <p class="hint">{{ $t('run.input.optionsHint') }}</p>
           <div v-for="(option, i) in options" :key="i" class="option-row">
             <input v-model="option.name" type="text" maxlength="40" :placeholder="i === 0 ? $t('run.input.baselineName') : $t('run.input.optionName')" :data-test="`option-name-${i}`" />
-            <input v-model="option.text" type="text" :placeholder="$t('run.input.optionText')" :data-test="`option-text-${i}`" />
+            <input v-model="option.text" type="text" maxlength="300" :placeholder="$t('run.input.optionText')" :data-test="`option-text-${i}`" />
             <button v-if="options.length > 2" type="button" class="remove" @click="options.splice(i, 1)">×</button>
           </div>
+          <p v-if="optionsProblem" class="hint warn" data-test="options-problem">{{ $t(`run.input.${optionsProblem}`) }}</p>
           <button v-if="options.length < 4" type="button" class="add" data-test="add-option" @click="options.push({ name: '', text: '' })">
             {{ $t('run.input.addOption') }}
           </button>
@@ -104,7 +105,13 @@ const compare = ref(false)
 const options = ref([{ name: '', text: '' }, { name: '', text: '' }])
 // Compared options must all be filled in: 2 to 4, the first the baseline.
 const filledOptions = computed(() => options.value.map((o) => ({ name: o.name.trim(), text: o.text.trim() })))
-const optionsReady = computed(() => !compare.value || filledOptions.value.every((o) => o.name && o.text))
+const optionsProblem = computed(() => {
+  if (!compare.value) return ''
+  if (!filledOptions.value.every((o) => o.name && o.text)) return 'optionsIncomplete'
+  if (new Set(filledOptions.value.map((o) => o.name)).size !== filledOptions.value.length) return 'optionsDuplicate'
+  return ''
+})
+const optionsReady = computed(() => !optionsProblem.value)
 const starting = ref(false)
 const error = ref('')
 
@@ -237,6 +244,10 @@ input:focus {
   font-size: 12px;
   color: #777;
   margin-top: 8px;
+}
+
+.hint.warn {
+  color: #8a6d00;
 }
 
 .compare-toggle {

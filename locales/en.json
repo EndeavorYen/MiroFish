@@ -688,7 +688,9 @@
       "baselineName": "Baseline name, e.g. no change",
       "optionName": "Option name",
       "optionText": "The option, e.g. three rises over three years",
-      "addOption": "+ Add an option"
+      "addOption": "+ Add an option",
+      "optionsIncomplete": "Every option needs a name and a text before you start.",
+      "optionsDuplicate": "Option names must be different."
     },
     "status": {
       "queued": "Queued",

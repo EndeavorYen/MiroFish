@@ -456,11 +456,16 @@ test('options are filled in before Start and sent with the run', async ({ page }
   await page.locator('details.advanced summary').click()
   await page.getByTestId('compare-options').check()
   await expect(page.getByTestId('start')).toBeDisabled()  // two empty options
+  await expect(page.getByTestId('options-problem')).toContainText('名稱與內容')
   await page.getByTestId('option-name-0').fill('維持現狀')
   await page.getByTestId('option-text-0').fill('水費不調整。')
   await page.getByTestId('option-name-1').fill('分階段')
   await page.getByTestId('option-text-1').fill('三年分三次調漲。')
   await expect(page.getByTestId('start')).toBeEnabled()
+  await page.getByTestId('option-name-1').fill('維持現狀')  // the same name twice
+  await expect(page.getByTestId('options-problem')).toContainText('不能重複')
+  await expect(page.getByTestId('start')).toBeDisabled()
+  await page.getByTestId('option-name-1').fill('分階段')
   await page.getByTestId('start').click()
 
   await expect(page.getByTestId('input-error')).toBeVisible()
@@ -491,4 +496,5 @@ test('the result compares each option with the baseline', async ({ page }) => {
   await expect(table.locator('[data-option="分階段"]')).toContainText('+0.13 (3/3 個 seed 同向)')
   await expect(table.locator('[data-option="分階段"]')).toContainText('-16.0 個百分點')
   await expect(table.locator('[data-option="低收入減免"]')).toContainText('無法區分')
+  await expect(page.locator('.head .meta')).toContainText('3 個 seed')  // per option, not 3 options x 3 seeds
 })

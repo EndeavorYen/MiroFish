@@ -303,7 +303,9 @@ def scan_conclusions(sim_dir: str, score_fn: ScoreFn, question: str | None = Non
     from ..simulation_policy.tiers import detect_content_lang, event_phrase, stance_check_question
 
     config = _load_config(sim_dir)
-    requirement = str(config.get("simulation_requirement") or "")
+    # An option's simulation announces the option in its requirement; the
+    # question is the base requirement's, as in the option comparison (#66).
+    requirement = str(config.get("base_requirement") or config.get("simulation_requirement") or "")
     question = question or stance_check_question(event_phrase(requirement), detect_content_lang(requirement))
     posts = _posts(sim_dir)
     if not posts:

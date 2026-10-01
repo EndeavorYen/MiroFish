@@ -25,11 +25,18 @@ def test_options_are_validated():
 
 
 def test_an_option_is_announced_in_the_requirement_and_the_document():
-    requirement, document = option_compare.with_option("預測反應。", "北港市擬調漲水費。\n", OPTIONS[1])
-    assert requirement == "預測反應。公布的方案：三年分三次調漲。"
-    assert document == "北港市擬調漲水費。\n\n公布的方案：三年分三次調漲。\n"
-    requirement, _ = option_compare.with_option("Predict the reaction.", "Text", {"name": "a", "text": "Free trial."})
-    assert requirement == "Predict the reaction. Announced plan：Free trial."
+    # First in both: the local prep reads the requirement's first 300
+    # characters and opens with the document's first sentences.
+    long_requirement = "模擬北港市調漲水費後的輿論。" + "各方的反應" * 80
+    requirement, document = option_compare.with_option(long_requirement, "北港市擬調漲水費。\n", OPTIONS[1])
+    assert requirement.startswith("公布的方案：三年分三次調漲。\n模擬北港市")
+    assert "三年分三次調漲" in requirement[:300]
+    assert document == "公布的方案：三年分三次調漲。\n\n北港市擬調漲水費。\n"
+    english = "Simulate how residents react after the city announces higher water prices for every household."
+    requirement, _ = option_compare.with_option(english, "Text", {"name": "a", "text": "A free first month"})
+    assert requirement.startswith("Announced plan: A free first month.\n")
+    with pytest.raises(ValueError):
+        option_compare.validate_one({"name": "a", "text": "x" * 301})
 
 
 def _scan(tendency, oppose):
@@ -77,8 +84,8 @@ def test_the_prepare_endpoint_announces_the_option(monkeypatch):
         if seen:
             break
         time.sleep(0.05)
-    assert seen["simulation_requirement"].endswith("公布的方案：三年分三次調漲。")
-    assert seen["document_text"].endswith("公布的方案：三年分三次調漲。\n")
+    assert seen["simulation_requirement"].startswith("公布的方案：三年分三次調漲。")
+    assert seen["document_text"].startswith("公布的方案：三年分三次調漲。")
 
 
 class _Fake:
@@ -204,3 +211,89 @@ def test_the_api_takes_options(client):
     assert client.store.get(as_json.get_json()["data"]["run_id"])["params"]["options"] == OPTIONS
     plain = client.post("/api/runs", data=data)
     assert client.store.get(plain.get_json()["data"]["run_id"])["params"]["options"] is None
+
+
+def test_a_prepared_option_is_recorded_and_scored_on_the_base_question(tmp_path):
+    from app.services.metrics_report import scan_conclusions
+
+    config_path = tmp_path / "simulation_config.json"
+    requirement, _ = option_compare.with_option("模擬北港市調漲水費後的反應。", "文件", OPTIONS[1])
+    config_path.write_text(json.dumps({"simulation_requirement": requirement, "agent_configs": []}, ensure_ascii=False),
+                           encoding="utf-8")
+    option_compare.record(str(config_path), "模擬北港市調漲水費後的反應。", OPTIONS[1])
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    assert config["option"] == OPTIONS[1] and config["base_requirement"] == "模擬北港市調漲水費後的反應。"
+
+    (tmp_path / "twitter").mkdir()
+    rows = [{"round": 1, "agent_id": 1, "agent_name": "甲", "action_type": "CREATE_POST", "action_args": {"content": "太貴了"}}]
+    (tmp_path / "twitter" / "actions.jsonl").write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in rows), encoding="utf-8")
+    asked = set()
+    scan_conclusions(str(tmp_path), score_fn=lambda text, question: asked.add(question) or 0.5)
+    assert asked and all("北港市調漲水費" in q and "公布的方案" not in q for q in asked)
+
+
+def test_a_bad_option_is_refused_even_on_a_prepared_simulation(monkeypatch):
+    from app import create_app
+    from app.api.simulation import prepare as prepare_api
+
+    monkeypatch.setattr(prepare_api, "_check_simulation_prepared", lambda sid: (True, {}))
+    from app.services.simulation_manager import SimulationManager
+
+    simulation_id = SimulationManager().create_simulation("proj_1", "g1").simulation_id
+    response = create_app().test_client().post(
+        "/api/simulation/prepare", json={"simulation_id": simulation_id, "option": {"name": "only a name"}})
+    assert response.status_code == 400
+
+
+def test_one_run_that_cannot_be_scored_does_not_lose_the_comparison(tmp_path, monkeypatch):
+    from app.runs import stages
+    from app.services import metrics_report
+
+    def scan(sim_dir, score_fn, question=None):
+        name = os.path.basename(sim_dir)
+        if name == "sim_b2":
+            raise ValueError("broken posts file")
+        tendency = {"sim_a1": 0.6, "sim_a2": 0.5, "sim_b1": 0.7}[name]
+        return {**_scan(tendency, 0.2), "main_camp": {"value": "support"}, "trend": {"value": 0.0},
+                "ranking": {"indistinct": False}, "by_role": {"甲": tendency}}
+
+    monkeypatch.setattr(metrics_report, "default_score_fn", lambda: None)
+    monkeypatch.setattr(metrics_report, "scan_conclusions", scan)
+    runs = [{"option": "維持現狀", "seed": 1, "simulation_id": "sim_a1"}, {"option": "維持現狀", "seed": 1001, "simulation_id": "sim_a2"},
+            {"option": "分階段", "seed": 1, "simulation_id": "sim_b1"}, {"option": "分階段", "seed": 1001, "simulation_id": "sim_b2"}]
+    ctx = _ctx(tmp_path, {"options": OPTIONS, "seeds": 2, "simulation_requirement": "需求"}, {"seed_simulations": runs})
+    out = stages.consistency(ctx)
+    assert [r["option"] for r in out["options_comparison"]] == ["維持現狀", "分階段"]
+    assert out["options_comparison"][1]["seeds"] == [1]
+    assert "broken posts file" in out["scoring_errors"][0]
+
+
+def test_a_resumed_preparation_keeps_every_known_option(tmp_path, monkeypatch):
+    from app.runs import stages
+
+    fake = _Fake()
+    monkeypatch.setattr(stages, "_request", fake)
+    known = [{"option": "維持現狀", "simulation_id": "sim_old1"}, {"option": "分階段", "simulation_id": "sim_old2"}]
+    ctx = _ctx(tmp_path, {"options": OPTIONS}, {"option_simulations": known})
+    stored = []
+    original = ctx.store.update
+
+    def watch(run_id, **kwargs):
+        if "artifacts" in kwargs:
+            stored.append(kwargs["artifacts"]["option_simulations"])
+        return original(run_id, **kwargs)
+
+    monkeypatch.setattr(ctx.store, "update", watch)
+    stages.prepare(ctx)
+    assert fake.created == 0
+    assert all(len(entry) == 2 for entry in stored)  # never shrinks to the options seen so far
+
+
+def test_the_api_limits_and_normalises_options(client):
+    data = {"document_text": "文件", "simulation_requirement": "需求"}
+    for empty in ("null", "[]", ""):
+        response = client.post("/api/runs", data={**data, "options": empty})
+        assert client.store.get(response.get_json()["data"]["run_id"])["params"]["options"] is None
+    too_many = [{"name": f"o{i}", "text": "t"} for i in range(4)]
+    assert client.post("/api/runs", data={**data, "options": json.dumps(too_many), "seeds": "5"}).status_code == 400
+    assert client.post("/api/runs", data={**data, "options": json.dumps(too_many), "seeds": "4"}).status_code == 202

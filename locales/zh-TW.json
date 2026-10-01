@@ -703,7 +703,9 @@
       "baselineName": "基準名稱，例如：維持現狀",
       "optionName": "方案名稱",
       "optionText": "方案內容，例如：三年分三次調漲",
-      "addOption": "＋ 加一個方案"
+      "addOption": "＋ 加一個方案",
+      "optionsIncomplete": "每個方案都要有名稱與內容，才能開始。",
+      "optionsDuplicate": "方案名稱不能重複。"
     },
     "status": {
       "queued": "排隊中",

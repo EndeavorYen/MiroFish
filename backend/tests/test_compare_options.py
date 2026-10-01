@@ -31,8 +31,9 @@ def test_option_fixture_adds_the_option(tmp_path):
     (base / "simulation_requirement.txt").write_text("模擬試點後的反應。", encoding="utf-8")
     (base / "README.md").write_text("x", encoding="utf-8")
     out = co.option_fixture(base, {"name": "free", "text": "首月免費"}, tmp_path / "free")
-    assert (out / "news_seed.txt").read_text(encoding="utf-8").endswith("公布的方案：首月免費\n")
-    assert (out / "simulation_requirement.txt").read_text(encoding="utf-8") == "模擬試點後的反應。公布的方案：首月免費"
+    # First in both, so the local prep and the opening posts see it.
+    assert (out / "news_seed.txt").read_text(encoding="utf-8") == "公布的方案：首月免費。\n\n市府宣布試點。\n"
+    assert (out / "simulation_requirement.txt").read_text(encoding="utf-8") == "公布的方案：首月免費。\n模擬試點後的反應。"
     assert (out / "README.md").exists()
 
 

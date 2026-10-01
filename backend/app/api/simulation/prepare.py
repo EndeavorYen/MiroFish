@@ -1,5 +1,6 @@
 """Create and prepare simulations."""
 
+import os
 import traceback
 from flask import request, jsonify
 
@@ -182,6 +183,14 @@ def prepare_simulation():
                 "error": t('api.simulationNotFound', id=simulation_id)
             }), 404
         
+        # One option of a comparison (#56, #66), checked before anything else.
+        option = data.get('option')
+        if option is not None:
+            try:
+                option = option_compare.validate_one(option)
+            except ValueError as error:
+                return jsonify({"success": False, "error": str(error)}), 400
+
         # 检查是否强制重新生成
         force_regenerate = data.get('force_regenerate', False)
         logger.info(f"开始处理 /prepare 请求: simulation_id={simulation_id}, force_regenerate={force_regenerate}")
@@ -225,13 +234,10 @@ def prepare_simulation():
         # 获取文档文本
         document_text = ProjectManager.get_extracted_text(state.project_id) or ""
 
-        # One option of a comparison (#56, #66): announced in the requirement
-        # and the document, on the project's shared graph.
-        if data.get('option') is not None:
-            try:
-                option = option_compare.validate_one(data.get('option'))
-            except ValueError as error:
-                return jsonify({"success": False, "error": str(error)}), 400
+        # The option is announced in the requirement and the document, on the
+        # project's shared graph.
+        base_requirement = simulation_requirement
+        if option is not None:
             simulation_requirement, document_text = option_compare.with_option(
                 simulation_requirement, document_text, option)
         
@@ -367,6 +373,10 @@ def prepare_simulation():
                         result_state.error or "模拟准备失败"
                     )
                 else:
+                    if option is not None:
+                        option_compare.record(
+                            os.path.join(manager.SIMULATION_DATA_DIR, simulation_id, "simulation_config.json"),
+                            base_requirement, option)
                     task_manager.complete_task(
                         task_id,
                         result=result_state.to_simple_dict()

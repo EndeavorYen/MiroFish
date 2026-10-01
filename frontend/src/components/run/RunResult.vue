@@ -83,6 +83,8 @@
       </section>
       <p v-else-if="run.artifacts?.consistency_error" class="muted">{{ $t('run.result.consistencyFailed', { reason: run.artifacts.consistency_error }) }}</p>
 
+      <OptionsCompare v-if="run.artifacts?.options_comparison?.length" :rows="run.artifacts.options_comparison" />
+
       <!-- This run confirms another one: the two side by side. -->
       <ModeCompare v-if="run.params?.confirms && scan" :run="run" :scan="scan" />
 
@@ -121,6 +123,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import ModeCompare from './ModeCompare.vue'
+import OptionsCompare from './OptionsCompare.vue'
 import { MODES, getReport, getReportMetrics, rerunRun } from '../../api/runs'
 
 const props = defineProps({ run: { type: Object, required: true } })

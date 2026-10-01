@@ -4,6 +4,7 @@ import traceback
 from flask import request, jsonify
 
 from .. import simulation_bp
+from ...services import option_compare
 from ...services.entity_reader import EntityReader
 from ...services.simulation_manager import SimulationManager, SimulationStatus
 from ... import run_mode
@@ -223,6 +224,16 @@ def prepare_simulation():
         
         # 获取文档文本
         document_text = ProjectManager.get_extracted_text(state.project_id) or ""
+
+        # One option of a comparison (#56, #66): announced in the requirement
+        # and the document, on the project's shared graph.
+        if data.get('option') is not None:
+            try:
+                option = option_compare.validate_one(data.get('option'))
+            except ValueError as error:
+                return jsonify({"success": False, "error": str(error)}), 400
+            simulation_requirement, document_text = option_compare.with_option(
+                simulation_requirement, document_text, option)
         
         entity_types_list = data.get('entity_types')
         use_llm_for_profiles = data.get('use_llm_for_profiles', True)

@@ -434,7 +434,7 @@ def test_the_consistency_stage_compares_the_seeds(tmp_path, monkeypatch):
     scan = {"main_camp": {"value": "support"}, "tendency": {"value": 0.7}, "trend": {"value": 0.1},
             "ranking": {"indistinct": False}, "by_role": roles}
     monkeypatch.setattr(metrics_report, "default_score_fn", lambda: None)
-    monkeypatch.setattr(metrics_report, "scan_conclusions", lambda sim_dir, score_fn: scan)
+    monkeypatch.setattr(metrics_report, "scan_conclusions", lambda sim_dir, score_fn, question=None: scan)
     runs = [{"seed": 1, "simulation_id": "a"}, {"seed": 2, "simulation_id": "b"}]
     ctx = _simulate_ctx(tmp_path, {}, {"seed_simulations": runs})
     result = stages.consistency(ctx)["consistency"]
@@ -442,7 +442,7 @@ def test_the_consistency_stage_compares_the_seeds(tmp_path, monkeypatch):
     ctx.artifacts["seed_simulations"] = runs[:1]
     assert stages.consistency(ctx) == {"consistency": None}
 
-    def no_model(sim_dir, score_fn):
+    def no_model(sim_dir, score_fn, question=None):
         raise ConnectionError("System One is not reachable")
 
     monkeypatch.setattr(metrics_report, "scan_conclusions", no_model)

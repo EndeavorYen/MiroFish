@@ -33,7 +33,6 @@ import argparse
 import json
 import re
 import shutil
-import statistics
 import subprocess
 import sys
 from pathlib import Path
@@ -44,6 +43,10 @@ sys.path.insert(0, str(BACKEND_DIR))
 sys.path.insert(0, str(BACKEND_DIR / "scripts"))
 
 SLUG_RE = re.compile(r"[^A-Za-z0-9_-]+")
+
+from app.services.option_compare import (  # noqa: E402  (re-exported for callers)
+    compare, paired, run_measures, with_option,
+)
 
 
 def load_options(path: Path) -> list[dict[str, str]]:
@@ -65,68 +68,14 @@ def option_fixture(base: Path, option: dict[str, str], out: Path) -> Path:
     for item in base.iterdir():
         if item.is_file():
             shutil.copy(item, out / item.name)
-    seed = (base / "news_seed.txt").read_text(encoding="utf-8").rstrip()
-    requirement = (base / "simulation_requirement.txt").read_text(encoding="utf-8").strip()
-    english = bool(re.search(r"[A-Za-z]{4,}", requirement)) and not re.search(r"[一-鿿]", requirement)
-    label = "Announced plan" if english else "公布的方案"
-    (out / "news_seed.txt").write_text(f"{seed}\n\n{label}：{option['text']}\n", encoding="utf-8")
-    (out / "simulation_requirement.txt").write_text(
-        f"{requirement} {label}：{option['text']}" if english else f"{requirement}{label}：{option['text']}",
-        encoding="utf-8",
+    requirement, seed = with_option(
+        (base / "simulation_requirement.txt").read_text(encoding="utf-8").strip(),
+        (base / "news_seed.txt").read_text(encoding="utf-8"),
+        option,
     )
+    (out / "news_seed.txt").write_text(seed, encoding="utf-8")
+    (out / "simulation_requirement.txt").write_text(requirement, encoding="utf-8")
     return out
-
-
-def run_measures(scan: dict[str, Any]) -> dict[str, float]:
-    return {"tendency": scan["tendency"]["value"], "oppose_share": scan["post_shares"]["oppose"]}
-
-
-def paired(base: dict[int, dict[str, float]], other: dict[int, dict[str, float]], key: str) -> dict[str, Any]:
-    """Per-seed differences other - base on the seeds both have."""
-
-    diffs = [other[s][key] - base[s][key] for s in sorted(set(base) & set(other))]
-    if not diffs:
-        return {"mean": None, "sd": None, "seeds": 0, "same_sign": 0, "distinct": False}
-    positive = sum(1 for d in diffs if d > 0)
-    negative = sum(1 for d in diffs if d < 0)
-    same = max(positive, negative)
-    return {
-        "mean": round(statistics.mean(diffs), 4),
-        "sd": round(statistics.pstdev(diffs), 4),
-        "range": [round(min(diffs), 4), round(max(diffs), 4)],
-        "seeds": len(diffs),
-        "same_sign": same,
-        # Every seed moves the same way; with 3 seeds that is a 1-in-4 chance
-        # under no effect, so use 5 seeds before acting on a small difference.
-        "distinct": len(diffs) >= 2 and same == len(diffs),
-    }
-
-
-def compare(results: dict[str, dict[int, dict[str, Any]]], names: list[str]) -> list[dict[str, Any]]:
-    """Rows per option from ``results[name][seed] = scan``."""
-
-    measures = {n: {s: run_measures(scan) for s, scan in results[n].items()} for n in names}
-    base = names[0]
-    rows = []
-    for name in names:
-        runs = measures[name]
-        row: dict[str, Any] = {
-            "option": name,
-            "seeds": sorted(runs),
-            "tendency": round(statistics.mean(r["tendency"] for r in runs.values()), 4),
-            "oppose_share": round(statistics.mean(r["oppose_share"] for r in runs.values()), 4),
-            "most_opposed_posts": sorted(
-                (p for scan in results[name].values() for p in scan["most_opposed_posts"]),
-                key=lambda p: (p["stance"], p["text"]),
-            )[:3],
-        }
-        if name != base:
-            row["vs_baseline"] = {
-                "tendency": paired(measures[base], runs, "tendency"),
-                "oppose_share": paired(measures[base], runs, "oppose_share"),
-            }
-        rows.append(row)
-    return rows
 
 
 def _diff_text(block: dict[str, Any], scale: float = 1.0, unit: str = "") -> str:
@@ -161,7 +110,7 @@ def render(rows: list[dict[str, Any]], question: str) -> str:
         lines.append(f"- **{row['option']}**：" + "；".join(f"「{p['text'][:60]}」（{p['stance']:.2f}）" for p in row["most_opposed_posts"]))
     lines += [
         "",
-        "差距只有在每個 seed 都同向時才算可區分。這是本機路徑的結果：主要陣營與整體傾向在評估庫上比較可靠，"
+        "差距要在至少 3 個 seed 都同向時才算可區分。這是本機路徑的結果：主要陣營與整體傾向在評估庫上比較可靠，"
         "要依結果做決定，請把前兩名用 `MIROFISH_PROFILE=local-llm` 重跑確認。模擬結果不是對真實世界的預測。",
     ]
     return "\n".join(lines) + "\n"

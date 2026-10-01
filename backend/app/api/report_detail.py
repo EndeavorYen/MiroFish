@@ -1,6 +1,8 @@
 """Report API: progress, sections, status checks, logs and debug tools (#68: split from report.py)."""
 
+import json
 import os
+import re
 import traceback
 from flask import request, jsonify
 
@@ -11,6 +13,24 @@ from ..utils.locale import t
 
 logger = get_logger('mirofish.api.report')
 
+
+
+_REPORT_ID = re.compile(r"report_[0-9a-f]{6,32}")
+
+
+@report_bp.route('/<report_id>/metrics', methods=['GET'])
+def get_report_metrics(report_id: str):
+    """The metrics report's structured data (``report_metrics.json``): scan
+    conclusions with their confidence, the most spread posts, stance and
+    emotion. What the result page shows (#66)."""
+
+    if not _REPORT_ID.fullmatch(report_id):
+        return jsonify({"success": False, "error": t('api.reportNotFound', id=report_id)}), 404
+    path = os.path.join(ReportManager.REPORTS_DIR, report_id, "report_metrics.json")
+    if not os.path.exists(path):
+        return jsonify({"success": False, "error": t('api.reportNotFound', id=report_id)}), 404
+    with open(path, encoding="utf-8") as f:
+        return jsonify({"success": True, "data": json.load(f)})
 
 
 # ============== 报告进度与分章节接口 ==============

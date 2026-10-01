@@ -1,14 +1,19 @@
 import axios from 'axios'
 import i18n from '../i18n'
 
+const GET_RETRIES = 6
+
 // 创建axios实例
 const service = axios.create({
-  // In dev (also what the Docker image runs) requests go through the Vite
-  // /api proxy: same origin, no CORS preflight. Straight to :5001 the
-  // browser reused a keep-alive connection the dev server had closed, and a
-  // POST /api/simulation/prepare died with ERR_CONNECTION_RESET, leaving the
-  // env step waiting forever (#49).
-  baseURL: import.meta.env.VITE_API_BASE_URL ?? (import.meta.env.DEV ? '' : 'http://localhost:5001'),
+  // Straight to the backend on :5001 of the same host (the Docker image
+  // publishes it too). #49 sent dev requests through the Vite /api proxy
+  // instead, after a direct POST had died with ERR_CONNECTION_RESET; on
+  // 2026-10-01 (Vite 7, Node 24, Werkzeug 3.1, Windows) it was the proxy that
+  // lost about half of the responses, and the browser re-sent one POST
+  // /api/runs three times. The backend now answers "Connection: close", so
+  // the browser does not reuse a closed connection (#66).
+  // VITE_API_BASE_URL='' goes back through the proxy.
+  baseURL: import.meta.env.VITE_API_BASE_URL ?? `${window.location.protocol}//${window.location.hostname}:5001`,
   timeout: 300000, // 5分钟超时（本体生成可能需要较长时间）
   headers: {
     'Content-Type': 'application/json'
@@ -41,6 +46,16 @@ service.interceptors.response.use(
     return res
   },
   error => {
+    // A read that never got an answer (connection reset, often through the
+    // dev server's /api proxy, #66): try again a few times. Writes are not
+    // retried; the server may have acted on them.
+    const config = error.config
+    // The proxy's own failure is a 5xx without the backend's JSON body.
+    const unanswered = !error.response || (error.response.status >= 500 && typeof error.response.data !== 'object')
+    if (config && unanswered && (config.method || 'get') === 'get' && (config.retries ?? 0) < GET_RETRIES) {
+      config.retries = (config.retries ?? 0) + 1
+      return new Promise((resolve) => setTimeout(resolve, 250 * config.retries)).then(() => service(config))
+    }
     console.error('Response error:', error)
     const apiError = error.response?.data?.error || error.response?.data?.message
     

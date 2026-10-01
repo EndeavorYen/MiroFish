@@ -1,52 +1,14 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import Home from '../views/Home.vue'
-import Process from '../views/MainView.vue'
-import SimulationView from '../views/SimulationView.vue'
-import SimulationRunView from '../views/SimulationRunView.vue'
-import ReportView from '../views/ReportView.vue'
-import InteractionView from '../views/InteractionView.vue'
+import RunPage from '../views/RunPage.vue'
 
+// One page in three states (#66): input, a run in progress, its result.
 const routes = [
-  {
-    path: '/',
-    name: 'Home',
-    component: Home
-  },
-  {
-    path: '/process/:projectId',
-    name: 'Process',
-    component: Process,
-    props: true
-  },
-  {
-    path: '/simulation/:simulationId',
-    name: 'Simulation',
-    component: SimulationView,
-    props: true
-  },
-  {
-    path: '/simulation/:simulationId/start',
-    name: 'SimulationRun',
-    component: SimulationRunView,
-    props: true
-  },
-  {
-    path: '/report/:reportId',
-    name: 'Report',
-    component: ReportView,
-    props: true
-  },
-  {
-    path: '/interaction/:reportId',
-    name: 'Interaction',
-    component: InteractionView,
-    props: true
-  }
+  { path: '/', name: 'Home', component: RunPage },
+  { path: '/runs/:runId', name: 'Run', component: RunPage, props: true },
+  { path: '/:pathMatch(.*)*', redirect: '/' },
 ]
 
-const router = createRouter({
+export default createRouter({
   history: createWebHistory(),
-  routes
+  routes,
 })
-
-export default router

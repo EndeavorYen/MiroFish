@@ -793,6 +793,9 @@ async def main():
         policy_twitter = build_policy("twitter", simulation_dir, seed=seed)
         policy_reddit = build_policy("reddit", simulation_dir, seed=seed + 1 if seed is not None else None)
         log_manager.info("决策后端: system_one（不经 LLM decode）")
+    elif os.environ.get("SIM_OPINION_DYNAMICS", "off").strip().lower() not in ("", "0", "off", "false", "no"):
+        # Opinion dynamics moves the System One decisions' stance (#59).
+        log_manager.info("SIM_OPINION_DYNAMICS 只作用於 SIM_DECISION_BACKEND=system_one；LLM 決策不使用")
     
     try:
         if args.twitter_only:

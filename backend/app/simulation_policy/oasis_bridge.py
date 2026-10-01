@@ -85,13 +85,28 @@ def build_policy(
         stance_prior_weight=weight,
         health=_shared(_new_health, os.path.join(simulation_dir, "decision_health")),
         stance_dither=os.environ.get("CONTENT_STANCE_DITHER", "0") == "1",
-        opinion=opinion_state(config, priors),
+        # One opinion state per simulation: a role has one stance on both platforms.
+        opinion=_shared_opinion(simulation_dir, lambda: opinion_state(config, priors, client=client)),
     )
 
 
-def opinion_state(config: dict[str, Any], priors: dict[int, float], score=None):
+_OPINIONS: dict[str, Any] = {}
+
+
+def _shared_opinion(simulation_dir: str, make):
+    """One opinion state per simulation dir (both platforms' policies)."""
+
+    key = os.path.abspath(simulation_dir)
+    with _SHARED_LOCK:
+        if key not in _OPINIONS:
+            _OPINIONS[key] = make()
+        return _OPINIONS[key]
+
+
+def opinion_state(config: dict[str, Any], priors: dict[int, float], score=None, client=None):
     """Opinion dynamics (#59) when SIM_OPINION_DYNAMICS is on, else None.
-    Posts are scored on the question the report and the comparison use."""
+    Posts are scored by the policy's System One client, on the question the
+    report and the comparison use, in the content's language."""
 
     from .opinion import OpinionState, load_params
 
@@ -102,10 +117,13 @@ def opinion_state(config: dict[str, Any], priors: dict[int, float], score=None):
         from .tiers import detect_content_lang, event_phrase, stance_check_question, system_one_stance_score
 
         requirement = str(config.get("base_requirement") or config.get("simulation_requirement") or "")
-        question = stance_check_question(event_phrase(requirement), detect_content_lang(requirement))
+        lang = os.environ.get("CONTENT_LANG", "").strip().lower()
+        if lang not in ("zh", "en"):
+            lang = detect_content_lang(requirement)
+        question = stance_check_question(event_phrase(requirement), lang)
 
         def score(text: str) -> float:
-            return system_one_stance_score(text, question=question)
+            return system_one_stance_score(text, question=question, client=client)
 
     types = {
         a["agent_id"]: str(a.get("entity_type") or "")

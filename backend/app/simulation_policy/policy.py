@@ -304,7 +304,8 @@ class SystemOnePolicy:
             }
         response = self.client.ask(SystemOneRequest(state=intent_state, questions=questions))
         readout_stance = score_to_unit(response.answers["stance"].score, len(STANCE_LEVELS))
-        prior = self._stance(obs.agent_id)
+        prior = self._stance(obs.agent_id)  # the moving stance with opinion dynamics
+        prep = self.stance_prior.get(obs.agent_id)
         w = self.stance_prior_weight if prior is not None else 0.0
         stance = w * (prior or 0.0) + (1 - w) * readout_stance
         continuous = stance
@@ -330,7 +331,9 @@ class SystemOnePolicy:
             "kind_probs": kind_probs,
             "stance": round(stance, 4),
             "intensity": round(intensity, 4),
-            **({"stance_readout": round(readout_stance, 4), "stance_prior": round(prior, 4)} if w else {}),
+            **({"stance_readout": round(readout_stance, 4)} if w else {}),
+            **({"stance_prior": round(prep, 4)} if w and prep is not None else {}),
+            **({"stance_state": round(prior, 4)} if w and self.opinion is not None else {}),
             **({"stance_continuous": round(continuous, 4)} if self.stance_dither else {}),
         }
         return intent, record
@@ -412,12 +415,13 @@ class SystemOnePolicy:
             state += f"\n這一輪已經做了：{'、'.join(done)}（接下來還會做什麼？）"
         # Read this round's feed once, before anything uses the stance (#59).
         opinion_change = (
-            self.opinion.update(obs.agent_id, obs.round_num, obs.feed)
+            self.opinion.update(obs.agent_id, obs.round_num, obs.feed, platform=obs.platform)
             if self.opinion is not None and index == 0 else None
         )
+        stance_now = self._stance(obs.agent_id)
         steps = ask_tree(
             self.client, state, self.taxonomy.tree, rng,
-            stance=self._stance(obs.agent_id),
+            stance=stance_now,
         )
         path = [step.choice for step in steps]
         leaf = self.taxonomy.leaf(path)
@@ -442,6 +446,8 @@ class SystemOnePolicy:
             "emotion": {k: round(v, 6) for k, v in emotion.items()},
             "emotion_readout": {k: round(v, 6) for k, v in readout.items()},
             **({"opinion": opinion_change} if opinion_change else {}),
+            # The stance this decision used: the log alone rebuilds the trajectory.
+            **({"stance_state": round(stance_now, 4)} if self.opinion is not None and stance_now is not None else {}),
         }
 
         action, args = leaf.action, {}

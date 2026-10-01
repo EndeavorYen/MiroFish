@@ -114,7 +114,7 @@ profile 只會填「還沒設定」的模式設定，所以 `.env` 裡明確寫�
 | `FLASK_HOST` | `0.0.0.0` | 後端監聽位址。 |
 | `FLASK_PORT` | `5001` | 後端埠號。 |
 | `FLASK_DEBUG` | `False` | `true`（不分大小寫）開啟 debug；`1` 不會開啟。不要用在正式環境。 |
-| `RUNS_DB_PATH` | `backend/uploads/runs/runs.sqlite` | runs API（#63）的 SQLite 資料庫：run 的狀態、產物 id 與事件。 |
+| `RUNS_DB_PATH` | `backend/uploads/runs/runs.sqlite` | runs API（#63）與背景任務（圖譜建構、準備、報告，#68）共用的 SQLite 資料庫：run 的狀態、產物 id、事件與任務進度。後端重啟後仍查得到；重啟時還在進行的任務標為失敗（`error: backend restarted`），完成超過一天的任務在啟動時清除。 |
 | `RUNS_SIM_MEMORY_MB` | `500` | runs API 多個 seed 平行時，每個模擬進程預估占用的主機記憶體（MB）。實測本機路徑約 300 MB。 |
 | `RUNS_MEMORY_RESERVE_MB` | `2048` | 平行跑 seed 時保留給模型服務、作業系統與瀏覽器的主機記憶體（MB）。同時跑的 seed 數 = (可用記憶體 − 保留) ÷ 每個模擬，至少 1。 |
 | `SECRET_KEY` | `mirofish-secret-key` | Flask secret key；對外服務時請改掉。 |

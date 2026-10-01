@@ -29,11 +29,15 @@ def _headers(ctx: StageContext) -> dict[str, str]:
     return {"Accept-Language": locale} if locale else {}
 
 
-def _call(ctx: StageContext, method: str, path: str, **kwargs) -> dict[str, Any]:
+def _request(ctx: StageContext, method: str, path: str, **kwargs) -> tuple[int, dict[str, Any]]:
     response = getattr(_client(ctx), method)(path, headers=_headers(ctx), **kwargs)
-    body = response.get_json(silent=True) or {}
-    if response.status_code >= 400 or not body.get("success", False):
-        raise StageFailed(body.get("error") or f"{method.upper()} {path}: HTTP {response.status_code}")
+    return response.status_code, response.get_json(silent=True) or {}
+
+
+def _call(ctx: StageContext, method: str, path: str, **kwargs) -> dict[str, Any]:
+    status, body = _request(ctx, method, path, **kwargs)
+    if status >= 400 or not body.get("success", False):
+        raise StageFailed(body.get("error") or f"{method.upper()} {path}: HTTP {status}")
     return body.get("data") or {}
 
 
@@ -76,7 +80,19 @@ def ontology(ctx: StageContext) -> dict[str, Any]:
 
 def graph(ctx: StageContext) -> dict[str, Any]:
     project_id = ctx.artifacts["project_id"]
-    task_id = _call(ctx, "post", "/api/graph/build", json={"project_id": project_id})["task_id"]
+    status, body = _request(ctx, "post", "/api/graph/build", json={"project_id": project_id})
+    if status == 409 and body.get("recoverable"):
+        # A restart lost the build task; the endpoint wants an explicit rebuild.
+        status, body = _request(ctx, "post", "/api/graph/build", json={"project_id": project_id, "force": True})
+    if status >= 400 or not body.get("success", False):
+        raise StageFailed(body.get("error") or f"POST /api/graph/build: HTTP {status}")
+    data = body.get("data") or {}
+    if data.get("reused"):
+        # Already built: the old task id may be gone after a restart.
+        project = _call(ctx, "get", f"/api/graph/project/{project_id}")
+        if project.get("status") == "graph_completed" and project.get("graph_id"):
+            return {"graph_id": project["graph_id"]}
+    task_id = data["task_id"]
     _poll(ctx, lambda: _call(ctx, "get", f"/api/graph/task/{task_id}"),
           done=lambda d: d.get("status") == "completed",
           failed=lambda d: (d.get("error") or d.get("message") or "graph build failed") if d.get("status") == "failed" else None,

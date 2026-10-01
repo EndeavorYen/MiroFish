@@ -167,3 +167,99 @@ def test_the_simulation_stage_reports_rounds_as_progress():
 
     assert _round_progress({"current_round": 6, "total_rounds": 24}) == (25, "round 6/24")
     assert _round_progress({"current_round": 0, "total_rounds": 0}) == (None, None)
+
+
+def test_two_resumes_at_once_start_one_thread(tmp_path):
+    import threading
+
+    from app.runs.orchestrator import RunBusy
+
+    store, log, release = RunStore(str(tmp_path / "r.sqlite")), [], threading.Event()
+    stages = _fake_stages(log)
+    stages["ontology"] = lambda ctx: release.wait(5) and {}
+    orchestrator = RunOrchestrator(store, stages)
+    run_id = store.create({})
+    store.update(run_id, status=INTERRUPTED)
+    thread = orchestrator.start(run_id, from_statuses=(FAILED, INTERRUPTED))
+    with pytest.raises(RunBusy):
+        orchestrator.start(run_id, from_statuses=(FAILED, INTERRUPTED))
+    release.set()
+    thread.join(5)
+    with pytest.raises(RunBusy):  # completed: nothing to resume
+        orchestrator.start(run_id, from_statuses=(FAILED, INTERRUPTED))
+    assert [name for name, _ in log] == ["graph", "prepare", "simulate", "report"]
+
+
+def test_a_store_error_outside_a_stage_still_fails_the_run(tmp_path):
+    store, log = RunStore(str(tmp_path / "r.sqlite")), []
+    stages = _fake_stages(log)
+    stages["graph"] = lambda ctx: {"graph_id": object()}  # cannot be saved as JSON
+    run_id = store.create({})
+    RunOrchestrator(store, stages).start(run_id).join(5)
+    record = store.get(run_id)
+    assert record["status"] == FAILED and "TypeError" in record["error"]
+
+
+def test_a_run_that_cannot_start_is_failed_not_left_queued(client, monkeypatch):
+    def broken(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr("app.api.runs._run_dir", broken)
+    response = client.post("/api/runs", data={"document_text": "x", "simulation_requirement": "y"})
+    assert response.status_code == 500
+    [record] = client.store.list()
+    assert record["status"] == FAILED and "disk full" in record["error"]
+
+
+@pytest.mark.parametrize("body", [
+    {"document_text": "x", "simulation_requirement": 5},
+    {"document_text": ["x"], "simulation_requirement": "y"},
+    {"document_text": "x", "simulation_requirement": "y", "max_rounds": 2.5},
+    {"document_text": "x", "simulation_requirement": "y", "max_rounds": True},
+])
+def test_bad_json_is_a_400(client, body):
+    assert client.post("/api/runs", json=body).status_code == 400
+
+
+def test_a_bad_list_limit_falls_back(client):
+    assert client.get("/api/runs?limit=abc").status_code == 200
+    assert client.get("/api/runs?limit=-1").status_code == 200
+
+
+def _graph_ctx(answers):
+    from app.runs.orchestrator import StageContext
+
+    calls = []
+
+    def request(ctx, method, path, **kwargs):
+        calls.append((path, (kwargs.get("json") or {}).get("force")))
+        return answers[(path, (kwargs.get("json") or {}).get("force"))]
+
+    ctx = StageContext("run_x", {}, {"project_id": "p1"}, store=None, extra={"poll_s": 0})
+    return ctx, request, calls
+
+
+def test_the_graph_stage_rebuilds_when_a_restart_lost_the_build(monkeypatch):
+    from app.runs import stages
+
+    ctx, request, calls = _graph_ctx({
+        ("/api/graph/build", None): (409, {"success": False, "error": "gone", "recoverable": True}),
+        ("/api/graph/build", True): (200, {"success": True, "data": {"task_id": "t2"}}),
+        ("/api/graph/task/t2", None): (200, {"success": True, "data": {"status": "completed"}}),
+        ("/api/graph/project/p1", None): (200, {"success": True, "data": {"graph_id": "g1"}}),
+    })
+    monkeypatch.setattr(stages, "_request", request)
+    assert stages.graph(ctx) == {"graph_id": "g1"}
+    assert calls[:2] == [("/api/graph/build", None), ("/api/graph/build", True)]
+
+
+def test_the_graph_stage_reuses_a_finished_graph_without_its_old_task(monkeypatch):
+    from app.runs import stages
+
+    ctx, request, calls = _graph_ctx({
+        ("/api/graph/build", None): (200, {"success": True, "data": {"task_id": "gone", "reused": True}}),
+        ("/api/graph/project/p1", None): (200, {"success": True, "data": {"status": "graph_completed", "graph_id": "g1"}}),
+    })
+    monkeypatch.setattr(stages, "_request", request)
+    assert stages.graph(ctx) == {"graph_id": "g1"}
+    assert ("/api/graph/task/gone", None) not in calls

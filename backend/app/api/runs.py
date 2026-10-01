@@ -19,6 +19,7 @@ from flask import Response, current_app, request, stream_with_context
 
 from . import runs_bp
 from ..config import Config
+from ..runs.orchestrator import RunBusy
 from ..runs.service import get_runs
 from ..runs.store import FAILED, INTERRUPTED, TERMINAL
 from ..utils.logger import get_logger
@@ -38,6 +39,14 @@ def _error(message: str, status: int):
     return _json({"success": False, "error": message}, status)
 
 
+def _integer(value) -> int:
+    """An int, or the digits of a form field; not a float or a bool."""
+
+    if isinstance(value, bool) or not isinstance(value, (int, str)):
+        raise TypeError(value)
+    return int(value)
+
+
 def _run_dir(run_id: str) -> str:
     path = os.path.join(Config.UPLOAD_FOLDER, "runs", run_id)
     os.makedirs(path, exist_ok=True)
@@ -51,18 +60,21 @@ def create_run():
     ``project_name``. The mode is the backend's ``MIROFISH_PROFILE``."""
 
     form = request.form if request.files or request.form else (request.get_json(silent=True) or {})
-    requirement = (form.get("simulation_requirement") or "").strip()
+    requirement = form.get("simulation_requirement") or ""
+    text = form.get("document_text")
+    if not isinstance(requirement, str) or not isinstance(text, (str, type(None))):
+        return _error("simulation_requirement and document_text must be strings", 400)
+    requirement = requirement.strip()
     if not requirement:
         return _error("simulation_requirement is required", 400)
     upload = request.files.get("file")
-    text = form.get("document_text")
     if not upload and not (text and text.strip()):
         return _error("a file or document_text is required", 400)
     if upload and not upload.filename.lower().endswith(ALLOWED_SUFFIXES):
         return _error(f"file must be one of {', '.join(ALLOWED_SUFFIXES)}", 400)
     try:
-        max_rounds = int(form.get("max_rounds") or 24)
-        seed = None if form.get("seed") in (None, "") else int(form.get("seed"))
+        max_rounds = _integer(form.get("max_rounds") or 24)
+        seed = None if form.get("seed") in (None, "") else _integer(form.get("seed"))
     except (TypeError, ValueError):
         return _error("max_rounds and seed must be integers", 400)
     if max_rounds <= 0:
@@ -78,17 +90,22 @@ def create_run():
         "locale": request.headers.get("Accept-Language", ""),
     }
     run_id = runs.store.create(params)
-    folder = _run_dir(run_id)
-    if upload:
-        path = os.path.join(folder, "document" + os.path.splitext(upload.filename)[1].lower())
-        upload.save(path)
-    else:
-        path = os.path.join(folder, "document.txt")
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(text)
-    params["document_path"] = path  # a resume uploads it again
-    runs.store.set_params(run_id, params)
-    runs.orchestrator.start(run_id)
+    try:
+        folder = _run_dir(run_id)
+        if upload:
+            path = os.path.join(folder, "document" + os.path.splitext(upload.filename)[1].lower())
+            upload.save(path)
+        else:
+            path = os.path.join(folder, "document.txt")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(text)
+        params["document_path"] = path  # a resume uploads it again
+        runs.store.set_params(run_id, params)
+        runs.orchestrator.start(run_id)
+    except Exception as error:  # not left "queued" forever
+        logger.exception("run %s could not start", run_id)
+        runs.store.update(run_id, status=FAILED, error=f"{type(error).__name__}: {error}")
+        return _error(f"run could not start: {error}", 500)
     logger.info("run %s started", run_id)
     return _json({"success": True, "data": {"run_id": run_id}}, 202)
 
@@ -96,7 +113,8 @@ def create_run():
 @runs_bp.route("", methods=["GET"])
 def list_runs():
     runs = get_runs(current_app._get_current_object())
-    return _json({"success": True, "data": runs.store.list(int(request.args.get("limit", 50)))})
+    limit = request.args.get("limit", 50, type=int)
+    return _json({"success": True, "data": runs.store.list(min(max(limit, 1), 500))})
 
 
 @runs_bp.route("/<run_id>", methods=["GET"])
@@ -114,11 +132,10 @@ def resume_run(run_id: str):
     record = runs.store.get(run_id)
     if record is None:
         return _error(f"run not found: {run_id}", 404)
-    if runs.orchestrator.is_active(run_id):
-        return _error("run is still going", 409)
-    if record["status"] not in (FAILED, INTERRUPTED):
-        return _error(f"only a failed or interrupted run can resume (status: {record['status']})", 409)
-    runs.orchestrator.start(run_id)
+    try:
+        runs.orchestrator.start(run_id, from_statuses=(FAILED, INTERRUPTED))
+    except RunBusy as error:
+        return _error(str(error), 409)
     return _json({"success": True, "data": {"run_id": run_id}}, 202)
 
 

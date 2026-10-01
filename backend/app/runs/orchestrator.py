@@ -27,6 +27,10 @@ class StageFailed(Exception):
     """A stage could not finish; the message is shown as the run's reason."""
 
 
+class RunBusy(Exception):
+    """The run is going, or is not in a status it can start from."""
+
+
 @dataclass
 class StageContext:
     run_id: str
@@ -59,20 +63,39 @@ class RunOrchestrator:
             thread = self._threads.get(run_id)
             return bool(thread and thread.is_alive())
 
-    def start(self, run_id: str) -> threading.Thread:
+    def start(self, run_id: str, from_statuses: tuple[str, ...] | None = None) -> threading.Thread:
+        """Start the run's thread. With ``from_statuses`` the run must be in
+        one of them; the check and the start share the lock, so two resumes
+        at once start one thread and the other gets ``RunBusy``."""
+
         with self._lock:
-            thread = self._threads.get(run_id)
-            if thread and thread.is_alive():
-                raise RuntimeError(f"run {run_id} is already going")
+            for done_id in [i for i, t in self._threads.items() if not t.is_alive()]:
+                del self._threads[done_id]
+            if run_id in self._threads:
+                raise RunBusy("run is still going")
+            if from_statuses is not None:
+                status = (self.store.get(run_id) or {}).get("status")
+                if status not in from_statuses:
+                    raise RunBusy(f"only a {' or '.join(from_statuses)} run can resume (status: {status})")
             self.store.update(run_id, status=RUNNING, clear_error=True)
             thread = threading.Thread(target=self.run, args=(run_id,), name=f"run-{run_id}", daemon=True)
             self._threads[run_id] = thread
-        thread.start()
+            thread.start()
         return thread
 
     def run(self, run_id: str) -> None:
         """All remaining stages, in order; stops at the first failure."""
 
+        try:
+            self._run(run_id)
+        except Exception as error:  # e.g. the database: never leave the run "running"
+            logger.error("run %s crashed: %s", run_id, traceback.format_exc())
+            try:
+                self._fail(run_id, None, f"{type(error).__name__}: {error}")
+            except Exception:
+                logger.error("run %s: could not record the failure: %s", run_id, traceback.format_exc())
+
+    def _run(self, run_id: str) -> None:
         record = self.store.get(run_id)
         artifacts = dict(record["artifacts"])
         done = list(artifacts.get("done_stages", []))
@@ -101,6 +124,6 @@ class RunOrchestrator:
         self.store.update(run_id, status=COMPLETED)
         self.store.add_event(run_id, None, "run_done", {"artifacts": artifacts})
 
-    def _fail(self, run_id: str, stage: str, reason: str) -> None:
+    def _fail(self, run_id: str, stage: str | None, reason: str) -> None:
         self.store.update(run_id, status=FAILED, error=reason)
         self.store.add_event(run_id, stage, "run_failed", {"reason": reason})

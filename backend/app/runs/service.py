@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import threading
 from typing import Any
 
 from flask import Flask
@@ -12,6 +13,7 @@ from .stages import REAL_STAGES
 from .store import RunStore, default_db_path
 
 EXTENSION = "mirofish_runs"
+_create_lock = threading.Lock()  # first requests may arrive together
 
 
 class Runs:
@@ -23,9 +25,12 @@ class Runs:
 def get_runs(app: Flask) -> Runs:
     runs = app.extensions.get(EXTENSION)
     if runs is None:
-        store = RunStore()
-        runs = Runs(store, RunOrchestrator(store, REAL_STAGES, extra={"app": app}))
-        app.extensions[EXTENSION] = runs
+        with _create_lock:
+            runs = app.extensions.get(EXTENSION)
+            if runs is None:
+                store = RunStore()
+                runs = Runs(store, RunOrchestrator(store, REAL_STAGES, extra={"app": app}))
+                app.extensions[EXTENSION] = runs
     return runs
 
 
@@ -39,10 +44,14 @@ def mark_interrupted_at_startup(logger: Any) -> None:
     path = default_db_path()
     if not os.path.exists(path):
         return  # never used: do not create the database at start-up
-    store = RunStore(path)
     try:
-        ids = store.mark_interrupted()
-    finally:
-        store.close()
+        store = RunStore(path)
+        try:
+            ids = store.mark_interrupted()
+        finally:
+            store.close()
+    except Exception as error:  # a locked or broken runs database must not stop the backend
+        logger.error("could not mark interrupted runs in %s: %s", path, error)
+        return
     if ids:
         logger.warning("runs interrupted by the restart (POST /api/runs/<id>/resume): %s", ", ".join(ids))

@@ -23,7 +23,7 @@
 | `simulation_requirement` | 是 | 模擬需求（要預測什麼） |
 | `max_rounds` | 否 | 回合數，預設 24（評估用的回合數） |
 | `seeds` | 否 | 跑幾個 seed，預設 3，最多 8 |
-| `seed` | 否 | 第一個 seed，預設 1；其餘依序加 1 |
+| `seed` | 否 | 第一個 seed，預設 1；其餘依序加 1000（模擬用 `seed` 和 `seed + 1` 分別驅動兩個平台，相鄰的 seed 會共用亂數序列） |
 | `confirm_roles` | 否 | `true` 時圖譜建好後暫停，等確認角色 |
 | `project_name` | 否 | 專案名稱 |
 
@@ -46,7 +46,7 @@ curl -N http://localhost:5001/api/runs/run_xxxxxxxxxxxx/events
 | `prepare` | 建立並準備模擬 | `simulation_id` |
 | `simulate` | 每個 seed 一個雙平台模擬 | `seed_simulations`（`seed`、`simulation_id`）、`rounds` |
 | `report` | 第一個 seed 的報告 | `report_id` |
-| `consistency` | 比較各 seed 的結論 | `consistency`（只有一個 seed 時為 `null`） |
+| `consistency` | 比較各 seed 的結論 | `consistency`（只有一個 seed 時為 `null`）；評分失敗時另有 `consistency_error`，run 仍算完成 |
 
 各階段在後端同一個 process 裡呼叫前端原本呼叫的端點（相同的驗證、鎖與背景任務），所以結果和逐步操作 UI 相同。兩個差異：run 預設**不**開啟圖譜記憶回寫（多個 seed 同時回寫同一張圖會互相干擾，metrics 報告也不需要）；模擬一律 `force` 重新開始。
 
@@ -73,6 +73,10 @@ curl -N http://localhost:5001/api/runs/run_xxxxxxxxxxxx/events
 
 同時跑幾個由主機可用記憶體決定：(可用記憶體 − `RUNS_MEMORY_RESERVE_MB`) ÷ `RUNS_SIM_MEMORY_MB`，至少 1，其餘排隊。模型服務是共用的，seed 越多，每回合越慢。進度事件的 `message` 是所有 seed 的回合總和，例如 `round 30/72 over 3 seeds, 1 done`。續跑時沿用已複製的模擬，已跑完的 seed 不重跑。
 
+模擬跑完最後一回合後會留著環境等訪談指令。複製出來的 seed 跑完就關閉環境，釋放記憶體給下一個 seed；第一個 seed 的環境保留給報告與訪談。任何一個 seed 失敗或逾時，其他還在跑的 seed 會被停止。
+
+記憶體保護只看主機 RAM。所有 seed 共用同一個模型服務（llama-server 的 slot），seed 越多，每次決策排隊越久；`-np` 太小時可能出現逾時（#62 的「模型服務無回應」）。
+
 ### 一致性
 
 `consistency` 階段對每個 seed 的貼文做立場評分（和 `scripts/scan.py` 相同，用本機模型的讀出），回傳：
@@ -92,6 +96,6 @@ seed 之間一致，只代表這條路徑自己穩定，不代表和 LLM 路徑�
 
 ### 失敗與續跑
 
-任何一個端點回傳錯誤（非 2xx 或 `success: false`），run 就停在該階段，狀態為 `failed`，`error` 是端點的錯誤訊息（例如 #62 的「模型服務無回應」）。後端重啟時還在進行的 run 標為 `interrupted`。兩種都可以 `POST /api/runs/<id>/resume`：已完成的階段會跳過，並沿用它們的產物 id。`ontology` 階段若在建立專案後被切斷，續跑時會沿用已產生本體的專案，並刪掉沒完成的專案。
+任何一個端點回傳錯誤（非 2xx 或 `success: false`），run 就停在該階段，狀態為 `failed`，`error` 是端點的錯誤訊息（例如 #62 的「模型服務無回應」）。後端重啟時還在進行的 run 標為 `interrupted`。兩種都可以 `POST /api/runs/<id>/resume`：已完成的階段會跳過，並沿用它們的產物 id。`ontology` 階段若在建立專案後被切斷，續跑時會沿用這個 run 建立、已產生本體的專案，並刪掉它沒完成的專案（專案記有 `run_id`，不會動到別的 run 或手動建立的同名專案）。
 
 狀態存在 `backend/uploads/runs/runs.sqlite`（可用 `RUNS_DB_PATH` 改位置），文件存在 `backend/uploads/runs/<run_id>/`。

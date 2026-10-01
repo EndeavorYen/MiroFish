@@ -311,9 +311,9 @@ class _FakeSimulations:
     """The simulation endpoints the simulate stage calls; each simulation
     completes on the poll after it started."""
 
-    def __init__(self, completed=()):
+    def __init__(self, completed=(), fail=()):
         self.started, self.copies, self.going, self.most_going = [], 0, set(), 0
-        self.completed = set(completed)
+        self.completed, self.fail, self.closed, self.stopped = set(completed), set(fail), [], []
 
     def __call__(self, ctx, method, path, **kwargs):
         body = kwargs.get("json") or {}
@@ -325,8 +325,17 @@ class _FakeSimulations:
             self.going.add(body["simulation_id"])
             self.most_going = max(self.most_going, len(self.going))
             return 200, {"success": True, "data": {}}
+        if path == "/api/simulation/close-env":
+            self.closed.append(body["simulation_id"])
+            return 200, {"success": True, "data": {}}
+        if path == "/api/simulation/stop":
+            self.stopped.append(body["simulation_id"])
+            self.going.discard(body["simulation_id"])
+            return 200, {"success": True, "data": {}}
         simulation_id = path.split("/")[3]
-        if simulation_id in self.going:  # finishes now
+        if simulation_id in self.fail and simulation_id in self.going:
+            return 200, {"success": True, "data": {"runner_status": "failed", "error": "boom", "total_rounds": 24}}
+        if simulation_id in self.going and simulation_id not in self.fail:  # finishes now
             self.going.discard(simulation_id)
             self.completed.add(simulation_id)
         status = "completed" if simulation_id in self.completed else "idle"
@@ -351,10 +360,11 @@ def test_seeds_share_one_preparation_and_respect_the_memory_limit(tmp_path, monk
     monkeypatch.setattr(stages, "parallel_limit", lambda count: 2)
     ctx = _simulate_ctx(tmp_path, {"seeds": 3, "seed": 7, "max_rounds": 24})
     result = stages.simulate(ctx)
-    assert [r["seed"] for r in result["seed_simulations"]] == [7, 8, 9]
+    assert [r["seed"] for r in result["seed_simulations"]] == [7, 1007, 2007]  # no shared random streams
     assert [r["simulation_id"] for r in result["seed_simulations"]] == ["sim_first", "sim_copy1", "sim_copy2"]
     assert fake.copies == 2 and fake.most_going == 2
-    assert sorted(fake.started) == [("sim_copy1", 8), ("sim_copy2", 9), ("sim_first", 7)]
+    assert sorted(fake.started) == [("sim_copy1", 1007), ("sim_copy2", 2007), ("sim_first", 7)]
+    assert sorted(fake.closed) == ["sim_copy1", "sim_copy2"]  # the first seed's environment stays for the report
     assert ctx.store.get(ctx.run_id)["artifacts"]["seed_simulations"] == result["seed_simulations"]
 
 
@@ -364,10 +374,42 @@ def test_a_resumed_simulate_stage_reuses_copies_and_skips_finished_seeds(tmp_pat
     fake = _FakeSimulations(completed={"sim_first"})
     monkeypatch.setattr(stages, "_request", fake)
     monkeypatch.setattr(stages, "parallel_limit", lambda count: 4)
-    done = [{"seed": 1, "simulation_id": "sim_first"}, {"seed": 2, "simulation_id": "sim_copy_old"}]
+    done = [{"seed": 1, "simulation_id": "sim_first"}, {"seed": 1001, "simulation_id": "sim_copy_old"}]
     ctx = _simulate_ctx(tmp_path, {"seeds": 2}, {"seed_simulations": done})
     stages.simulate(ctx)
-    assert fake.copies == 0 and fake.started == [("sim_copy_old", 2)]
+    assert fake.copies == 0 and fake.started == [("sim_copy_old", 1001)]
+
+
+def test_a_resumed_simulate_stage_with_every_seed_finished_just_returns(tmp_path, monkeypatch):
+    from app.runs import stages
+
+    fake = _FakeSimulations(completed={"sim_first", "sim_copy_old"})
+    monkeypatch.setattr(stages, "_request", fake)
+    done = [{"seed": 1, "simulation_id": "sim_first"}, {"seed": 1001, "simulation_id": "sim_copy_old"}]
+    ctx = _simulate_ctx(tmp_path, {"seeds": 2}, {"seed_simulations": done})
+    assert stages.simulate(ctx) == {"seed_simulations": done, "rounds": 24}
+    assert fake.started == []
+
+
+def test_a_failing_seed_stops_the_others(tmp_path, monkeypatch):
+    from app.runs import stages
+
+    fake = _FakeSimulations(fail={"sim_first"})
+    monkeypatch.setattr(stages, "_request", fake)
+    monkeypatch.setattr(stages, "parallel_limit", lambda count: 3)
+    # The copies never finish on their own: only the stop ends them.
+    original = fake.__call__
+    def slow(ctx, method, path, **kwargs):
+        if path.endswith("/run-status") and "copy" in path:
+            simulation_id = path.split("/")[3]
+            status = "running" if simulation_id in fake.going else "idle"
+            return 200, {"success": True, "data": {"runner_status": status, "current_round": 3, "total_rounds": 24}}
+        return original(ctx, method, path, **kwargs)
+    monkeypatch.setattr(stages, "_request", slow)
+    ctx = _simulate_ctx(tmp_path, {"seeds": 3})
+    with pytest.raises(StageFailed, match="seed 1: boom"):
+        stages.simulate(ctx)
+    assert sorted(fake.stopped) == ["sim_copy1", "sim_copy2"]
 
 
 def test_the_parallel_limit_follows_free_memory(monkeypatch):
@@ -400,6 +442,14 @@ def test_the_consistency_stage_compares_the_seeds(tmp_path, monkeypatch):
     ctx.artifacts["seed_simulations"] = runs[:1]
     assert stages.consistency(ctx) == {"consistency": None}
 
+    def no_model(sim_dir, score_fn):
+        raise ConnectionError("System One is not reachable")
+
+    monkeypatch.setattr(metrics_report, "scan_conclusions", no_model)
+    ctx.artifacts["seed_simulations"] = runs
+    result = stages.consistency(ctx)  # recorded, not a failed run
+    assert result["consistency"] is None and "not reachable" in result["consistency_error"]
+
 
 def test_a_prepared_simulation_is_copied_for_another_seed(tmp_path, monkeypatch):
     from app.services.simulation_manager import SimulationManager
@@ -431,11 +481,16 @@ def test_a_prepared_simulation_is_copied_for_another_seed(tmp_path, monkeypatch)
 def test_a_resumed_ontology_stage_reuses_its_project_and_deletes_unfinished_ones(tmp_path, monkeypatch):
     from app.runs import stages
 
-    projects = [
-        {"project_id": "p_old", "name": "Run r", "status": "graph_completed", "created_at": "2026-01-01T00:00:00"},
-        {"project_id": "p_half", "name": "Run r", "status": "created", "created_at": "2026-10-01T10:00:02"},
-        {"project_id": "p_done", "name": "Run r", "status": "ontology_generated", "created_at": "2026-10-01T10:00:01"},
-        {"project_id": "p_other", "name": "Other", "status": "created", "created_at": "2026-10-01T10:00:03"},
+    ctx = _simulate_ctx(tmp_path, {"project_name": "Same name"}, {"ontology_started": True})
+    mine = ctx.run_id
+    projects = [  # another run's project with the same name must not be touched
+        {"project_id": "p_other_run", "name": "Same name", "status": "created", "created_at": "2026-10-01T10:00:03",
+         "run_id": "run_other"},
+        {"project_id": "p_half", "name": "Same name", "status": "created", "created_at": "2026-10-01T10:00:02",
+         "run_id": mine},
+        {"project_id": "p_done", "name": "Same name", "status": "ontology_generated",
+         "created_at": "2026-10-01T10:00:01", "run_id": mine},
+        {"project_id": "p_user", "name": "Same name", "status": "graph_completed", "created_at": "2026-10-01T10:00:04"},
     ]
     calls = []
 
@@ -446,7 +501,6 @@ def test_a_resumed_ontology_stage_reuses_its_project_and_deletes_unfinished_ones
         return 200, {"success": True, "data": {}}
 
     monkeypatch.setattr(stages, "_request", request)
-    ctx = _simulate_ctx(tmp_path, {"project_name": "Run r"}, {"ontology_started_at": "2026-10-01T10:00:00"})
     assert stages.ontology(ctx) == {"project_id": "p_done"}
     assert [c for c in calls if c[0] == "delete"] == [("delete", "/api/graph/project/p_half")]
     assert not any("ontology/generate" in path for _, path in calls)

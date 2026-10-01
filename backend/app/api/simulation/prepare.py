@@ -108,6 +108,9 @@ def copy_simulation():
         state = SimulationManager().copy_simulation(source_id)
     except ValueError as error:
         return jsonify({"success": False, "error": str(error)}), 404 if "not found" in str(error) else 409
+    except OSError as error:
+        logger.error(f"copy of {source_id} failed: {error}")
+        return jsonify({"success": False, "error": f"copy failed: {error}"}), 500
     return jsonify({"success": True, "data": state.to_dict()})
 
 

@@ -76,7 +76,10 @@ class RunOrchestrator:
         with self._lock:
             for done_id in [i for i, t in self._threads.items() if not t.is_alive()]:
                 del self._threads[done_id]
-            if run_id in self._threads:
+            thread = self._threads.get(run_id)
+            if thread and from_statuses is not None:
+                thread.join(2)  # e.g. a confirm right after the pause: the thread is finishing
+            if thread and thread.is_alive():
                 raise RunBusy("run is still going")
             if from_statuses is not None:
                 status = (self.store.get(run_id) or {}).get("status")

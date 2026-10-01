@@ -13,7 +13,6 @@ from __future__ import annotations
 import io
 import os
 import time
-from datetime import datetime
 from typing import Any, Callable
 
 from .orchestrator import StageContext, StageFailed
@@ -69,35 +68,32 @@ def _poll(ctx: StageContext, fetch: Callable[[], dict[str, Any]], done: Callable
 
 
 def ontology(ctx: StageContext) -> dict[str, Any]:
-    name = ctx.params.get("project_name") or "Run " + ctx.run_id
-    earlier = ctx.artifacts.get("ontology_started_at")
-    if earlier:  # cut off before: reuse the project it finished, delete the rest
-        found = _projects_since(ctx, name, earlier)
+    if ctx.artifacts.get("ontology_started"):  # cut off before: reuse the project it finished, delete the rest
+        found = _own_projects(ctx)
         keep = next((p for p in found if p.get("status") == "ontology_generated"), None)
         for project in found:
             if project is not keep:
                 _request(ctx, "delete", f"/api/graph/project/{project['project_id']}")
         if keep:
             return {"project_id": keep["project_id"]}
-    # Project.created_at is local time; recorded before the call, so a resume finds what it created.
-    started = datetime.now().isoformat()
-    ctx.store.update(ctx.run_id, artifacts={"ontology_started_at": started})
+    ctx.store.update(ctx.run_id, artifacts={"ontology_started": True})
     with open(ctx.params["document_path"], "rb") as f:
         document = f.read()
     data = _call(ctx, "post", "/api/graph/ontology/generate", data={
         "files": (io.BytesIO(document), os.path.basename(ctx.params["document_path"])),
         "simulation_requirement": ctx.params["simulation_requirement"],
-        "project_name": name,
+        "project_name": ctx.params.get("project_name") or "Run " + ctx.run_id,
+        "run_id": ctx.run_id,
     }, content_type="multipart/form-data")
     return {"project_id": data["project_id"]}
 
 
-def _projects_since(ctx: StageContext, name: str, since: str) -> list[dict[str, Any]]:
-    """Projects named ``name`` created at or after ``since``, newest first."""
+def _own_projects(ctx: StageContext) -> list[dict[str, Any]]:
+    """The projects this run created, newest first."""
 
     projects = _call(ctx, "get", "/api/graph/project/list?limit=500")
     projects = projects if isinstance(projects, list) else []
-    found = [p for p in projects if p.get("name") == name and (p.get("created_at") or "") >= since]
+    found = [p for p in projects if p.get("run_id") == ctx.run_id]
     return sorted(found, key=lambda p: p.get("created_at") or "", reverse=True)
 
 
@@ -146,10 +142,15 @@ def prepare(ctx: StageContext) -> dict[str, Any]:
     return {"simulation_id": simulation_id}
 
 
+# The simulation seeds Twitter with ``seed`` and Reddit with ``seed + 1``
+# (System One alike): consecutive seeds would share a random stream.
+SEED_STRIDE = 1000
+
+
 def seed_values(params: dict[str, Any]) -> list[int]:
     first = params.get("seed")
     first = 1 if first is None else int(first)
-    return [first + i for i in range(int(params.get("seeds") or 1))]
+    return [first + SEED_STRIDE * i for i in range(int(params.get("seeds") or 1))]
 
 
 def parallel_limit(count: int) -> int:
@@ -170,7 +171,9 @@ def parallel_limit(count: int) -> int:
 
 def simulate(ctx: StageContext) -> dict[str, Any]:
     """One simulation per seed. The first seed uses the prepared simulation;
-    the others are copies of it, so preparation runs once."""
+    the others are copies of it, so preparation runs once. A finished copy's
+    environment is closed, so it frees its memory for the next seed; the
+    first seed's stays open for the report and interviews."""
 
     seeds = seed_values(ctx.params)
     runs = list(ctx.artifacts.get("seed_simulations") or [])
@@ -186,36 +189,55 @@ def simulate(ctx: StageContext) -> dict[str, Any]:
     def status(run):
         return _call(ctx, "get", f"/api/simulation/{run['simulation_id']}/run-status")
 
-    pending = [r for r in runs if status(r).get("runner_status") != "completed"]  # a resume skips finished seeds
+    states = {r["simulation_id"]: status(r) for r in runs}
+    pending = [r for r in runs if states[r["simulation_id"]].get("runner_status") != "completed"]  # a resume skips finished seeds
     limit = parallel_limit(len(pending))
     if pending:
         ctx.emit("progress", {"progress": 0, "message": f"{len(runs)} seeds, {limit} at a time"})
     going: list[dict[str, Any]] = []
-    deadline = time.monotonic() + ctx.extra.get("simulate_timeout_s", 6 * 3600)
+    timeout_s = ctx.extra.get("simulate_timeout_s", 6 * 3600)
+    deadline = time.monotonic() + timeout_s
     interval = ctx.extra.get("poll_s", POLL_S)
     last_progress = None
-    while pending or going:
-        while pending and len(going) < limit:
-            run = pending.pop(0)
-            _start_simulation(ctx, run)
-            going.append(run)
-        states = {r["simulation_id"]: status(r) for r in runs}
-        for run in list(going):
-            state = states[run["simulation_id"]]
-            if state.get("runner_status") in ("failed", "stopped"):
-                raise StageFailed(f"seed {run['seed']}: " + (state.get("error") or f"simulation {state.get('runner_status')}"))
-            if state.get("runner_status") == "completed":
-                going.remove(run)
-        progress = _seeds_progress(list(states.values()))
-        if progress != last_progress and any(progress):
-            ctx.emit("progress", {"progress": progress[0], "message": progress[1]})
-            last_progress = progress
-        if not (pending or going):
-            break
-        if time.monotonic() > deadline:
-            raise StageFailed(f"simulation did not finish within {int(ctx.extra.get('simulate_timeout_s', 6 * 3600))} s")
-        time.sleep(interval)
+    try:
+        while pending or going:
+            while pending and len(going) < limit:
+                run = pending.pop(0)
+                _start_simulation(ctx, run)
+                going.append(run)
+            states = {r["simulation_id"]: status(r) for r in runs}
+            for run in list(going):
+                state = states[run["simulation_id"]]
+                if state.get("runner_status") in ("failed", "stopped"):
+                    going.remove(run)  # already ended; the others are stopped below
+                    raise StageFailed(f"seed {run['seed']}: " + (state.get("error") or f"simulation {state.get('runner_status')}"))
+                if state.get("runner_status") == "completed":
+                    going.remove(run)
+                    if run is not runs[0]:
+                        _close_environment(ctx, run)
+            progress = _seeds_progress(list(states.values()))
+            if progress != last_progress and any(progress):
+                ctx.emit("progress", {"progress": progress[0], "message": progress[1]})
+                last_progress = progress
+            if not (pending or going):
+                break
+            if time.monotonic() > deadline:
+                raise StageFailed(f"simulation did not finish within {int(timeout_s)} s")
+            time.sleep(interval)
+    except BaseException:
+        for run in going:  # do not leave the other seeds running unwatched
+            _request(ctx, "post", "/api/simulation/stop", json={"simulation_id": run["simulation_id"]})
+        raise
     return {"seed_simulations": runs, "rounds": states[runs[0]["simulation_id"]].get("current_round") if runs else None}
+
+
+def _close_environment(ctx: StageContext, run: dict[str, Any]) -> None:
+    """The simulation waits for interview commands after its last round."""
+
+    status, body = _request(ctx, "post", "/api/simulation/close-env",
+                            json={"simulation_id": run["simulation_id"], "timeout": 10})
+    if status >= 400 or not body.get("success", False):
+        ctx.emit("progress", {"message": f"seed {run['seed']}: environment not closed: {body.get('error') or status}"})
 
 
 def _start_simulation(ctx: StageContext, run: dict[str, Any]) -> None:
@@ -275,14 +297,20 @@ def consistency(ctx: StageContext) -> dict[str, Any]:
     from ..services.seed_consistency import aggregate
     from ..services.simulation_manager import SimulationManager
 
-    score_fn, scans = default_score_fn(), []
-    for i, run in enumerate(runs, 1):
-        ctx.emit("progress", {"progress": round(100 * (i - 1) / len(runs)), "message": f"seed {i}/{len(runs)}"})
-        scan = scan_conclusions(os.path.join(SimulationManager.SIMULATION_DATA_DIR, run["simulation_id"]), score_fn)
-        if scan:
-            scans.append(scan)
+    # The simulations and the report are done: a scoring problem (e.g. no
+    # System One model) is recorded, not turned into a failed run.
+    scans = []
+    try:
+        score_fn = default_score_fn()
+        for i, run in enumerate(runs, 1):
+            ctx.emit("progress", {"progress": round(100 * (i - 1) / len(runs)), "message": f"seed {i}/{len(runs)}"})
+            scan = scan_conclusions(os.path.join(SimulationManager.SIMULATION_DATA_DIR, run["simulation_id"]), score_fn)
+            if scan:
+                scans.append(scan)
+    except Exception as error:
+        return {"consistency": None, "consistency_error": f"{type(error).__name__}: {error}"}
     if len(scans) < 2:
-        raise StageFailed(f"only {len(scans)} of {len(runs)} seeds have posts to compare")
+        return {"consistency": None, "consistency_error": f"only {len(scans)} of {len(runs)} seeds have posts to compare"}
     return {"consistency": aggregate(ctx.run_id, scans)}
 
 

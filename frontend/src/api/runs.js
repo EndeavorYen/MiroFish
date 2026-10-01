@@ -7,7 +7,9 @@ export const STAGES = ['ontology', 'graph', 'prepare', 'simulate', 'report', 'co
 // No thread is working on a run in these: the event stream ends.
 export const STOPPED = ['completed', 'failed', 'interrupted', 'awaiting_confirmation']
 
-export const createRun = ({ file, text, requirement, maxRounds, seeds, confirmRoles }) => {
+export const MODES = ['local', 'local-hybrid', 'local-llm']
+
+export const createRun = ({ file, text, requirement, maxRounds, seeds, confirmRoles, mode }) => {
   const form = new FormData()
   if (file) form.append('file', file)
   else form.append('document_text', text)
@@ -15,6 +17,7 @@ export const createRun = ({ file, text, requirement, maxRounds, seeds, confirmRo
   form.append('max_rounds', String(maxRounds))
   form.append('seeds', String(seeds))
   form.append('confirm_roles', confirmRoles ? 'true' : 'false')
+  if (mode) form.append('mode', mode)  // empty: the backend's MIROFISH_PROFILE
   return service.post('/api/runs', form, { headers: { 'Content-Type': 'multipart/form-data' } })
 }
 
@@ -22,6 +25,8 @@ export const getRun = (runId) => service.get(`/api/runs/${runId}`)
 export const listRuns = (limit = 100) => service.get('/api/runs', { params: { limit } })
 export const resumeRun = (runId) => service.post(`/api/runs/${runId}/resume`)
 export const confirmRun = (runId) => service.post(`/api/runs/${runId}/confirm`)
+// The same input in another mode, to confirm a run's conclusions.
+export const rerunRun = (runId, mode) => service.post(`/api/runs/${runId}/rerun`, { mode })
 
 export const getRoles = (graphId) => service.get(`/api/graph/${graphId}/roles`)
 export const editRoles = (graphId, ops) => service.post(`/api/graph/${graphId}/roles`, { ops })

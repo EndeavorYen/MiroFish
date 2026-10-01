@@ -16,6 +16,21 @@ import httpx
 from ..profiles import is_local_url
 
 
+def slot_context(base_url: str | None, timeout: float = 3.0) -> int | None:
+    """Context per slot of a local llama.cpp server (``/props``); ``None``
+    when it does not say (another server, or not reachable)."""
+
+    if not base_url or not is_local_url(base_url):
+        return None
+    root = base_url.rstrip("/").removesuffix("/v1")
+    try:
+        response = httpx.get(root + "/props", timeout=timeout, trust_env=False)
+        value = response.json().get("default_generation_settings", {}).get("n_ctx")
+    except (httpx.HTTPError, ValueError, AttributeError):
+        return None
+    return value if isinstance(value, int) and value > 0 else None
+
+
 def check_model_service(base_url: str | None, timeout: float = 3.0) -> str | None:
     """None when the service answers (or is not local); otherwise the reason."""
 

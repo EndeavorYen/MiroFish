@@ -2,7 +2,10 @@
   <section class="run-result" data-test="run-result">
     <div class="head">
       <h1 class="title">{{ run.params?.simulation_requirement }}</h1>
-      <span class="meta">{{ $t('run.result.meta', { seeds: seedCount, rounds: run.artifacts?.rounds ?? run.params?.max_rounds }) }}</span>
+      <span class="meta">
+        {{ $t('run.result.meta', { seeds: seedCount, rounds: run.artifacts?.rounds ?? run.params?.max_rounds }) }}
+        · <span data-test="run-mode">{{ modeLabel(run.params?.profile) }}</span>
+      </span>
     </div>
 
     <!-- Confidence first: each conclusion with how far it can be trusted. A
@@ -80,6 +83,21 @@
       </section>
       <p v-else-if="run.artifacts?.consistency_error" class="muted">{{ $t('run.result.consistencyFailed', { reason: run.artifacts.consistency_error }) }}</p>
 
+      <!-- This run confirms another one: the two side by side. -->
+      <ModeCompare v-if="run.params?.confirms && scan" :run="run" :scan="scan" />
+
+      <!-- Confirm with a heavier mode: the same input, another run. -->
+      <section v-if="confirmModes.length" class="block confirm" data-test="confirm-with">
+        <h2>{{ $t('run.result.confirmTitle') }}</h2>
+        <p class="muted">{{ $t('run.result.confirmHint') }}</p>
+        <div class="buttons">
+          <button v-for="mode in confirmModes" :key="mode" :disabled="rerunning" :data-test="`rerun-${mode}`" @click="rerun(mode)">
+            {{ $t('run.result.confirmWithMode', { mode: modeLabel(mode) }) }}
+          </button>
+        </div>
+        <p v-if="rerunError" class="error" data-test="rerun-error">{{ rerunError }}</p>
+      </section>
+
       <section v-if="topPosts.length" class="block" data-test="top-posts">
         <h2>{{ $t('run.result.topPosts') }}</h2>
         <ul class="posts">
@@ -101,10 +119,31 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { getReport, getReportMetrics } from '../../api/runs'
+import { useRouter } from 'vue-router'
+import ModeCompare from './ModeCompare.vue'
+import { MODES, getReport, getReportMetrics, rerunRun } from '../../api/runs'
 
 const props = defineProps({ run: { type: Object, required: true } })
 const { t } = useI18n()
+const router = useRouter()
+const modeLabel = (mode) => t(MODES.includes(mode) ? `run.mode.${mode}` : 'run.mode.unknown')
+
+// The heavier modes this run was not made in; local-llm is the reference.
+const confirmModes = computed(() => ['local-hybrid', 'local-llm'].filter((m) => m !== props.run.params?.profile))
+const rerunning = ref(false)
+const rerunError = ref('')
+async function rerun(mode) {
+  rerunning.value = true
+  rerunError.value = ''
+  try {
+    const response = await rerunRun(props.run.run_id, mode)
+    router.push(`/runs/${response.data.run_id}`)
+  } catch (err) {
+    rerunError.value = err.message
+  } finally {
+    rerunning.value = false
+  }
+}
 
 const metrics = ref(null)
 const metricsMissing = ref(false)
@@ -316,6 +355,30 @@ onMounted(async () => {
 
 .report summary {
   cursor: pointer;
+}
+
+.confirm .buttons {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.confirm button {
+  border: 1px solid #000;
+  background: #fff;
+  padding: 8px 16px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.confirm button:disabled {
+  color: #999;
+  border-color: #999;
+}
+
+.confirm .error {
+  margin-top: 8px;
+  font-size: 13px;
 }
 
 .report-text {

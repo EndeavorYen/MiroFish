@@ -108,7 +108,8 @@
     "envRunning": "環境正在執行，可以接收Interview命令",
     "envNotRunningShort": "環境未執行或已關閉",
     "requireGraphIdAndQuery": "請提供 graph_id 和 query",
-    "initReportAgent": "初始化Report Agent..."
+    "initReportAgent": "初始化Report Agent...",
+    "runModeContext": "{mode} 的每個 slot 需要 {need} token 的 context，目前模型服務只有 {have}。請用 -c 65536 -np 8 重新啟動 llama-server 再試。"
   },
   "progress": {
     "initGraphService": "初始化圖譜構建服務...",
@@ -693,7 +694,9 @@
       "confirmRoles": "圖譜建好後先讓我確認角色",
       "seedsHint": "多個 seed 共用同一次準備、平行模擬，結果頁會顯示 seed 之間是否一致。seed 越多越可靠，也越久。",
       "start": "開始",
-      "starting": "啟動中…"
+      "starting": "啟動中…",
+      "mode": "模式",
+      "modeDefault": "後端預設"
     },
     "status": {
       "queued": "排隊中",
@@ -757,7 +760,11 @@
       "postStats": "轉發／引用 {shares} · 讚 {likes}",
       "fullReport": "完整報告",
       "noMetrics": "這份報告沒有可信度指標（報告模式不是 metrics）；下面是其餘結果與完整報告。",
-      "noScanReason": "沒有可評分的貼文"
+      "noScanReason": "沒有可評分的貼文",
+      "confirmTitle": "用其他模式確認",
+      "confirmHint": "用同一份文件與設定，換一種較重的模式再跑一次，並和這次的結論並排比較。local-llm 是評估時的參考路徑，最慢。",
+      "confirmWithMode": "用 {mode} 確認",
+      "mostOpposedFirst": "最反對的角色"
     },
     "history": {
       "title": "過去的模擬",
@@ -782,6 +789,20 @@
       "twitter": "Twitter",
       "reddit": "Reddit"
     },
-    "refreshFailed": "暫時拿不到最新狀態（{reason}），稍後會再試。"
+    "refreshFailed": "暫時拿不到最新狀態（{reason}），稍後會再試。",
+    "mode": {
+      "local": "本機（local）",
+      "local-hybrid": "混合（local-hybrid）",
+      "local-llm": "LLM（local-llm）",
+      "unknown": "未指定模式"
+    },
+    "compare": {
+      "title": "這次（{mode}）和原本的結論比較",
+      "agree": "一致",
+      "differ": "不一致",
+      "na": "無法比較",
+      "note": "整體傾向差距在 0.1 以內算一致；走向看正負號；角色看最反對的第一名。",
+      "unavailable": "無法比較：{reason}"
+    }
   }
 }

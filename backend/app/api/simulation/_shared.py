@@ -2,6 +2,7 @@
 
 import os
 
+from ... import run_mode
 from ...config import Config
 from ...utils.model_health import check_model_service
 from ...services.simulation_manager import SimulationManager
@@ -241,7 +242,7 @@ def _model_service_problem(run: bool = False) -> str | None:
     """
 
     urls = [Config.LLM_BASE_URL]
-    if run and os.environ.get("SIM_DECISION_BACKEND", "llm").strip().lower() == "system_one":
+    if run and run_mode.setting("SIM_DECISION_BACKEND", "llm") == "system_one":
         urls.insert(0, Config.SYSTEM_ONE_BASE_URL)
     for url in dict.fromkeys(u for u in urls if u):
         problem = check_model_service(url)

@@ -47,6 +47,13 @@
             {{ $t('run.input.seeds') }}
             <input v-model.number="seeds" type="number" min="1" max="8" data-test="seeds" />
           </label>
+          <label>
+            {{ $t('run.input.mode') }}
+            <select v-model="mode" data-test="mode">
+              <option value="">{{ $t('run.input.modeDefault') }}</option>
+              <option v-for="m in MODES" :key="m" :value="m">{{ $t(`run.mode.${m}`) }}</option>
+            </select>
+          </label>
           <label class="check">
             <input v-model="confirmRoles" type="checkbox" data-test="confirm-roles" />
             {{ $t('run.input.confirmRoles') }}
@@ -65,7 +72,7 @@
 
 <script setup>
 import { computed, ref } from 'vue'
-import { createRun } from '../../api/runs'
+import { MODES, createRun } from '../../api/runs'
 
 const emit = defineEmits(['started'])
 
@@ -76,6 +83,7 @@ const requirement = ref('')
 const maxRounds = ref(24)
 const seeds = ref(3)
 const confirmRoles = ref(false)
+const mode = ref('')
 const starting = ref(false)
 const error = ref('')
 
@@ -97,6 +105,7 @@ async function start() {
       maxRounds: maxRounds.value,
       seeds: seeds.value,
       confirmRoles: confirmRoles.value,
+      mode: mode.value,
     })
     emit('started', response.data.run_id)
   } catch (err) {
@@ -145,6 +154,7 @@ form {
 }
 
 textarea,
+select,
 input[type='number'] {
   font: inherit;
   font-size: 14px;

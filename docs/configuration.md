@@ -78,6 +78,10 @@ profile 只會填「還沒設定」的模式設定，所以 `.env` 裡明確寫�
 | `SIM_AGENT_CONTEXT_TOKENS` | 本機 `3072`；雲端不限 | LLM agent 記憶的 token 上限；`0`／`off` 關閉。 |
 | `SIM_ACTION_PRIORS` | 內建檔 | 行動先驗：`off`、`default` 或檔案路徑（`fit_action_priors.py`）。 |
 | `SIM_STANCE_PRIOR_WEIGHT` | `0.5` | 立場＝權重 × 角色設定的立場 ＋ (1 − 權重) × 當回合的讀出；0–1。 |
+| `SIM_OPINION_DYNAMICS` | `off` | 意見動態（#59）：`bounded` 時角色的立場會依讀到的貼文更新（有限信任），取代整場固定的準備立場；`off` 維持原樣。只作用於 System One 決策（`SIM_DECISION_BACKEND=system_one`）。 |
+| `SIM_OPINION_MU` | `0.3` | 意見動態每回合往相近意見移動的比例，0–1。 |
+| `SIM_OPINION_RADIUS` | `0.3` | 有限信任的半徑：立場差距在這以內的貼文才有影響，0–1。 |
+| `SIM_OPINION_STUBBORNNESS` | `0.5` | 預設的固執程度（1＝不動），0–1；依實體類型的值放在 `backend/app/simulation_policy/opinion_params.json`（只用 calibration 情境擬合）。 |
 | `SIM_EMOTION_ALPHA` | `0.7` | 情緒更新的平滑係數。 |
 | `SIM_FAIL_ROUNDS` | `2` | 同一平台連續幾個回合的決策全部失敗就中止模擬（#62）。 |
 | `SIM_FAIL_RATIO` | `0.2` | 累計決策失敗比例超過多少就中止（#62）。 |

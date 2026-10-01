@@ -68,6 +68,7 @@ def build_policy(
     if not 0.0 <= weight <= 1.0:
         raise ValueError(f"SIM_STANCE_PRIOR_WEIGHT must be within 0..1, got {weight}")
     taxonomy = with_priors(load_taxonomy(platform), load_action_priors().get(platform))
+    priors = stance_priors(config)
     return SystemOnePolicy(
         client,
         taxonomy,
@@ -80,11 +81,55 @@ def build_policy(
         decision_log=_shared(DecisionLog, os.path.join(simulation_dir, "decisions.jsonl")),
         extra_action_rate=load_extra_action_rates().get(platform, 0.0),
         activation_counts=load_activation_counts().get(platform),
-        stance_prior=stance_priors(config),
+        stance_prior=priors,
         stance_prior_weight=weight,
         health=_shared(_new_health, os.path.join(simulation_dir, "decision_health")),
         stance_dither=os.environ.get("CONTENT_STANCE_DITHER", "0") == "1",
+        # One opinion state per simulation: a role has one stance on both platforms.
+        opinion=_shared_opinion(simulation_dir, lambda: opinion_state(config, priors, client=client)),
     )
+
+
+_OPINIONS: dict[str, Any] = {}
+
+
+def _shared_opinion(simulation_dir: str, make):
+    """One opinion state per simulation dir (both platforms' policies)."""
+
+    key = os.path.abspath(simulation_dir)
+    with _SHARED_LOCK:
+        if key not in _OPINIONS:
+            _OPINIONS[key] = make()
+        return _OPINIONS[key]
+
+
+def opinion_state(config: dict[str, Any], priors: dict[int, float], score=None, client=None):
+    """Opinion dynamics (#59) when SIM_OPINION_DYNAMICS is on, else None.
+    Posts are scored by the policy's System One client, on the question the
+    report and the comparison use, in the content's language."""
+
+    from .opinion import OpinionState, load_params
+
+    params = load_params()
+    if params is None:
+        return None
+    if score is None:
+        from .tiers import detect_content_lang, event_phrase, stance_check_question, system_one_stance_score
+
+        requirement = str(config.get("base_requirement") or config.get("simulation_requirement") or "")
+        lang = os.environ.get("CONTENT_LANG", "").strip().lower()
+        if lang not in ("zh", "en"):
+            lang = detect_content_lang(requirement)
+        question = stance_check_question(event_phrase(requirement), lang)
+
+        def score(text: str) -> float:
+            return system_one_stance_score(text, question=question, client=client)
+
+    types = {
+        a["agent_id"]: str(a.get("entity_type") or "")
+        for a in config.get("agent_configs") or [] if isinstance(a, dict) and isinstance(a.get("agent_id"), int)
+    }
+    return OpinionState(priors, params, score, entity_types=types)
 
 
 def stance_priors(config: dict[str, Any]) -> dict[int, float]:

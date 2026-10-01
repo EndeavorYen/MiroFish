@@ -293,6 +293,15 @@ def default_score_fn() -> ScoreFn:
     return lambda text, question: system_one_stance_score(text, question=question)
 
 
+def _has_opinion_states(sim_dir: str) -> bool:
+    path = os.path.join(sim_dir, "decisions.jsonl")
+    try:
+        with open(path, encoding="utf-8") as f:
+            return any('"stance_state"' in line for line in f)
+    except OSError:
+        return False
+
+
 def scan_conclusions(sim_dir: str, score_fn: ScoreFn, question: str | None = None) -> dict[str, Any] | None:
     """Directional conclusions from the posts, scored on the simulated event
     in the same form as the evaluation (gate G5), with their confidence.
@@ -342,13 +351,19 @@ def scan_conclusions(sim_dir: str, score_fn: ScoreFn, question: str | None = Non
     # The LLM prep writes the key too, as null: only a value means structured.
     structured = any(a.get("stance_raw") is not None for a in config.get("agent_configs", []))
     path = ("local" if structured else "hybrid") if local else "llm"
+    # Opinion dynamics (#59) logs the stance each decision used; the
+    # evaluation behind the confidence levels ran without it.
+    dynamics = local and _has_opinion_states(sim_dir)
 
     def evidence(key: str) -> dict[str, str]:
         if path == "llm":
             return {"confidence": "reference", "evidence": "LLM 路徑，評估時的參考路徑"}
         table, label = (SCAN_EVIDENCE, "本機路徑") if path == "local" else (HYBRID_EVIDENCE, "混合模式")
         level, record = table[key]
-        return {"confidence": level, "evidence": f"{label}在評估庫 {record} 個情境與 LLM 路徑一致"}
+        text = f"{label}在評估庫 {record} 個情境與 LLM 路徑一致"
+        if dynamics:
+            text += "；這次開啟了意見動態，評估庫沒有涵蓋，僅供參考"
+        return {"confidence": level, "evidence": text}
 
     # Flat LLM-prep stances do not make the roles indistinct: the order comes
     # from the persona text there, so the flag is for the structured prep only.
@@ -366,6 +381,7 @@ def scan_conclusions(sim_dir: str, score_fn: ScoreFn, question: str | None = Non
         "question": question,
         "posts": len(posts),
         "local_path": local,
+        "opinion_dynamics": dynamics,
         "path": path,
         "main_camp": {
             "value": max(camps, key=lambda c: camps[c]),

@@ -668,7 +668,7 @@ def stance_check_question(event: str, lang: str = "zh") -> str:
     return f"這則貼文對「{event}」的立場是什麼？"
 
 
-def system_one_stance_score(text: str, question: str = "這則貼文的立場是什麼？") -> float:
+def system_one_stance_score(text: str, question: str = "這則貼文的立場是什麼？", client=None) -> float:
     """Zero-decode stance in 0..1, the same five labels the prep path uses (#45).
 
     Asked without the event, the check judged posts on a different question
@@ -679,7 +679,7 @@ def system_one_stance_score(text: str, question: str = "這則貼文的立場是
     from ..system_one.client import get_system_one_client
     from ..system_one.models import ScoreQuestion, SystemOneRequest
 
-    answer = get_system_one_client().ask(
+    answer = (client or get_system_one_client()).ask(
         SystemOneRequest(
             state=f"貼文：{text[:300]}",
             questions={"s": ScoreQuestion(instructions=question, criteria=STANCE5)},

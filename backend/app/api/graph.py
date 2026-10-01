@@ -317,7 +317,8 @@ def generate_ontology():
             }), 400
         
         # 创建项目
-        project = ProjectManager.create_project(name=project_name)
+        run_id = request.form.get('run_id') or None  # set by the runs API (#63)
+        project = ProjectManager.create_project(name=project_name, run_id=run_id)
         project.simulation_requirement = simulation_requirement
         logger.info(f"创建项目: {project.project_id}")
         

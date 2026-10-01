@@ -15,12 +15,16 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from ..utils.logger import get_logger
-from .store import COMPLETED, FAILED, RUNNING, RunStore
+from .store import AWAITING, COMPLETED, FAILED, RUNNING, RunStore
 
 logger = get_logger("mirofish.runs")
 
 # Fixed stage codes; display text belongs to the frontend's i18n.
-STAGES = ("ontology", "graph", "prepare", "simulate", "report")
+STAGES = ("ontology", "graph", "prepare", "simulate", "report", "consistency")
+
+# With ``params["confirm_roles"]`` the run pauses before this stage until
+# ``artifacts["roles_confirmed"]`` (POST /api/runs/<id>/confirm).
+CONFIRM_BEFORE = "prepare"
 
 
 class StageFailed(Exception):
@@ -63,7 +67,8 @@ class RunOrchestrator:
             thread = self._threads.get(run_id)
             return bool(thread and thread.is_alive())
 
-    def start(self, run_id: str, from_statuses: tuple[str, ...] | None = None) -> threading.Thread:
+    def start(self, run_id: str, from_statuses: tuple[str, ...] | None = None,
+              artifacts: dict[str, Any] | None = None) -> threading.Thread:
         """Start the run's thread. With ``from_statuses`` the run must be in
         one of them; the check and the start share the lock, so two resumes
         at once start one thread and the other gets ``RunBusy``."""
@@ -71,13 +76,16 @@ class RunOrchestrator:
         with self._lock:
             for done_id in [i for i, t in self._threads.items() if not t.is_alive()]:
                 del self._threads[done_id]
-            if run_id in self._threads:
+            thread = self._threads.get(run_id)
+            if thread and from_statuses is not None:
+                thread.join(2)  # e.g. a confirm right after the pause: the thread is finishing
+            if thread and thread.is_alive():
                 raise RunBusy("run is still going")
             if from_statuses is not None:
                 status = (self.store.get(run_id) or {}).get("status")
                 if status not in from_statuses:
-                    raise RunBusy(f"only a {' or '.join(from_statuses)} run can resume (status: {status})")
-            self.store.update(run_id, status=RUNNING, clear_error=True)
+                    raise RunBusy(f"the run must be {' or '.join(from_statuses)} (status: {status})")
+            self.store.update(run_id, status=RUNNING, clear_error=True, artifacts=artifacts)
             thread = threading.Thread(target=self.run, args=(run_id,), name=f"run-{run_id}", daemon=True)
             self._threads[run_id] = thread
             thread.start()
@@ -103,6 +111,10 @@ class RunOrchestrator:
         for stage in STAGES:
             if stage in done:
                 continue
+            if stage == CONFIRM_BEFORE and record["params"].get("confirm_roles") and not artifacts.get("roles_confirmed"):
+                self.store.update(run_id, status=AWAITING, stage=stage)
+                self.store.add_event(run_id, stage, "awaiting_confirmation", {"graph_id": artifacts.get("graph_id")})
+                return
             self.store.update(run_id, stage=stage)
             ctx = StageContext(run_id, record["params"], artifacts, self.store, stage, self.extra)
             ctx.emit("stage_start")

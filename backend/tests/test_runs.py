@@ -89,7 +89,7 @@ def test_a_resumed_run_skips_the_stages_it_finished(tmp_path):
     RunOrchestrator(store, _fake_stages(log)).start(run_id).join(5)  # e.g. after a restart
     record = store.get(run_id)
     assert record["status"] == COMPLETED and record["error"] is None
-    assert [name for name, _ in log] == ["simulate", "report"]
+    assert [name for name, _ in log] == list(STAGES[STAGES.index("simulate"):])
     assert log[0][1]["prepare_id"] == "prepare-1"  # artifacts of the finished stages carried over
 
 
@@ -187,7 +187,7 @@ def test_two_resumes_at_once_start_one_thread(tmp_path):
     thread.join(5)
     with pytest.raises(RunBusy):  # completed: nothing to resume
         orchestrator.start(run_id, from_statuses=(FAILED, INTERRUPTED))
-    assert [name for name, _ in log] == ["graph", "prepare", "simulate", "report"]
+    assert [name for name, _ in log] == list(STAGES[1:])
 
 
 def test_a_store_error_outside_a_stage_still_fails_the_run(tmp_path):
@@ -263,3 +263,244 @@ def test_the_graph_stage_reuses_a_finished_graph_without_its_old_task(monkeypatc
     monkeypatch.setattr(stages, "_request", request)
     assert stages.graph(ctx) == {"graph_id": "g1"}
     assert ("/api/graph/task/gone", None) not in calls
+
+
+def test_a_run_with_confirm_roles_pauses_before_prepare_until_confirmed(tmp_path):
+    from app.runs.orchestrator import RunBusy
+    from app.runs.store import AWAITING
+
+    store, log = RunStore(str(tmp_path / "r.sqlite")), []
+    orchestrator = RunOrchestrator(store, _fake_stages(log))
+    run_id = store.create({"confirm_roles": True})
+    orchestrator.start(run_id).join(5)
+    record = store.get(run_id)
+    assert (record["status"], record["stage"]) == (AWAITING, "prepare")
+    assert [name for name, _ in log] == ["ontology", "graph"]
+    assert store.events(run_id)[-1]["kind"] == "awaiting_confirmation"
+    with pytest.raises(RunBusy):  # a paused run is confirmed, not resumed
+        orchestrator.start(run_id, from_statuses=(FAILED, INTERRUPTED))
+
+    orchestrator.start(run_id, from_statuses=(AWAITING,), artifacts={"roles_confirmed": True}).join(5)
+    assert store.get(run_id)["status"] == COMPLETED
+    assert [name for name, _ in log][2:] == list(STAGES[2:])
+
+
+def test_the_api_confirms_a_paused_run(client):
+    run_id = client.post("/api/runs", data={"document_text": "x", "simulation_requirement": "y",
+                                            "confirm_roles": "true"}).get_json()["data"]["run_id"]
+    record = _wait(client.store, run_id)
+    assert record["status"] == "awaiting_confirmation" and record["params"]["confirm_roles"] is True
+    assert _events(client, run_id)[-1]["kind"] == "awaiting_confirmation"  # the stream ends at the pause
+    assert client.post(f"/api/runs/{run_id}/resume").status_code == 409
+    assert client.post(f"/api/runs/{run_id}/confirm").status_code == 202
+    assert _wait(client.store, run_id)["status"] == COMPLETED
+    assert client.post(f"/api/runs/{run_id}/confirm").status_code == 409
+    assert client.post("/api/runs/run_nope/confirm").status_code == 404
+
+
+@pytest.mark.parametrize("seeds, status", [("0", 400), ("9", 400), ("x", 400), ("", 202), ("2", 202)])
+def test_the_api_checks_the_seed_count(client, seeds, status):
+    response = client.post("/api/runs", data={"document_text": "x", "simulation_requirement": "y", "seeds": seeds})
+    assert response.status_code == status
+    if status == 202:
+        record = _wait(client.store, response.get_json()["data"]["run_id"])
+        assert record["params"]["seeds"] == (int(seeds) if seeds else 3)
+
+
+class _FakeSimulations:
+    """The simulation endpoints the simulate stage calls; each simulation
+    completes on the poll after it started."""
+
+    def __init__(self, completed=(), fail=()):
+        self.started, self.copies, self.going, self.most_going = [], 0, set(), 0
+        self.completed, self.fail, self.closed, self.stopped = set(completed), set(fail), [], []
+
+    def __call__(self, ctx, method, path, **kwargs):
+        body = kwargs.get("json") or {}
+        if path == "/api/simulation/copy":
+            self.copies += 1
+            return 200, {"success": True, "data": {"simulation_id": f"sim_copy{self.copies}"}}
+        if path == "/api/simulation/start":
+            self.started.append((body["simulation_id"], body["seed"]))
+            self.going.add(body["simulation_id"])
+            self.most_going = max(self.most_going, len(self.going))
+            return 200, {"success": True, "data": {}}
+        if path == "/api/simulation/close-env":
+            self.closed.append(body["simulation_id"])
+            return 200, {"success": True, "data": {}}
+        if path == "/api/simulation/stop":
+            self.stopped.append(body["simulation_id"])
+            self.going.discard(body["simulation_id"])
+            return 200, {"success": True, "data": {}}
+        simulation_id = path.split("/")[3]
+        if simulation_id in self.fail and simulation_id in self.going:
+            return 200, {"success": True, "data": {"runner_status": "failed", "error": "boom", "total_rounds": 24}}
+        if simulation_id in self.going and simulation_id not in self.fail:  # finishes now
+            self.going.discard(simulation_id)
+            self.completed.add(simulation_id)
+        status = "completed" if simulation_id in self.completed else "idle"
+        return 200, {"success": True, "data": {"runner_status": status, "total_rounds": 24,
+                                                "current_round": 24 if status == "completed" else 0}}
+
+
+def _simulate_ctx(tmp_path, params, artifacts=None):
+    from app.runs.orchestrator import StageContext
+
+    store = RunStore(str(tmp_path / "s.sqlite"))
+    run_id = store.create(params)
+    artifacts = {"simulation_id": "sim_first", **(artifacts or {})}
+    return StageContext(run_id, params, artifacts, store, "simulate", {"poll_s": 0})
+
+
+def test_seeds_share_one_preparation_and_respect_the_memory_limit(tmp_path, monkeypatch):
+    from app.runs import stages
+
+    fake = _FakeSimulations()
+    monkeypatch.setattr(stages, "_request", fake)
+    monkeypatch.setattr(stages, "parallel_limit", lambda count: 2)
+    ctx = _simulate_ctx(tmp_path, {"seeds": 3, "seed": 7, "max_rounds": 24})
+    result = stages.simulate(ctx)
+    assert [r["seed"] for r in result["seed_simulations"]] == [7, 1007, 2007]  # no shared random streams
+    assert [r["simulation_id"] for r in result["seed_simulations"]] == ["sim_first", "sim_copy1", "sim_copy2"]
+    assert fake.copies == 2 and fake.most_going == 2
+    assert sorted(fake.started) == [("sim_copy1", 1007), ("sim_copy2", 2007), ("sim_first", 7)]
+    assert sorted(fake.closed) == ["sim_copy1", "sim_copy2"]  # the first seed's environment stays for the report
+    assert ctx.store.get(ctx.run_id)["artifacts"]["seed_simulations"] == result["seed_simulations"]
+
+
+def test_a_resumed_simulate_stage_reuses_copies_and_skips_finished_seeds(tmp_path, monkeypatch):
+    from app.runs import stages
+
+    fake = _FakeSimulations(completed={"sim_first"})
+    monkeypatch.setattr(stages, "_request", fake)
+    monkeypatch.setattr(stages, "parallel_limit", lambda count: 4)
+    done = [{"seed": 1, "simulation_id": "sim_first"}, {"seed": 1001, "simulation_id": "sim_copy_old"}]
+    ctx = _simulate_ctx(tmp_path, {"seeds": 2}, {"seed_simulations": done})
+    stages.simulate(ctx)
+    assert fake.copies == 0 and fake.started == [("sim_copy_old", 1001)]
+
+
+def test_a_resumed_simulate_stage_with_every_seed_finished_just_returns(tmp_path, monkeypatch):
+    from app.runs import stages
+
+    fake = _FakeSimulations(completed={"sim_first", "sim_copy_old"})
+    monkeypatch.setattr(stages, "_request", fake)
+    done = [{"seed": 1, "simulation_id": "sim_first"}, {"seed": 1001, "simulation_id": "sim_copy_old"}]
+    ctx = _simulate_ctx(tmp_path, {"seeds": 2}, {"seed_simulations": done})
+    assert stages.simulate(ctx) == {"seed_simulations": done, "rounds": 24}
+    assert fake.started == []
+
+
+def test_a_failing_seed_stops_the_others(tmp_path, monkeypatch):
+    from app.runs import stages
+
+    fake = _FakeSimulations(fail={"sim_first"})
+    monkeypatch.setattr(stages, "_request", fake)
+    monkeypatch.setattr(stages, "parallel_limit", lambda count: 3)
+    # The copies never finish on their own: only the stop ends them.
+    original = fake.__call__
+    def slow(ctx, method, path, **kwargs):
+        if path.endswith("/run-status") and "copy" in path:
+            simulation_id = path.split("/")[3]
+            status = "running" if simulation_id in fake.going else "idle"
+            return 200, {"success": True, "data": {"runner_status": status, "current_round": 3, "total_rounds": 24}}
+        return original(ctx, method, path, **kwargs)
+    monkeypatch.setattr(stages, "_request", slow)
+    ctx = _simulate_ctx(tmp_path, {"seeds": 3})
+    with pytest.raises(StageFailed, match="seed 1: boom"):
+        stages.simulate(ctx)
+    assert sorted(fake.stopped) == ["sim_copy1", "sim_copy2"]
+
+
+def test_the_parallel_limit_follows_free_memory(monkeypatch):
+    import types
+
+    import psutil
+
+    from app.runs.stages import parallel_limit
+
+    monkeypatch.setenv("RUNS_SIM_MEMORY_MB", "500")
+    monkeypatch.setenv("RUNS_MEMORY_RESERVE_MB", "2048")
+    for free_mb, expected in [(1024, 1), (3072, 2), (100_000, 3)]:
+        monkeypatch.setattr(psutil, "virtual_memory", lambda free=free_mb: types.SimpleNamespace(available=free * 2**20))
+        assert parallel_limit(3) == expected
+
+
+def test_the_consistency_stage_compares_the_seeds(tmp_path, monkeypatch):
+    from app.runs import stages
+    from app.services import metrics_report
+
+    roles = {"甲": 0.9, "乙": 0.6, "丙": 0.2}
+    scan = {"main_camp": {"value": "support"}, "tendency": {"value": 0.7}, "trend": {"value": 0.1},
+            "ranking": {"indistinct": False}, "by_role": roles}
+    monkeypatch.setattr(metrics_report, "default_score_fn", lambda: None)
+    monkeypatch.setattr(metrics_report, "scan_conclusions", lambda sim_dir, score_fn: scan)
+    runs = [{"seed": 1, "simulation_id": "a"}, {"seed": 2, "simulation_id": "b"}]
+    ctx = _simulate_ctx(tmp_path, {}, {"seed_simulations": runs})
+    result = stages.consistency(ctx)["consistency"]
+    assert result["main_camp"] == {"value": "support", "agree": 2} and result["confirm"] == []
+    ctx.artifacts["seed_simulations"] = runs[:1]
+    assert stages.consistency(ctx) == {"consistency": None}
+
+    def no_model(sim_dir, score_fn):
+        raise ConnectionError("System One is not reachable")
+
+    monkeypatch.setattr(metrics_report, "scan_conclusions", no_model)
+    ctx.artifacts["seed_simulations"] = runs
+    result = stages.consistency(ctx)  # recorded, not a failed run
+    assert result["consistency"] is None and "not reachable" in result["consistency_error"]
+
+
+def test_a_prepared_simulation_is_copied_for_another_seed(tmp_path, monkeypatch):
+    from app.services.simulation_manager import SimulationManager
+
+    monkeypatch.setattr(SimulationManager, "SIMULATION_DATA_DIR", str(tmp_path))
+    manager = SimulationManager()
+    source = manager.create_simulation("proj_1", "graph_1")
+    source.profiles_generated = source.config_generated = True
+    source.profiles_count = 5
+    manager._save_simulation_state(source)
+    folder = tmp_path / source.simulation_id
+    config = {"simulation_id": source.simulation_id, "x": 1}
+    (folder / "simulation_config.json").write_text(json.dumps(config), encoding="utf-8")
+    (folder / "reddit_profiles.json").write_text("[]", encoding="utf-8")
+    (folder / "twitter_profiles.csv").write_text("id\n", encoding="utf-8")
+
+    copy = SimulationManager().copy_simulation(source.simulation_id)
+    copied = tmp_path / copy.simulation_id
+    assert copy.simulation_id != source.simulation_id and copy.status.value == "ready" and copy.profiles_count == 5
+    assert json.loads((copied / "simulation_config.json").read_text(encoding="utf-8")) == {
+        "simulation_id": copy.simulation_id, "x": 1}
+    assert (copied / "twitter_profiles.csv").read_text(encoding="utf-8") == "id\n"
+
+    with pytest.raises(ValueError):
+        manager.copy_simulation("no-such-id")
+    assert not (tmp_path / "no-such-id").exists()  # an unknown id leaves no folder behind
+
+
+def test_a_resumed_ontology_stage_reuses_its_project_and_deletes_unfinished_ones(tmp_path, monkeypatch):
+    from app.runs import stages
+
+    ctx = _simulate_ctx(tmp_path, {"project_name": "Same name"}, {"ontology_started": True})
+    mine = ctx.run_id
+    projects = [  # another run's project with the same name must not be touched
+        {"project_id": "p_other_run", "name": "Same name", "status": "created", "created_at": "2026-10-01T10:00:03",
+         "run_id": "run_other"},
+        {"project_id": "p_half", "name": "Same name", "status": "created", "created_at": "2026-10-01T10:00:02",
+         "run_id": mine},
+        {"project_id": "p_done", "name": "Same name", "status": "ontology_generated",
+         "created_at": "2026-10-01T10:00:01", "run_id": mine},
+        {"project_id": "p_user", "name": "Same name", "status": "graph_completed", "created_at": "2026-10-01T10:00:04"},
+    ]
+    calls = []
+
+    def request(ctx, method, path, **kwargs):
+        calls.append((method, path))
+        if path.startswith("/api/graph/project/list"):
+            return 200, {"success": True, "data": projects}
+        return 200, {"success": True, "data": {}}
+
+    monkeypatch.setattr(stages, "_request", request)
+    assert stages.ontology(ctx) == {"project_id": "p_done"}
+    assert [c for c in calls if c[0] == "delete"] == [("delete", "/api/graph/project/p_half")]
+    assert not any("ontology/generate" in path for _, path in calls)

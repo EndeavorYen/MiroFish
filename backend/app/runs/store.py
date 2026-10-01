@@ -18,8 +18,10 @@ from datetime import datetime, timezone
 from typing import Any, Iterator
 
 # Run statuses. ``interrupted``: the backend stopped while the run was going.
+# ``awaiting_confirmation``: paused until the roles are confirmed.
 QUEUED, RUNNING, COMPLETED, FAILED, INTERRUPTED = "queued", "running", "completed", "failed", "interrupted"
-TERMINAL = (COMPLETED, FAILED, INTERRUPTED)
+AWAITING = "awaiting_confirmation"
+TERMINAL = (COMPLETED, FAILED, INTERRUPTED, AWAITING)  # no thread is working on the run
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS runs (

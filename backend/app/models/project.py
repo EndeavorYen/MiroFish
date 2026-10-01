@@ -53,6 +53,9 @@ class Project:
     
     # 错误信息
     error: Optional[str] = None
+
+    # The run that created it (#63): a resumed run finds its own project.
+    run_id: Optional[str] = None
     
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典"""
@@ -73,7 +76,8 @@ class Project:
             "simulation_requirement": self.simulation_requirement,
             "chunk_size": self.chunk_size,
             "chunk_overlap": self.chunk_overlap,
-            "error": self.error
+            "error": self.error,
+            "run_id": self.run_id,
         }
     
     @classmethod
@@ -100,7 +104,8 @@ class Project:
             simulation_requirement=data.get('simulation_requirement'),
             chunk_size=data.get('chunk_size', 500),
             chunk_overlap=data.get('chunk_overlap', 50),
-            error=data.get('error')
+            error=data.get('error'),
+            run_id=data.get('run_id'),
         )
 
 
@@ -136,7 +141,7 @@ class ProjectManager:
         return os.path.join(cls._get_project_dir(project_id), 'extracted_text.txt')
     
     @classmethod
-    def create_project(cls, name: str = "Unnamed Project") -> Project:
+    def create_project(cls, name: str = "Unnamed Project", run_id: Optional[str] = None) -> Project:
         """
         创建新项目
         
@@ -156,7 +161,8 @@ class ProjectManager:
             name=name,
             status=ProjectStatus.CREATED,
             created_at=now,
-            updated_at=now
+            updated_at=now,
+            run_id=run_id,
         )
         
         # 创建项目目录结构
